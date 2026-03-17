@@ -31,7 +31,7 @@ test/
 ├── test_shared.cpp                      Shared globals (bb, mailbox, needsDefaultKings)
 ├── test_core/                           Core library tests (lib/core/)
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
-│   ├── test_attacks.cpp                 attacks: leaper tables, slider rays, x-ray attacks, geometry rays (between, line), computeAll
+│   ├── test_attacks.cpp                 attacks: leaper tables, slider rays, x-ray attacks, geometry rays (between, line), computeAll, SEE
 │   ├── test_bitboard.cpp                LibreChess: square mapping, bit ops, square-color masks, BitboardSet mutations
 │   ├── test_evaluation.cpp              eval: material scoring, pawn structure (passed/isolated/doubled/backward), tapered evaluation
 │   ├── test_fen.cpp                     FEN round-trip, boardToFEN/fenToBoard, validateFEN
@@ -50,7 +50,7 @@ test/
 │   └── test_history_persistence.cpp     Recording: persistence, header flush, replay, branch-truncation, encode/decode
 ├── test_engine/                         Engine library tests (lib/engine/)
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
-│   ├── test_search.cpp                  search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, time/stop, TT, move ordering
+│   ├── test_search.cpp                  search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, time/stop, TT, move ordering, delta pruning, futility pruning, SEE ordering
 │   └── test_engine.cpp                  Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range
 └── test_perft/                          Perft suite (standalone, heavyweight)
     └── test_perft.cpp                   Perft move-tree enumeration with detailed counters (captures, EP, castles, promotions, checks, checkmates)
@@ -124,7 +124,7 @@ Persistence lifecycle with MockGameStorage. Header flush timing. Game replay fro
 Material evaluation scoring. Pawn structure evaluation (symmetry, passed pawn bonus, doubled/isolated penalties). Tapered evaluation (opening symmetry, endgame king centralization, phase-dependent king PST blend). Pawn-structure analysis functions: `isPassed`, `isIsolated`, `isDoubled`, `isBackward`.
 
 ### Search (`test_search.cpp`)
-Mate-in-1 (white, black). Captures hanging piece. Quiescence avoids blunder. Stalemate avoidance. Symmetric position. Knight fork tactics. Legal move from random position. Checkmate no legal moves. Iterative deepening (deeper depth finds mate, info callback reports iterations). Time limit control. Stop flag. Mate stops early. TT store/probe exact, probe miss, clear, pack/unpack move, reduces nodes, mate score round-trip. Check extension finds mate. NMP quiet position, K+P endgame no blunder. PVS+LMR middlegame efficiency. Pruning preserves tactics. Aspiration windows correctness, depth continuity. Root move reordering consistency. Move ordering reduces nodes and finds tactics.
+Mate-in-1 (white, black). Captures hanging piece. Quiescence avoids blunder. Stalemate avoidance. Symmetric position. Knight fork tactics. Legal move from random position. Checkmate no legal moves. Iterative deepening (deeper depth finds mate, info callback reports iterations). Time limit control. Stop flag. Mate stops early. TT store/probe exact, probe miss, clear, pack/unpack move, reduces nodes, mate score round-trip. Check extension finds mate. NMP quiet position, K+P endgame no blunder. PVS+LMR middlegame efficiency. Pruning preserves tactics. Aspiration windows correctness, depth continuity. Root move reordering consistency. Move ordering reduces nodes and finds tactics. Delta pruning quiet position. Futility pruning preserves winning capture and discovered attack. SEE ordering preserves tactics. SEE qsearch skips losing capture.
 
 ### Engine (`test_engine.cpp`)
 Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range.
@@ -151,4 +151,4 @@ Exhaustive move-tree enumeration for 6 positions from the Chess Programming Wiki
 Square mapping roundtrip (`squareOf(rowOf(sq), colOf(sq)) == sq` for all 64). LERF anchor values (`squareOf(0,0) == SQ_A8`, `squareOf(7,0) == SQ_A1`). Bit manipulation (`popcount`, `lsb`, `popLsb`). Square-color masks (a1 dark, b1 light, popcount 32 each, no overlap). `BitboardSet` mutations (`setPiece`/`removePiece`/`movePiece` consistency, aggregate bitboard correctness).
 
 ### Attacks (`test_attacks.cpp`)
-Leaper attack tables (knight on e4, king on a1, pawn attacks per color). Slider attack functions (rook/bishop/queen on empty board and with blockers). Bulk slider correctness (all 64 squares × 5 occupancy patterns cross-checked against reference ray implementation for both rook and bishop). X-ray attack functions (`xrayRook`, `xrayBishop`). `between` geometry (file/rank/diagonal/anti-diagonal/adjacent/non-colinear). `line` geometry (rank/file/diagonal/non-colinear/endpoints). `computeAll` validation (initial knight attacks, pawn bulk attacks, color unions, kings-only board).
+Leaper attack tables (knight on e4, king on a1, pawn attacks per color). Slider attack functions (rook/bishop/queen on empty board and with blockers). Bulk slider correctness (all 64 squares × 5 occupancy patterns cross-checked against reference ray implementation for both rook and bishop). X-ray attack functions (`xrayRook`, `xrayBishop`). `between` geometry (file/rank/diagonal/anti-diagonal/adjacent/non-colinear). `line` geometry (rank/file/diagonal/non-colinear/endpoints). `computeAll` validation (initial knight attacks, pawn bulk attacks, color unions, kings-only board). SEE: pawn takes undefended knight, pawn takes defended rook, knight takes defended pawn (losing), queen takes defended pawn (losing), rook takes undefended bishop, en passant.

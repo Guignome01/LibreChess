@@ -337,5 +337,138 @@ bool isSquareUnderAttack(const BitboardSet& bb, Square sq, Color defendingColor)
   return false;
 }
 
+// ---------------------------------------------------------------------------
+// Static Exchange Evaluation (SEE) — swap algorithm.
+//
+// Simulates a sequence of captures on the target square of the given move.
+// Each side recaptures with its least valuable attacker until one side has
+// no attackers left or chooses to stop (negamax walk-back).
+//
+// Material values in centipawns, indexed by PieceType (NONE=0 .. KING=6).
+// King value is set high (20000) so "capturing a king" always wins — this
+// handles positions where the king itself is an attacker (legal only on
+// the last capture).
+//
+// Reference: https://www.chessprogramming.org/Static_Exchange_Evaluation
+// ---------------------------------------------------------------------------
+
+// SEE piece values in centipawns, indexed by PieceType.
+static constexpr int SEE_VALUE[] = {0, 100, 300, 300, 500, 900, 20000};
+
+// Find the least valuable attacker of `sq` for `color`.  Returns the
+// PieceType and sets `attackerBB` to the single-bit bitboard of the
+// chosen attacker (for removal from occupancy).
+// Returns PieceType::NONE if no attacker exists.
+static PieceType leastValuableAttacker(const BitboardSet& bb,
+                                       Bitboard occupied,
+                                       Square sq, Color color,
+                                       Bitboard& attackerBB) {
+  // Pawns
+  int idx = piece::pieceZobristIndex(piece::makePiece(color, PieceType::PAWN));
+  // PAWN[~color] gives squares from which a pawn of `color` attacks `sq`.
+  Bitboard attackers = PAWN[piece::raw(~color)][sq] & bb.byPiece[idx] & occupied;
+  if (attackers) { attackerBB = attackers & -attackers; return PieceType::PAWN; }
+
+  // Knights
+  idx = piece::pieceZobristIndex(piece::makePiece(color, PieceType::KNIGHT));
+  attackers = KNIGHT[sq] & bb.byPiece[idx] & occupied;
+  if (attackers) { attackerBB = attackers & -attackers; return PieceType::KNIGHT; }
+
+  // Bishops
+  idx = piece::pieceZobristIndex(piece::makePiece(color, PieceType::BISHOP));
+  attackers = bishop(sq, occupied) & bb.byPiece[idx] & occupied;
+  if (attackers) { attackerBB = attackers & -attackers; return PieceType::BISHOP; }
+
+  // Rooks
+  idx = piece::pieceZobristIndex(piece::makePiece(color, PieceType::ROOK));
+  attackers = rook(sq, occupied) & bb.byPiece[idx] & occupied;
+  if (attackers) { attackerBB = attackers & -attackers; return PieceType::ROOK; }
+
+  // Queens
+  idx = piece::pieceZobristIndex(piece::makePiece(color, PieceType::QUEEN));
+  attackers = queen(sq, occupied) & bb.byPiece[idx] & occupied;
+  if (attackers) { attackerBB = attackers & -attackers; return PieceType::QUEEN; }
+
+  // King
+  idx = piece::pieceZobristIndex(piece::makePiece(color, PieceType::KING));
+  attackers = KING[sq] & bb.byPiece[idx] & occupied;
+  if (attackers) { attackerBB = attackers & -attackers; return PieceType::KING; }
+
+  return PieceType::NONE;
+}
+
+int see(const BitboardSet& bb, const Piece mailbox[], Move m) {
+  Square target = m.to;
+
+  // Determine the initial captured piece value.
+  PieceType captured;
+  if (m.isEP()) {
+    captured = PieceType::PAWN;
+  } else {
+    captured = piece::pieceType(mailbox[target]);
+  }
+
+  // The attacker is the piece on the 'from' square.
+  PieceType attacker = piece::pieceType(mailbox[m.from]);
+  Color side = piece::pieceColor(mailbox[m.from]);
+
+  // Gain list: gain[0] = value of the initial capture.
+  // Each subsequent entry is the value of the recapture.
+  int gain[32];
+  int d = 0;
+  gain[d] = SEE_VALUE[piece::raw(captured)];
+
+  // Remove the initial attacker from occupancy.
+  Bitboard occupied = bb.occupied;
+  occupied ^= squareBB(m.from);
+  // For EP, also remove the captured pawn from occupancy.
+  if (m.isEP()) {
+    // EP captured pawn is on the same file as target, one rank behind.
+    int epPawnSq = (side == Color::WHITE)
+                       ? target - 8   // white captures: pawn is one rank below
+                       : target + 8;  // black captures: pawn is one rank above
+    occupied ^= squareBB(epPawnSq);
+  }
+
+  // The piece now "on" the target square is the initial attacker.
+  PieceType onTarget = attacker;
+
+  // Alternate sides, each recapturing with least valuable attacker.
+  side = ~side;
+  Bitboard attackerBB;
+
+  while (true) {
+    PieceType nextAttacker = leastValuableAttacker(bb, occupied, target,
+                                                   side, attackerBB);
+    if (nextAttacker == PieceType::NONE) break;  // no more attackers
+
+    ++d;
+    // The gain is the value of the piece currently on the target square,
+    // minus what was lost previously (negamax convention).
+    gain[d] = SEE_VALUE[piece::raw(onTarget)] - gain[d - 1];
+
+    // If the gain is already so negative that even capturing can't help,
+    // we can prune: the side to move would choose not to recapture.
+    // But we must be careful: this is an optimization, not strictly needed.
+    // For correctness we continue the loop.
+
+    // Remove the recapturing piece from occupancy.
+    occupied ^= attackerBB;
+    onTarget = nextAttacker;
+    side = ~side;
+  }
+
+  // Walk back the gain list using negamax: at each level, the capturing
+  // side chooses the better of "recapture" (gain[d]) vs "stand pat"
+  // (-gain[d-1]).  This is: gain[d-1] = -max(-gain[d-1], gain[d]).
+  while (d > 0) {
+    int standPat = -gain[d - 1];  // value of NOT recapturing
+    gain[d - 1] = -(standPat > gain[d] ? standPat : gain[d]);
+    --d;
+  }
+
+  return gain[0];
+}
+
 }  // namespace attacks
 }  // namespace LibreChess

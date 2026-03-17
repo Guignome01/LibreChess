@@ -21,6 +21,7 @@
 // ---------------------------------------------------------------------------
 
 #include "bitboard.h"
+#include "move.h"
 
 namespace LibreChess {
 namespace attacks {
@@ -113,6 +114,27 @@ inline bool isSquareUnderAttack(const LibreChess::BitboardSet& bb,
                                 int row, int col, Color defendingColor) {
   return isSquareUnderAttack(bb, LibreChess::squareOf(row, col), defendingColor);
 }
+
+// ---------------------------------------------------------------------------
+// Static Exchange Evaluation (SEE)
+//
+// Determines whether a capture on a target square results in a material
+// gain or loss after all recaptures are resolved.  Uses the swap algorithm:
+// each side captures with its least valuable attacker, building a gain list,
+// then walks the list backwards with negamax logic to determine the final
+// value.
+//
+// Returns a score in centipawns (positive = capturing side gains material).
+// The move must be a capture (asserted by the caller).
+//
+// Used for:
+//   (a) Pruning losing captures in quiescence search.
+//   (b) Demoting losing captures below quiet moves in move ordering.
+//
+// Reference: https://www.chessprogramming.org/Static_Exchange_Evaluation
+// ---------------------------------------------------------------------------
+
+int see(const BitboardSet& bb, const Piece mailbox[], Move m);
 
 }  // namespace attacks
 }  // namespace LibreChess

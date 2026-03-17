@@ -22,7 +22,7 @@ Engine (lib/engine/):
   Engine (direct-call facade)
    ├─ owns Position (from core)
    └─ owns TranspositionTable + search state
-  search (alpha-beta + quiescence + iterative deepening + check ext + PVS + NMP + LMR + aspiration windows)
+  search (alpha-beta + quiescence + iterative deepening + check ext + PVS + NMP + LMR + aspiration windows + delta pruning + futility pruning + SEE-based ordering)
 
 Firmware (src/):
   GameMode (abstract base, src/game_mode/)
@@ -458,7 +458,7 @@ All menu layout data lives in `menu_config.h/cpp`:
 
 The on-board engine runs entirely within `lib/core/` — no network, no external API. Two namespaces:
 
-- **`search`** (`search.h/cpp`) — Negamax with alpha-beta pruning, quiescence search, iterative deepening, check extensions, PVS (Principal Variation Search), NMP (Null Move Pruning), LMR (Late Move Reductions), aspiration windows, root move reordering, transposition table (12-byte entries), and move ordering (TT move → MVV-LVA captures → killer moves → history heuristic). `findBestMove(pos, limits, timeFunc, infoCallback, tt)` is the single public entry point. `SearchLimits` controls depth, time, and external stop flag. `SearchState` holds per-search heuristics (killers, history table) and TT pointer.
+- **`search`** (`search.h/cpp`) — Negamax with alpha-beta pruning, quiescence search, iterative deepening, check extensions, PVS (Principal Variation Search), NMP (Null Move Pruning), LMR (Late Move Reductions), aspiration windows, root move reordering, delta pruning (quiescence capture futility), futility pruning (shallow negamax leaf skipping), SEE-based capture ordering (losing captures demoted below quiets), transposition table (12-byte entries), and move ordering (TT move → good captures (MVV-LVA, SEE≥0) → killer moves → history heuristic → bad captures (SEE<0)). `findBestMove(pos, limits, timeFunc, infoCallback, tt)` is the single public entry point. `SearchLimits` controls depth, time, and external stop flag. `SearchState` holds per-search heuristics (killers, history table) and TT pointer.
 
 - **`uci`** (`uci.h/cpp`) — Transport-agnostic UCI protocol handler. `UCIStream` is the abstract I/O interface (Serial, string buffer). `UCIHandler` owns a `Position`, `TranspositionTable`, and stop flag; dispatches standard UCI commands (`uci`, `isready`, `ucinewgame`, `position`, `go`, `stop`, `quit`). Simple time management from game clocks (remaining/30 + increment/2). `StringUCIStream` provides in-memory I/O for testing and in-process use.
 
@@ -625,9 +625,10 @@ The `data/` directory is committed to git so users without npm tools can still b
 - `rook(sq, occ)`, `bishop(sq, occ)`, `queen(sq, occ)` — O(1) slider attacks via first-rank lookup table (rank) + Hyperbola Quintessence (file/diagonal/anti-diagonal). Diagonal masks (`DIAG_MASK[64]`, `ANTI_DIAG_MASK[64]`) precomputed at startup (~1 KiB)
 - `xrayRook(occ, friendly, sq)`, `xrayBishop(occ, friendly, sq)` — pin detection (used by `movegen`/`rules`)
 - `between(s1, s2)` — squares strictly between two colinear squares (used by `movegen`/`rules` for check masks)
-- `line(s1, s2)` — full line through two colinear squares, edge-to-edge. **Pre-built infrastructure** — planned consumer: SEE (Static Exchange Evaluation) for x-ray attacker discovery
+- `line(s1, s2)` — full line through two colinear squares, edge-to-edge
 - `computeAll(bb)` → `AttackInfo` — per-piece-type and per-color attack maps from scratch. **Pre-built infrastructure** — planned consumers: evaluation (king safety, mobility) and search (move ordering)
 - `isSquareUnderAttack(bb, sq, color)` — per-piece-type attack table lookups + slider functions for check detection
+- `see(bb, mailbox, move)` — Static Exchange Evaluation via swap algorithm: builds a gain list by alternating least-valuable-attacker captures, then walks back with negamax. Handles en passant. Used by search for quiescence pruning and move ordering (demoting losing captures)
 
 **`utils`** (`utils.h/cpp`) — namespace with board-level helper functions:
 - `isValidSquare(row, col)` — bounds check for 8×8 board

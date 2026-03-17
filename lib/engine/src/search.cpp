@@ -2,6 +2,7 @@
 
 #include <cstring>
 
+#include "attacks.h"
 #include "evaluation.h"
 #include "movegen.h"
 #include "piece.h"
@@ -135,6 +136,36 @@ static constexpr int LMR_DEPTH_THRESHOLD  = 3;
 static constexpr int ASPIRATION_DELTA = 50;
 
 // ---------------------------------------------------------------------------
+// Delta Pruning constant (quiescence search).
+//
+// In quiescence, if the standing-pat score plus the captured piece's value
+// plus a safety margin still cannot reach alpha, the capture is hopeless
+// and can be skipped.  This avoids expanding clearly losing capture lines.
+//
+// DELTA_MARGIN: safety margin in centipawns (accounts for positional
+// compensation that the static eval might miss).
+//
+// Reference: https://www.chessprogramming.org/Delta_Pruning
+// ---------------------------------------------------------------------------
+
+static constexpr int DELTA_MARGIN = 200;
+
+// ---------------------------------------------------------------------------
+// Futility Pruning margins (negamax, shallow depths).
+//
+// At depth 1-2, if the static eval plus a depth-dependent margin is still
+// below alpha, quiet moves (non-capture, non-promotion) are unlikely to
+// raise alpha and can be skipped.  Captures/promotions and the TT move are
+// never pruned.
+//
+// Guards: not in check, not a PV node, depth <= 2.
+//
+// Reference: https://www.chessprogramming.org/Futility_Pruning
+// ---------------------------------------------------------------------------
+
+static constexpr int FUTILITY_MARGIN[] = {0, 200, 500};  // indexed by depth
+
+// ---------------------------------------------------------------------------
 // Mate score adjustment for TT storage.
 //
 // Mate scores are relative to the root: -MATE_SCORE + ply.  When storing
@@ -162,17 +193,22 @@ inline int scoreFromTT(int score, int ply) {
 // Move ordering — MVV-LVA, TT move, killers, history.
 //
 // Score priority bands (highest first):
-//   TT move:    30000
-//   Captures:   10000 + MVV-LVA (victim*16 - attacker)
-//   Killer 1:    9000
-//   Killer 2:    8000
-//   Quiets:     history[color][from][to]  (0 .. ~7000)
+//   TT move:        30000
+//   Good captures:  10000 + MVV-LVA (victim*16 - attacker)   [SEE >= 0]
+//   Killer 1:        9000
+//   Killer 2:        8000
+//   Quiets:         history[color][from][to]  (0 .. ~7000)
+//   Bad captures:   SEE value (negative)                      [SEE < 0]
+//
+// Losing captures (negative SEE) are demoted below quiet moves so the
+// search tries better alternatives first, improving cutoff rates.
 //
 // References:
 //   https://www.chessprogramming.org/Move_Ordering
 //   https://www.chessprogramming.org/MVV-LVA
 //   https://www.chessprogramming.org/Killer_Move
 //   https://www.chessprogramming.org/History_Heuristic
+//   https://www.chessprogramming.org/Static_Exchange_Evaluation
 // ---------------------------------------------------------------------------
 
 static constexpr int SCORE_TT_MOVE  = 30000;
@@ -187,7 +223,7 @@ static constexpr int MVV_LVA_VALUE[] = {0, 1, 3, 3, 5, 9, 0};
 // Assign ordering scores to all moves in the list.
 // Uses a parallel `scores[]` array (caller must provide MAX_MOVES capacity).
 void assignScores(const MoveList& moves, int scores[],
-                  const Piece mailbox[], Move ttMove,
+                  const BitboardSet& bb, const Piece mailbox[], Move ttMove,
                   int ply, Color side, const SearchState& state) {
   uint8_t c = raw(side);
   for (int i = 0; i < moves.count; ++i) {
@@ -200,15 +236,22 @@ void assignScores(const MoveList& moves, int scores[],
       continue;
     }
 
-    // Captures — MVV-LVA
+    // Captures — MVV-LVA with SEE demotion for losing captures.
+    // Good captures (SEE >= 0) are scored in the SCORE_CAPTURE band.
+    // Bad captures (SEE < 0) are scored negative, below all quiet moves.
     if (m.isCapture()) {
-      PieceType victim  = pieceType(mailbox[m.to]);
-      PieceType attacker = pieceType(mailbox[m.from]);
-      // EP: victim is on a different square, but type is always pawn
-      if (m.isEP()) victim = PieceType::PAWN;
-      scores[i] = SCORE_CAPTURE +
-                  MVV_LVA_VALUE[raw(victim)] * 16 -
-                  MVV_LVA_VALUE[raw(attacker)];
+      int seeScore = attacks::see(bb, mailbox, m);
+      if (seeScore >= 0) {
+        PieceType victim   = pieceType(mailbox[m.to]);
+        PieceType attacker = pieceType(mailbox[m.from]);
+        if (m.isEP()) victim = PieceType::PAWN;
+        scores[i] = SCORE_CAPTURE +
+                    MVV_LVA_VALUE[raw(victim)] * 16 -
+                    MVV_LVA_VALUE[raw(attacker)];
+      } else {
+        // Losing capture — sort below quiets (negative score).
+        scores[i] = seeScore;
+      }
       continue;
     }
 
@@ -317,6 +360,22 @@ int quiescence(Position& pos, int alpha, int beta, SearchState& state) {
 
   for (int i = 0; i < captures.count; ++i) {
     Move m = captures.moves[i];
+
+    // --- Delta Pruning ---
+    // If the captured piece's value plus a safety margin cannot raise the
+    // score to alpha, this capture is hopeless — skip it.
+    // EP captures always take a pawn (100 cp).
+    {
+      int capturedValue = m.isEP()
+          ? 100
+          : MVV_LVA_VALUE[raw(pieceType(pos.mailbox()[m.to]))] * 100;
+      if (standPat + capturedValue + DELTA_MARGIN < alpha) continue;
+    }
+
+    // --- SEE Pruning ---
+    // Skip captures where the static exchange evaluation is negative
+    // (the capture sequence loses material after recaptures).
+    if (attacks::see(pos.bitboards(), pos.mailbox(), m) < 0) continue;
 
     UndoInfo undo = pos.make(m);
     int score = -quiescence(pos, -beta, -alpha, state);
@@ -437,9 +496,23 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     return DRAW_SCORE;            // Stalemate
   }
 
+  // --- Futility Pruning setup ---
+  // At shallow depths in non-PV, non-check nodes, if the static eval plus
+  // a depth-dependent margin still falls short of alpha, quiet moves are
+  // unlikely to improve the position enough.  We flag this to skip them
+  // in the move loop (captures/promotions and the first move are exempt).
+  //
+  // Reference: https://www.chessprogramming.org/Futility_Pruning
+  bool futilityPruning = false;
+  if (!pvNode && !inCheck && depth <= 2 && depth >= 1) {
+    int staticEval = evaluate(pos);
+    if (staticEval + FUTILITY_MARGIN[depth] <= alpha)
+      futilityPruning = true;
+  }
+
   // --- Move ordering: score and pick-best during iteration ---
   int scores[MAX_MOVES];
-  assignScores(moves, scores, pos.mailbox(), ttMove,
+  assignScores(moves, scores, pos.bitboards(), pos.mailbox(), ttMove,
                ply, pos.sideToMove(), state);
 
   Move bestMove = moves.moves[0];
@@ -448,6 +521,14 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   for (int i = 0; i < moves.count; ++i) {
     pickBest(moves, scores, i);
     Move m = moves.moves[i];
+
+    // --- Futility Pruning: skip hopeless quiet moves at shallow depth ---
+    // Never prune the first move (we need at least one legal move searched)
+    // and never prune captures or promotions (tactical moves can surprise).
+    if (futilityPruning && movesSearched > 0 &&
+        !m.isCapture() && !m.isPromotion()) {
+      continue;
+    }
 
     UndoInfo undo = pos.make(m);
 

@@ -503,6 +503,98 @@ static void test_attackInfo_empty_board_only_kings(void) {
   TEST_ASSERT_EQUAL_UINT64(KING[e8], info.byColor[1]);
 }
 
+// ===========================================================================
+// Static Exchange Evaluation (SEE)
+// ===========================================================================
+// Helper: parse a FEN and build a Move from coordinate strings.
+// The Position is loaded from `fen`; `from`/`to` are algebraic (e.g. "e4").
+// `flags` allows setting move flag bits (e.g. MOVE_CAPTURE, MOVE_EP).
+static Move makeSEEMove(Position& pos, const char* fen,
+                        const char* from, const char* to, uint8_t flags) {
+  pos.loadFEN(fen);
+  int fc = from[0] - 'a', fr = 8 - (from[1] - '0');
+  int tc = to[0]   - 'a', tr = 8 - (to[1]   - '0');
+  return Move(squareOf(fr, fc), squareOf(tr, tc), flags);
+}
+
+// PxN undefended: white pawn e4 captures black knight on d5.
+// Gain = +300 (knight value). No recapture.
+static void test_see_pawn_takes_undefended_knight(void) {
+  init();
+  // White: Ke1, Pe4.  Black: Ke8, Nd5.
+  const char* fen = "4k3/8/8/3n4/4P3/8/8/4K3 w - - 0 1";
+  Position pos;
+  Move m = makeSEEMove(pos, fen, "e4", "d5", MOVE_CAPTURE);
+  int score = see(pos.bitboards(), pos.mailbox(), m);
+  TEST_ASSERT_EQUAL_INT(300, score);  // knight value
+}
+
+// PxR defended by pawn: white pawn e5 captures black rook on d6,
+// but d6 is defended by a black pawn on e7. PxR(+500), then pxP(-100).
+// Gain = 500 - 100 = +400.
+static void test_see_pawn_takes_defended_rook(void) {
+  init();
+  // White: Ke1, Pe5.  Black: Ke8, Rd6, Pe7.
+  const char* fen = "4k3/4p3/3r4/4P3/8/8/8/4K3 w - - 0 1";
+  Position pos;
+  Move m = makeSEEMove(pos, fen, "e5", "d6", MOVE_CAPTURE);
+  int score = see(pos.bitboards(), pos.mailbox(), m);
+  // PxR=500, then pxP=100 recapture → net = 500-100 = 400.
+  TEST_ASSERT_EQUAL_INT(400, score);
+}
+
+// NxP defended by pawn: white knight captures black pawn on d6,
+// but d6 is defended by a black pawn on c7.
+// Ne5xd6 (+100), c7xd6 recapture (-300). Net = 100-300 = -200.
+static void test_see_knight_takes_defended_pawn(void) {
+  init();
+  // White: Ke1, Ne5.  Black: Ke8, Pd6, Pc7.
+  const char* fen = "4k3/2p5/3p4/4N3/8/8/8/4K3 w - - 0 1";
+  Position pos;
+  Move m = makeSEEMove(pos, fen, "e5", "d6", MOVE_CAPTURE);
+  int score = see(pos.bitboards(), pos.mailbox(), m);
+  TEST_ASSERT_EQUAL_INT(-200, score);  // losing capture
+}
+
+// QxP defended by pawn: white queen captures a pawn defended by another pawn.
+// QxP(+100), pxQ(-900). Net = 100-900 = -800. Major loss.
+static void test_see_queen_takes_defended_pawn(void) {
+  init();
+  // White: Ke1, Qe5.  Black: Ke8, Pd6, Pc7. (c7 defends d6)
+  const char* fen = "4k3/2p5/3p4/4Q3/8/8/8/4K3 w - - 0 1";
+  Position pos;
+  Move m = makeSEEMove(pos, fen, "e5", "d6", MOVE_CAPTURE);
+  int score = see(pos.bitboards(), pos.mailbox(), m);
+  TEST_ASSERT_EQUAL_INT(-800, score);  // 100 - 900
+}
+
+// RxB: white rook takes undefended black bishop. Gain = +300.
+static void test_see_rook_takes_undefended_bishop(void) {
+  init();
+  // White: Ke1, Ra5.  Black: Ke8, Bd5.
+  // Rook on a5 captures d5 along rank 5.
+  const char* fen = "4k3/8/8/R2b4/8/8/8/4K3 w - - 0 1";
+  Position pos;
+  Move m = makeSEEMove(pos, fen, "a5", "d5", MOVE_CAPTURE);
+  int score = see(pos.bitboards(), pos.mailbox(), m);
+  TEST_ASSERT_EQUAL_INT(300, score);
+}
+
+// EP capture: SEE should handle en passant correctly.
+static void test_see_en_passant(void) {
+  init();
+  // After 1.e4 d5 2.e5 f5: white can play exf6 e.p.
+  // White: Ke1, Pe5. Black: Ke8, Pf5, Pd5.
+  // FEN with ep square f6:
+  const char* fen = "4k3/8/8/3pPp2/8/8/8/4K3 w - f6 0 1";
+  Position pos;
+  Move m = makeSEEMove(pos, fen, "e5", "f6",
+                       MOVE_CAPTURE | MOVE_EP);
+  int score = see(pos.bitboards(), pos.mailbox(), m);
+  // PxP ep: gain = 100 (pawn), no defenders of f6.
+  TEST_ASSERT_EQUAL_INT(100, score);
+}
+
 void register_attacks_tests() {
   RUN_TEST(test_knight_attacks_e4);
   RUN_TEST(test_knight_attacks_a1_corner);
@@ -544,4 +636,11 @@ void register_attacks_tests() {
   RUN_TEST(test_attackInfo_pawn_attacks_bulk);
   RUN_TEST(test_attackInfo_color_union);
   RUN_TEST(test_attackInfo_empty_board_only_kings);
+
+  RUN_TEST(test_see_pawn_takes_undefended_knight);
+  RUN_TEST(test_see_pawn_takes_defended_rook);
+  RUN_TEST(test_see_knight_takes_defended_pawn);
+  RUN_TEST(test_see_queen_takes_defended_pawn);
+  RUN_TEST(test_see_rook_takes_undefended_bishop);
+  RUN_TEST(test_see_en_passant);
 }
