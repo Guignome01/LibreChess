@@ -1,5 +1,5 @@
-#ifndef CORE_HISTORY_H
-#define CORE_HISTORY_H
+#ifndef LIBRECHESS_HISTORY_H
+#define LIBRECHESS_HISTORY_H
 
 #include <cstdint>
 #include <string>
@@ -14,55 +14,7 @@ namespace LibreChess {
 
 class Position;  // forward declaration for replayInto()
 
-// ---------------------------------------------------------------------------
-// MoveEntry — a single move record in the game history.
-// Stores enough information to query the move log, support undo/redo,
-// and reconstruct board state.
-// ---------------------------------------------------------------------------
-struct MoveEntry {
-  int fromRow, fromCol;
-  int toRow, toCol;
-  Piece piece;           // piece that moved (original, before any promotion)
-  Piece captured;        // piece captured (Piece::NONE if none)
-  Piece promotion;       // piece promoted to (Piece::NONE if not a promotion)
-  bool isCapture;
-  bool isEnPassant;
-  int epCapturedRow;     // en passant captured pawn row (-1 if N/A)
-  bool isCastling;
-  bool isPromotion;
-  bool isCheck;
-  PositionState prevState;  // position state before the move (enables undo)
-
-  // Build a MoveEntry from move coordinates and result.
-  static MoveEntry build(int fromRow, int fromCol, int toRow, int toCol,
-                         Piece piece, Piece targetPiece,
-                         const MoveResult& result,
-                         const PositionState& prevState) {
-    using namespace LibreChess::piece;
-    Piece captured = Piece::NONE;
-    if (result.isEnPassant)
-      captured = makePiece(~pieceColor(piece), PieceType::PAWN);
-    else if (result.isCapture)
-      captured = targetPiece;
-
-    MoveEntry entry;
-    entry.fromRow = fromRow;
-    entry.fromCol = fromCol;
-    entry.toRow = toRow;
-    entry.toCol = toCol;
-    entry.piece = piece;
-    entry.captured = captured;
-    entry.promotion = result.isPromotion ? result.promotedTo : Piece::NONE;
-    entry.isCapture = result.isCapture;
-    entry.isEnPassant = result.isEnPassant;
-    entry.epCapturedRow = result.epCapturedRow;
-    entry.isCastling = result.isCastling;
-    entry.isPromotion = result.isPromotion;
-    entry.isCheck = result.isCheck;
-    entry.prevState = prevState;
-    return entry;
-  }
-};
+// MoveEntry is defined in move.h (shared between core and game layers).
 
 // ---------------------------------------------------------------------------
 // History — in-memory game history with optional persistent recording.
@@ -115,7 +67,7 @@ class History {
   // --- State queries (persistent storage) ---
 
   bool hasActiveGame();
-  bool getActiveGameInfo(GameModeId& mode, uint8_t& playerColor, uint8_t& botDepth);
+  bool getActiveGameInfo(uint8_t& playerColor, uint8_t* meta = nullptr);
 
   // --- Header accessors ---
 

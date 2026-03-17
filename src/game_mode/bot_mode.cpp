@@ -48,7 +48,9 @@ void BotMode::begin() {
   if (initResult.canResume && tryResumeGame()) {
     // Resumed from flash — skip new game
   } else {
-    chess_->startNewGame(initResult.gameModeId, playerColor_, initResult.depth);
+    chess_->startNewGame(initResult.playerColor,
+                          metaBytes(GameMeta{ static_cast<uint8_t>(initResult.mode),
+                                              initResult.difficulty }));
     if (!initResult.fen.empty())
       setBoardStateFromFEN(initResult.fen);
   }

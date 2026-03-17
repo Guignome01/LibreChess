@@ -432,15 +432,16 @@
         function parseGameHeader(dataView) {
             return {
                 version: dataView.getUint8(0),
-                mode: dataView.getUint8(1),
-                result: dataView.getUint8(2),
-                winnerColor: String.fromCharCode(dataView.getUint8(3)),
-                playerColor: String.fromCharCode(dataView.getUint8(4)),
-                botDepth: dataView.getUint8(5),
-                moveCount: dataView.getUint16(6, true),
-                fenEntryCnt: dataView.getUint16(8, true),
-                lastFenOffset: dataView.getUint16(10, true),
-                timestamp: dataView.getUint32(12, true)
+                result: dataView.getUint8(1),
+                winnerColor: String.fromCharCode(dataView.getUint8(2)),
+                playerColor: String.fromCharCode(dataView.getUint8(3)),
+                moveCount: dataView.getUint16(4, true),
+                fenEntryCnt: dataView.getUint16(6, true),
+                lastFenOffset: dataView.getUint16(8, true),
+                timestamp: dataView.getUint32(10, true),
+                // Meta overlay (firmware convention): meta[0]=mode, meta[1]=difficulty
+                mode: dataView.getUint8(14),
+                difficulty: dataView.getUint8(15)
             };
         }
 
@@ -785,7 +786,7 @@
 
                         let subtitle = MODE_NAMES[game.mode] || 'Game';
                         if (game.mode === 2) {
-                            subtitle = 'vs Stockfish (' + (DEPTH_NAMES[game.botDepth] || 'D' + game.botDepth) + ')';
+                            subtitle = 'vs Stockfish (' + (DEPTH_NAMES[game.difficulty] || 'D' + game.difficulty) + ')';
                         }
 
                         const card = $('<div class=\"game-card\" data-id=\"' + game.id + '\"></div>');
@@ -887,7 +888,7 @@
         // Helper: format opponent/mode text from game metadata
         function formatOpponent(meta) {
             if (meta.mode === 2) {
-                const diff = DEPTH_NAMES[meta.botDepth] || ('Depth ' + meta.botDepth);
+                const diff = DEPTH_NAMES[meta.difficulty] || ('Depth ' + meta.difficulty);
                 const color = meta.playerColor === 'w' ? 'White' : 'Black';
                 return 'vs Stockfish (' + diff + ') as ' + color;
             }

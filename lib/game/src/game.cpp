@@ -27,18 +27,18 @@ void Game::newGame() {
   notifyObserver();
 }
 
-void Game::startNewGame(GameModeId mode, uint8_t playerColor, uint8_t botDepth) {
+void Game::startNewGame(uint8_t playerColor, const uint8_t* meta) {
   newGame();
 
   // Build header and start recording
   GameHeader header;
   memset(&header, 0, sizeof(header));
   header.version = FORMAT_VERSION;
-  header.mode = mode;
   header.result = GameResult::IN_PROGRESS;
   header.winnerColor = '?';
   header.playerColor = playerColor;
-  header.botDepth = botDepth;
+  if (meta)
+    memcpy(header.meta, meta, GAME_META_SIZE);
   history_.setHeader(header);  // creates live file, no-op if no storage
   history_.snapshotPosition(board_.getFen());  // record initial FEN
 }
@@ -268,8 +268,8 @@ bool Game::hasActiveGame() {
   return history_.hasActiveGame();
 }
 
-bool Game::getActiveGameInfo(GameModeId& mode, uint8_t& playerColor, uint8_t& botDepth) {
-  return history_.getActiveGameInfo(mode, playerColor, botDepth);
+bool Game::getActiveGameInfo(uint8_t& playerColor, uint8_t* meta) {
+  return history_.getActiveGameInfo(playerColor, meta);
 }
 
 // ---------------------------------------------------------------------------

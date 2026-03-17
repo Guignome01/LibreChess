@@ -1,5 +1,5 @@
-#ifndef CORE_ITERATOR_H
-#define CORE_ITERATOR_H
+#ifndef LIBRECHESS_ITERATOR_H
+#define LIBRECHESS_ITERATOR_H
 
 // Board iteration helpers — bitboard-based traversal.
 //

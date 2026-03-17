@@ -6,12 +6,22 @@ ESP32 Arduino smart chessboard: detects piece movements via hall-effect sensors 
 ## Architecture
 
 ### Class Hierarchy
-**Core (`lib/core/`)**: `Game` is the central game orchestrator composing `Position` (board representation + position logic), `History` (in-memory move log + persistent game recording), and optionally `IGameObserver`. All chess-state mutations flow through `Game`.
+**Core (`lib/core/`)**: Board representation, rules, movegen, evaluation, notation, FEN — the foundation layer with zero Arduino dependencies. Purely consumed by game and engine.
+
+**Game (`lib/game/`)**: `Game` is the central game orchestrator composing `Position` (from core), `History` (in-memory move log + persistent game recording), and optionally `IGameObserver`. All chess-state mutations flow through `Game`. Also contains `IGameStorage` and `IGameObserver` interfaces.
+
+**Engine (`lib/engine/`)**: `search` (negamax + alpha-beta + quiescence, iterative deepening, transposition table, move ordering) and `Engine` (direct-call facade: `calculateMove(fen, limits) → SearchResult`). Depends on core only.
+
+**Dependency model**: `core ← game`, `core ← engine`. Game never imports engine and vice versa.
 
 **Firmware (`src/`)**: `GameMode` (abstract base, `src/game_mode/`) → `PlayerMode` (human v human) | `BotMode` (concrete, composes `EngineProvider*`). `EngineProvider` (base class with FreeRTOS task lifecycle, `src/engine/`) → `StockfishProvider` (`src/engine/stockfish/`) / `LichessProvider` (`src/engine/lichess/`) / `LibreChessProvider` (`src/engine/librechess/`). `BotMode::update()` drives a non-blocking state machine (`BotState::PLAYER_TURN` / `BotState::ENGINE_THINKING`); engine requests are async via FreeRTOS tasks. `BoardDriver` is shared via pointer injection. Each `GameMode` holds a `Game*` — no global chess state.
 
 ### Key Components
-**Core library** (`lib/core/`): `Game` (orchestrator, lifecycle owner), `Position` (position container with `BitboardSet` + `Piece mailbox[64]`, move execution, game-end detection), `LibreChess` (bitboard) (bitboard types, LERF square mapping, `BitboardSet` struct), `attacks` (precomputed leaper tables + classical ray functions + attacked-by maps), `piece` (type-safe piece representation, all constexpr), `movegen`/`rules` (stateless static logic, bitboard-based attack detection), `utils` (board-level utility namespace), `eval` (tapered evaluation: material + phase-specific PSTs + pawn structure masks and helper queries, interpolated by game phase), `iterator` (bitboard-based iteration: `forEachSquare`, `forEachPiece`, `somePiece`, `findPiece`), `zobrist` (constexpr Zobrist key generation + incremental hashing), `search` (negamax + alpha-beta + quiescence, iterative deepening, transposition table, move ordering), `uci` (transport-agnostic UCI protocol handler: `UCIStream`, `UCIHandler`, `StringUCIStream`), `fen` (FEN parse/serialize), `notation` (coordinate/SAN/LAN conversion), `History` (move log + persistent recording), `types.h` (shared structs/enums), `IGameStorage`/`IGameObserver`/`ILogger` (DI interfaces). Full API details in `.github/instructions/core-library.instructions.md` (auto-loaded for `lib/core/`).
+**Core library** (`lib/core/`): `Position` (position container with `BitboardSet` + `Piece mailbox[64]`, move execution, game-end detection), `LibreChess` (bitboard) (bitboard types, LERF square mapping, `BitboardSet` struct), `attacks` (precomputed leaper tables + classical ray functions + attacked-by maps), `piece` (type-safe piece representation, all constexpr), `movegen`/`rules` (stateless static logic, bitboard-based attack detection), `utils` (board-level utility namespace), `eval` (tapered evaluation: material + phase-specific PSTs + pawn structure masks and helper queries, interpolated by game phase), `iterator` (bitboard-based iteration: `forEachSquare`, `forEachPiece`, `somePiece`, `findPiece`), `zobrist` (constexpr Zobrist key generation + incremental hashing), `fen` (FEN parse/serialize), `notation` (coordinate/SAN/LAN conversion), `types.h` (core chess enums/structs: Color, Piece, GameResult, PositionState, HashHistory, MoveFormat), `move.h` (Move, MoveResult, MoveEntry, MoveList), `logger.h` (ILogger interface). Full API details in `.github/instructions/core-library.instructions.md`.
+
+**Game library** (`lib/game/`): `Game` (orchestrator, lifecycle owner), `History` (move log + persistent recording), `IGameStorage`/`IGameObserver` (DI interfaces), `types.h` (game-management types: `GameHeader` packed struct with opaque `meta[]` byte array, recording constants).
+
+**Engine library** (`lib/engine/`): `search` (negamax + alpha-beta + quiescence, iterative deepening, transposition table, move ordering), `Engine` (direct-call facade over search: `calculateMove(fen, limits) → SearchResult`).
 
 **Firmware** (`src/`): `BoardDriver` (LED + sensors + calibration), `WiFiManagerESP32` (web server + API + WiFi + NVS), `LittleFSStorage` (`IGameStorage` impl), `SerialLogger` (`ILogger` impl), `SystemUtils` (Arduino helpers), `SensorTest` (standalone sensor testing), `BoardMenu`/`MenuNavigator` (board-as-GUI).
 
@@ -44,7 +54,7 @@ Unit tests run natively on the host machine (no ESP32 required) using the Platfo
 | Action | Command |
 |--------|--------|
 | Run all tests | `pio test -e native` |
-| Run the suite | `pio test -e native -f test_core` |
+| Run a suite | `pio test -e native -f test_core` |
 
 For test architecture, file mirroring conventions, and per-file test group details, see `.github/instructions/testing.instructions.md` (auto-loaded when editing `test/` files).
 

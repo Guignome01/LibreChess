@@ -1,4 +1,5 @@
 #include "lichess_provider.h"
+#include "game_mode/game_mode.h"
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
 
@@ -76,8 +77,8 @@ bool LichessProvider::initialize(EngineInitResult& result) {
 
   // Populate init result
   result.playerColor = playerColor_;
-  result.gameModeId = GameModeId::LICHESS;
-  result.depth = 0;
+  result.mode = GameModeId::LICHESS;
+  result.difficulty = 0;
   result.canResume = false;
 
   if (state.fen.length() > 0 && state.fen != "startpos")

@@ -175,16 +175,16 @@ bool History::hasActiveGame() {
   return storage_->hasActiveGame();
 }
 
-bool History::getActiveGameInfo(GameModeId& mode, uint8_t& playerColor, uint8_t& botDepth) {
+bool History::getActiveGameInfo(uint8_t& playerColor, uint8_t* meta) {
   if (!storage_) return false;
 
   GameHeader hdr;
   if (!storage_->readHeader(hdr)) return false;
   if (hdr.version != FORMAT_VERSION) return false;
 
-  mode = hdr.mode;
   playerColor = hdr.playerColor;
-  botDepth = hdr.botDepth;
+  if (meta)
+    memcpy(meta, hdr.meta, GAME_META_SIZE);
   return true;
 }
 

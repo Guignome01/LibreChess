@@ -5,11 +5,6 @@
 #include <observer.h>
 #include <types.h>
 
-// Shared globals from test_core.cpp
-extern BitboardSet bb;
-extern Piece mailbox[64];
-extern bool needsDefaultKings;
-
 static Game game;
 
 // Reset Game before every test

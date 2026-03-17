@@ -1,19 +1,21 @@
 ---
-applyTo: "lib/core/**, src/game_mode/**, src/engine/**"
-description: "Core chess library classes — Game, Position, History, movegen/rules, piece, utils, fen, notation, zobrist, types, interfaces. Use for any work on lib/core/, game modes, or engine providers including bug fixes, feature additions, refactoring, or test writing."
+applyTo: "lib/core/**, lib/game/**, lib/engine/**, src/game_mode/**, src/engine/**"
+description: "Core chess library classes — Game, Position, History, movegen/rules, piece, utils, fen, notation, zobrist, types, interfaces. Use for any work on lib/core/, lib/game/, lib/engine/, game modes, or engine providers including bug fixes, feature additions, refactoring, or test writing."
 ---
 
-# Core Chess Library (`lib/core/`)
+# Chess Libraries (`lib/`)
 
-Pure C++ chess library with no hardware dependencies. Natively compilable for unit tests. Uses `std::string` (not Arduino `String`); firmware bridges with `.c_str()` / `std::string()`.
+Three PlatformIO libraries with clean dependency boundaries: `core ← game`, `core ← engine`. Game never imports engine and vice versa.
+
+Pure C++ with no hardware dependencies. Natively compilable for unit tests. Uses `std::string` (not Arduino `String`); firmware bridges with `.c_str()` / `std::string()`.
 
 ## Component Roles
 
+### Foundation (`lib/core/`)
+
 | Class/Namespace | Role | State |
 |-----------------|------|-------|
-| `Game` | Central orchestrator, sole owner of game lifecycle | Composes Position + History |
 | `Position` | Position container, move execution, game-end detection | Board array, turn, PositionState, king cache, HashHistory |
-| `History` | In-memory move log + persistent recording | Cursor-based undo/redo, binary storage |
 | `piece` | Type-safe piece representation: type/color extraction, construction, predicates, color-derived constants, FEN char conversion | Stateless namespace (all constexpr), defined in `piece.h` |
 | `movegen`/`rules` | Per-piece and bulk move generation, check/checkmate/stalemate detection | Stateless (all static) |
 | `eval` | Tapered evaluation: material + phase-specific PSTs (midgame/endgame for king and pawn, shared for other pieces) + pawn structure (passed, isolated, doubled, backward, connected passers). Game phase from non-pawn material (N=1, B=1, R=2, Q=4; max 24). Returns centipawns (`int`). | Stateless namespace |
@@ -23,10 +25,22 @@ Pure C++ chess library with no hardware dependencies. Natively compilable for un
 | `attacks` | Precomputed leaper tables (`KNIGHT[64]`, `KING[64]`, `PAWN[2][64]`), O(1) slider functions (`rook` via first-rank table + Hyperbola Quintessence, `bishop` via HQ on diagonal masks, `queen` = rook+bishop), x-ray attack functions (`xrayRook`, `xrayBishop`), `between(s1, s2)` (strictly between, exclusive), `line(s1, s2)` (full line through both, inclusive, edge-to-edge; **pre-built** for SEE), `AttackInfo` struct + `computeAll(bb)` (per-piece-type and per-color attack maps; **pre-built** for king safety, mobility, and move ordering), `isSquareUnderAttack(bb, sq, color)` (per-piece-type attack table lookups) | Stateless namespace (~3 KiB tables, initialized once via `init()`) |
 | `eval` | Pawn-structure masks (`pawnPassedMask`, `pawnIsolatedMask`, `pawnForwardMask` — file-scoped) and helper queries (`isPassed`, `isIsolated`, `isDoubled`, `isBackward`), lazy-initialized on first `evaluatePosition()` call via `initPawnMasks()` | Stateless namespace |
 | `zobrist` | Zobrist key generation (constexpr xorshift64), piece-index mapping, full-board hash computation | Stateless namespace (header-only) |
-| `search` | On-board chess engine: negamax + alpha-beta + quiescence, iterative deepening, transposition table, move ordering (TT move → MVV-LVA → killers → history) | Stateless namespace (search state passed in/out) |
-| `uci` | Transport-agnostic UCI protocol handler: `UCIStream` (abstract I/O), `UCIHandler` (owns Position + TT + stop flag), `StringUCIStream` (in-memory for testing) | `UCIHandler` is stateful |
 | `fen` | FEN parse/serialize/validate | Stateless namespace |
 | `notation` | Coordinate/SAN/LAN conversion | Stateless namespace |
+
+### Game (`lib/game/`)
+
+| Class/Namespace | Role | State |
+|-----------------|------|-------|
+| `Game` | Central orchestrator, sole owner of game lifecycle | Composes Position + History |
+| `History` | In-memory move log + persistent recording | Cursor-based undo/redo, binary storage |
+
+### Engine (`lib/engine/`)
+
+| Class/Namespace | Role | State |
+|-----------------|------|-------|
+| `search` | On-board chess engine: negamax + alpha-beta + quiescence, iterative deepening, transposition table, move ordering (TT move → MVV-LVA → killers → history) | Stateless namespace (search state passed in/out) |
+| `Engine` | Direct-call facade over `search::findBestMove()`. Owns Position, TranspositionTable, stop control. API: `calculateMove(fen, limits) → SearchResult` | Stateful (owns Position + TT) |
 
 ### Interfaces (DI)
 
@@ -108,9 +122,9 @@ These explain *why* the architecture is the way it is — constraints that code 
 
 - **Fixed-size arrays everywhere** — `MoveEntry[300]`, `HashHistory` (256 entries), `MoveList` (218 entries, stores `Move` structs), no `std::vector`. This is for ESP32: heap fragmentation from repeated vector growth is a real problem with 320KB RAM.
 
-- **Search is a stateless namespace** — `search::findBestMove()` takes a `Position` (by const ref), `SearchLimits`, and optional TT pointer. All per-search state (killers, history table, node counter) lives in `SearchState`, allocated on the stack or task stack. The search does not own the position — it creates temporary copies for make/unmake. This makes search safe to run from any context (FreeRTOS task, test, UCI handler).
+- **Search is a stateless namespace** — `search::findBestMove()` takes a `Position` (by const ref), `SearchLimits`, and optional TT pointer. All per-search state (killers, history table, node counter) lives in `SearchState`, allocated on the stack or task stack. The search does not own the position — it creates temporary copies for make/unmake. This makes search safe to run from any context (FreeRTOS task, test, Engine facade).
 
-- **UCI handler owns search infrastructure** — `UCIHandler` owns a `Position`, `TranspositionTable`, and stop flag. The search runs synchronously inside `handleGo()` — threading is the caller's responsibility (FreeRTOS task in `LibreChessProvider`, blocking loop for Serial UCI). `setExternalStop()` wires an external cancellation flag (e.g. `ctx->cancel`) to `SearchLimits::stop` so the search cooperatively unwinds on cancellation.
+- **Engine facade owns search infrastructure** — `Engine` owns a `Position`, `TranspositionTable`, and stop control. `calculateMove(fen, limits)` loads the FEN, wires stop flags, calls `findBestMove()`, and returns the structured `SearchResult`. Threading is the caller's responsibility (FreeRTOS task in `LibreChessProvider`). `setExternalStop()` wires an external cancellation flag (e.g. `ctx->cancel`) to `SearchLimits::stop` so the search cooperatively unwinds on cancellation.
 
 - **TT entry is 12 bytes** — `TTEntry` stores `key32` (upper 32 bits of Zobrist), `int16_t score`, `PackedMove` (uint16_t from/to/flags), `int8_t depth`, `TTFlag`. Mate scores are adjusted relative to search ply on store/probe (`scoreToTT`/`scoreFromTT`) so TT entries are ply-independent. TT size is always rounded down to a power of two for fast modular indexing.
 
@@ -125,7 +139,7 @@ These explain *why* the architecture is the way it is — constraints that code 
 - **Color-derived helpers**: `pawnDirection()`, `homeRow()`, `promotionRow()`, `~color` (opponent), `makePiece()` — in `piece`, use these instead of inline ternaries for color-dependent values.
 - **Castling bit mapping**: `castlingCharToBit()` is the single source of truth for K/Q/k/q → bitmask. `hasCastlingRight()` wraps it with color+side semantics. All castling rights logic should use these.
 - **MoveEntry factory**: `MoveEntry::build()` encapsulates captured-piece determination and all field assignments. Both `Game::makeMove()` and `History::replayInto()` use it.
-- **Cohesive data types**: `MoveList` stores `Move[218]` + count — used by both per-piece `getPossibleMoves` (with UI adapter accessors `targetRow(i)`/`targetCol(i)`) and bulk `generateAllMoves`/`generateCaptures`. `Move` struct stores compact from/to/flags (3 bytes: capture, EP, castling, promotion + 2-bit promo piece type). Promotions emit 4 `Move` variants per target square (one per piece type). `ScoredMove` pairs a `Move` with `int16_t score` for future move ordering. `HashHistory` bundles Zobrist keys + count. `BitboardSet` bundles 12 piece + 2 color + 1 occupancy bitboards. All defined in `types.h` / `bitboard.h`.
+- **Cohesive data types**: `MoveList` stores `Move[218]` + count — used by both per-piece `getPossibleMoves` (with UI adapter accessors `targetRow(i)`/`targetCol(i)`) and bulk `generateAllMoves`/`generateCaptures`. `Move` struct stores compact from/to/flags (3 bytes: capture, EP, castling, promotion + 2-bit promo piece type). Promotions emit 4 `Move` variants per target square (one per piece type). `ScoredMove` pairs a `Move` with `int16_t score` for future move ordering. `HashHistory` bundles Zobrist keys + count. `BitboardSet` bundles 12 piece + 2 color + 1 occupancy bitboards. All defined in `types.h` / `bitboard.h`. Game-management types (`GameHeader`, recording constants) live in `lib/game/src/types.h`. `GameHeader` contains an opaque `meta[GAME_META_SIZE]` byte array — firmware defines the semantic overlay (`GameModeId`, difficulty) in `game_mode.h`; the library stores and returns these bytes without interpretation.
 - **Bitboard serialization via popLsb**: iterating pieces uses `while (bb) { sq = popLsb(bb); ... }` — the standard pattern for extracting set bits from a bitboard one at a time.
 - **Attack detection via bitwise AND**: `attacks::isSquareUnderAttack` checks `attacks::KNIGHT[sq] & bb.byPiece[knightIdx]` etc. — a single AND per piece type replaces ray-walking loops.
 - **Pin-aware move generation**: `movegen::getPossibleMoves`, `movegen::hasAnyLegalMove`, `generateAllMoves`, and `generateCaptures` compute a `checkMask` and `PinData` (up to 8 pins, one per direction) once per call. Non-king/non-EP moves are filtered via bitwise AND against `pinRayFor(pinData, sq) & checkMask` — no `leavesInCheck` call needed. Only king moves and EP captures still use copy-make (`leavesInCheck`). X-ray helpers (`xrayRook`, `xrayBishop`, `between`) in `attacks` support pin detection. File-local helpers in `movegen.cpp + rules.cpp` anonymous namespace: `PinData` struct, `pinRayFor`, `attackersOfSquare`, `computePinData`.
@@ -133,9 +147,9 @@ These explain *why* the architecture is the way it is — constraints that code 
 
 ## Completion Checklist
 
-Every change to `lib/core/` MUST include these steps before the work is considered done. Do not defer any of them to a follow-up.
+Every change to `lib/core/`, `lib/game/`, or `lib/engine/` MUST include these steps before the work is considered done. Do not defer any of them to a follow-up.
 
-1. **Tests** — add or update unit tests in `test/test_core/` covering the changed behavior. New public APIs, new structs, renamed parameters, moved functions, and new internal state (like caches) all need test coverage. Register new test functions in `test_core.cpp`.
+1. **Tests** — add or update unit tests in the appropriate test suite (`test/test_core/`, `test/test_game/`, or `test/test_engine/`) covering the changed behavior. New public APIs, new structs, renamed parameters, moved functions, and new internal state (like caches) all need test coverage. Register new test functions in the suite's `test_all.cpp`.
 2. **Scoped instructions** — if the change affects anything described in this file (`core-library.instructions.md`), update it: Component Roles table, Fundamental Concepts table, Data Flow steps, Design Decisions, Key Patterns.
 3. **Architecture doc** — if the change affects class responsibilities, public APIs, internal state, or component relationships described in `docs/development/architecture.md`, update the relevant section.
 4. **Project structure doc** — if files are added, removed, or their purpose changes, update `docs/development/project-structure.md`.

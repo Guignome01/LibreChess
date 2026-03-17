@@ -1,5 +1,5 @@
-#ifndef CORE_ATTACKS_H
-#define CORE_ATTACKS_H
+#ifndef LIBRECHESS_ATTACKS_H
+#define LIBRECHESS_ATTACKS_H
 
 // ---------------------------------------------------------------------------
 // Precomputed attack tables and slider attack functions.

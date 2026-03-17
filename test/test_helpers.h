@@ -4,7 +4,6 @@
 #include <bitboard.h>
 #include <utils.h>
 #include <fen.h>
-#include <game.h>
 #include <movegen.h>
 #include <notation.h>
 #include <position.h>
@@ -82,5 +81,10 @@ inline MoveEntry makeEntry(int fr, int fc, int tr, int tc, Piece piece,
 /// Provides clear failure messages with numeric values (e.g., "Expected 1 Was 0").
 #define TEST_ASSERT_ENUM_EQ(expected, actual) \
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected), static_cast<uint8_t>(actual))
+
+// Shared test globals — defined in test_shared.cpp, compiled into every suite.
+extern BitboardSet bb;
+extern Piece mailbox[64];
+extern bool needsDefaultKings;
 
 #endif // TEST_HELPERS_H

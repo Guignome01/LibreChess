@@ -41,7 +41,7 @@ Web resign: `setResignPending(true)` → `processResign()` checks the flag at th
 
 ## PlayerMode
 
-Minimal subclass — `begin()` resumes or starts a `GameModeId::CHESS_MOVES` game. `update()` calls `tryPlayerMove(currentTurn)` for alternating colors.
+Minimal subclass — `begin()` resumes or starts a `GameModeId::PLAYER` game. `update()` calls `tryPlayerMove(currentTurn)` for alternating colors.
 
 ## BotMode
 
@@ -55,7 +55,7 @@ Composes an `EngineProvider*` (strategy pattern, owned — deleted in destructor
 1. Check WiFi → abort if disconnected.
 2. Show waiting animation → `provider_->initialize()` (may block for HTTP).
 3. Stop animation → check init result.
-4. Resume or start new game with `initResult.gameModeId`, `playerColor_`, `depth`.
+4. Resume or start new game with `initResult.playerColor`, packed `GameMeta` (mode + difficulty).
 5. `waitForBoardSetup()`.
 6. If engine's turn first → immediately `requestMove()` + enter `ENGINE_THINKING`.
 

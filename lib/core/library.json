@@ -1,5 +1,5 @@
 {
   "name": "core",
   "version": "1.0.0",
-  "description": "Chess core library — natively compilable, no Arduino dependencies"
+  "description": "Chess foundation — board representation, rules, movegen, evaluation, notation, FEN. No Arduino dependencies."
 }

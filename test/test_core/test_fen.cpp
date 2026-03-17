@@ -3,10 +3,6 @@
 #include "../test_helpers.h"
 #include <fen.h>
 
-extern BitboardSet bb;
-extern Piece mailbox[64];
-extern bool needsDefaultKings;
-
 // ---------------------------------------------------------------------------
 // FEN round-trip
 // ---------------------------------------------------------------------------

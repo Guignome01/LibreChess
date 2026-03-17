@@ -1,5 +1,5 @@
-#ifndef CORE_GAME_H
-#define CORE_GAME_H
+#ifndef LIBRECHESS_GAME_H
+#define LIBRECHESS_GAME_H
 
 #include <string>
 
@@ -42,7 +42,7 @@ class Game {
   // --- Lifecycle ---
 
   void newGame();
-  void startNewGame(GameModeId mode, uint8_t playerColor = '?', uint8_t botDepth = 0);
+  void startNewGame(uint8_t playerColor = '?', const uint8_t* meta = nullptr);
   void endGame(GameResult result, char winnerColor);
   void discardRecording();
 
@@ -79,7 +79,7 @@ class Game {
   // --- Resume queries ---
 
   bool hasActiveGame();
-  bool getActiveGameInfo(GameModeId& mode, uint8_t& playerColor, uint8_t& botDepth);
+  bool getActiveGameInfo(uint8_t& playerColor, uint8_t* meta = nullptr);
 
   // --- Game state (owned by Game) ---
 

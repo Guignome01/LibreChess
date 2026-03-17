@@ -13,11 +13,6 @@
 #include <string>
 #include <vector>
 
-// Shared globals from test_core.cpp
-extern BitboardSet bb;
-extern Piece mailbox[64];
-extern bool needsDefaultKings;
-
 // ---------------------------------------------------------------------------
 // MockLogger — captures log messages for verification
 // ---------------------------------------------------------------------------
@@ -140,17 +135,21 @@ static MockLogger logger;
 static MockGameStorage storage;
 static History history(&storage, &logger);
 
+// Test meta byte convention: meta[0]=mode, meta[1]=difficulty
+static constexpr uint8_t MODE_PLAYER  = 1;
+static constexpr uint8_t MODE_BOT     = 2;
+static constexpr uint8_t MODE_LICHESS = 3;
+
 // Helper: build a GameHeader for testing
-static GameHeader makeTestHeader(GameModeId mode = GameModeId::CHESS_MOVES,
-                                 char playerColor = '?', uint8_t botDepth = 0) {
+static GameHeader makeTestHeader(char playerColor = '?',
+                                 const uint8_t* meta = nullptr) {
   GameHeader h;
   memset(&h, 0, sizeof(h));
   h.version = FORMAT_VERSION;
-  h.mode = mode;
   h.result = GameResult::IN_PROGRESS;
   h.winnerColor = '?';
   h.playerColor = playerColor;
-  h.botDepth = botDepth;
+  if (meta) memcpy(h.meta, meta, GAME_META_SIZE);
   return h;
 }
 
@@ -166,10 +165,11 @@ static void setupRecorder() {
 
 void test_recorder_set_header(void) {
   setupRecorder();
-  history.setHeader(makeTestHeader(GameModeId::CHESS_MOVES));
+  const uint8_t meta[] = { MODE_PLAYER, 0 };
+  history.setHeader(makeTestHeader('?', meta));
   TEST_ASSERT_TRUE(history.isRecording());
   TEST_ASSERT_TRUE(storage.gameActive);
-  TEST_ASSERT_ENUM_EQ(GameModeId::CHESS_MOVES, storage.storedHeader.mode);
+  TEST_ASSERT_EQUAL_UINT8(MODE_PLAYER, storage.storedHeader.meta[0]);
 }
 
 void test_recorder_add_move_persists(void) {
@@ -225,7 +225,8 @@ void test_recorder_not_recording_noop(void) {
 void test_recorder_has_active_game(void) {
   setupRecorder();
   TEST_ASSERT_FALSE(history.hasActiveGame());
-  history.setHeader(makeTestHeader(GameModeId::BOT, 'w', 5));
+  const uint8_t meta[] = { MODE_BOT, 5 };
+  history.setHeader(makeTestHeader('w', meta));
   TEST_ASSERT_TRUE(history.hasActiveGame());
 }
 
@@ -233,17 +234,17 @@ void test_recorder_get_active_game_info(void) {
   setupRecorder();
   storage.gameActive = true;
   storage.storedHeader.version = FORMAT_VERSION;
-  storage.storedHeader.mode = GameModeId::BOT;
   storage.storedHeader.playerColor = 'b';
-  storage.storedHeader.botDepth = 3;
+  storage.storedHeader.meta[0] = MODE_BOT;
+  storage.storedHeader.meta[1] = 3;
 
   History histWithLive(&storage, &logger);
-  GameModeId mode;
-  uint8_t color, depth;
-  TEST_ASSERT_TRUE(histWithLive.getActiveGameInfo(mode, color, depth));
-  TEST_ASSERT_ENUM_EQ(GameModeId::BOT, mode);
+  uint8_t color;
+  uint8_t metaBuf[GAME_META_SIZE];
+  TEST_ASSERT_TRUE(histWithLive.getActiveGameInfo(color, metaBuf));
   TEST_ASSERT_EQUAL_CHAR('b', (char)color);
-  TEST_ASSERT_EQUAL_UINT8(3, depth);
+  TEST_ASSERT_EQUAL_UINT8(MODE_BOT, metaBuf[0]);
+  TEST_ASSERT_EQUAL_UINT8(3, metaBuf[1]);
 }
 
 void test_recorder_replay_into_board(void) {
@@ -319,9 +320,10 @@ void test_recorder_replay_rejects_invalid_move(void) {
 
 void test_recorder_set_header_lichess_mode(void) {
   setupRecorder();
-  history.setHeader(makeTestHeader(GameModeId::LICHESS, 'w'));
+  const uint8_t meta[] = { MODE_LICHESS, 0 };
+  history.setHeader(makeTestHeader('w', meta));
   TEST_ASSERT_TRUE(history.isRecording());
-  TEST_ASSERT_ENUM_EQ(GameModeId::LICHESS, storage.storedHeader.mode);
+  TEST_ASSERT_EQUAL_UINT8(MODE_LICHESS, storage.storedHeader.meta[0]);
 }
 
 void test_recorder_set_header_while_active(void) {
@@ -331,10 +333,11 @@ void test_recorder_set_header_while_active(void) {
   TEST_ASSERT_TRUE(history.isRecording());
 
   // Set header again — previous game should be discarded
-  history.setHeader(makeTestHeader(GameModeId::BOT, 'w', 5));
+  const uint8_t meta[] = { MODE_BOT, 5 };
+  history.setHeader(makeTestHeader('w', meta));
   TEST_ASSERT_TRUE(history.isRecording());
-  TEST_ASSERT_ENUM_EQ(GameModeId::BOT, storage.storedHeader.mode);
-  TEST_ASSERT_EQUAL_UINT8(5, storage.storedHeader.botDepth);
+  TEST_ASSERT_EQUAL_UINT8(MODE_BOT, storage.storedHeader.meta[0]);
+  TEST_ASSERT_EQUAL_UINT8(5, storage.storedHeader.meta[1]);
   // Move data should be cleared (new game)
   TEST_ASSERT_EQUAL(0, (int)storage.moveData.size());
 }
@@ -486,7 +489,7 @@ void test_game_new_game(void) {
 
 void test_game_make_move(void) {
   setupGame();
-  game->startNewGame(GameModeId::CHESS_MOVES);
+  game->startNewGame();
   observer.callCount = 0;
 
   MoveResult r = game->makeMove(6, 4, 4, 4);  // e2e4
@@ -506,7 +509,7 @@ void test_game_make_move(void) {
 
 void test_game_make_move_auto_finish(void) {
   setupGame();
-  game->startNewGame(GameModeId::CHESS_MOVES);
+  game->startNewGame();
 
   // Scholar's mate sequence
   game->makeMove(6, 4, 4, 4);  // e2-e4
@@ -528,7 +531,7 @@ void test_game_make_move_auto_finish(void) {
 
 void test_game_end_game(void) {
   setupGame();
-  game->startNewGame(GameModeId::CHESS_MOVES);
+  game->startNewGame();
 
   game->endGame(GameResult::RESIGNATION, 'b');
   TEST_ASSERT_TRUE(game->isGameOver());
@@ -542,7 +545,7 @@ void test_game_end_game(void) {
 
 void test_game_load_fen(void) {
   setupGame();
-  game->startNewGame(GameModeId::CHESS_MOVES);
+  game->startNewGame();
   observer.callCount = 0;
 
   std::string fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1";
@@ -573,7 +576,7 @@ void test_game_no_observer(void) {
   logger = MockLogger();
   storage = MockGameStorage();
   Game noObs(&storage, nullptr, &logger);
-  noObs.startNewGame(GameModeId::CHESS_MOVES);
+  noObs.startNewGame();
   MoveResult r = noObs.makeMove(6, 4, 4, 4);
   TEST_ASSERT_TRUE(r.valid);
   // startNewGame FEN marker (2 bytes) + addMove (2 bytes) = 4
@@ -582,7 +585,7 @@ void test_game_no_observer(void) {
 
 void test_game_discard_recording(void) {
   setupGame();
-  game->startNewGame(GameModeId::CHESS_MOVES);
+  game->startNewGame();
   game->makeMove(6, 4, 4, 4);
 
   game->discardRecording();
@@ -609,7 +612,7 @@ void test_game_pass_throughs(void) {
 
 void test_game_end_game_idempotent(void) {
   setupGame();
-  game->startNewGame(GameModeId::CHESS_MOVES);
+  game->startNewGame();
 
   game->endGame(GameResult::RESIGNATION, 'b');
   TEST_ASSERT_TRUE(game->isGameOver());
@@ -626,16 +629,17 @@ void test_game_end_game_idempotent(void) {
 
 void test_game_start_new_game(void) {
   setupGame();
-  game->startNewGame(GameModeId::BOT, 'w', 5);
+  const uint8_t meta[] = { MODE_BOT, 5 };
+  game->startNewGame('w', meta);
 
   TEST_ASSERT_ENUM_EQ(Color::WHITE, game->currentTurn());
   TEST_ASSERT_FALSE(game->isGameOver());
 
   // Should have started recording and initialized board
   TEST_ASSERT_TRUE(storage.gameActive);
-  TEST_ASSERT_ENUM_EQ(GameModeId::BOT, storage.storedHeader.mode);
+  TEST_ASSERT_EQUAL_UINT8(MODE_BOT, storage.storedHeader.meta[0]);
   TEST_ASSERT_EQUAL_CHAR('w', storage.storedHeader.playerColor);
-  TEST_ASSERT_EQUAL_UINT8(5, storage.storedHeader.botDepth);
+  TEST_ASSERT_EQUAL_UINT8(5, storage.storedHeader.meta[1]);
 
   // Initial FEN should have been recorded
   TEST_ASSERT_EQUAL(1, (int)storage.fenEntries.size());
@@ -644,7 +648,7 @@ void test_game_start_new_game(void) {
 
 void test_game_resume_game(void) {
   setupGame();
-  game->startNewGame(GameModeId::CHESS_MOVES);
+  game->startNewGame();
   game->makeMove(6, 4, 4, 4);  // e2-e4
   game->makeMove(1, 4, 3, 4);  // e7-e5
 
@@ -663,7 +667,7 @@ void test_game_resume_game(void) {
 
 void test_game_resume_finished_game(void) {
   setupGame();
-  game->startNewGame(GameModeId::CHESS_MOVES);
+  game->startNewGame();
 
   // Play Scholar's mate to completion
   game->makeMove(6, 4, 4, 4);  // e2-e4
@@ -690,7 +694,7 @@ void test_game_resume_finished_game(void) {
 
 void test_game_make_move_records_promotion(void) {
   setupGame();
-  game->startNewGame(GameModeId::CHESS_MOVES);
+  game->startNewGame();
   game->loadFEN("8/4P3/8/8/8/8/8/4K2k w - - 0 1");
 
   MoveResult r = game->makeMove(1, 4, 0, 4);  // e7-e8=Q (auto-queen)
@@ -712,7 +716,7 @@ void test_game_make_move_records_promotion(void) {
 
 void test_game_undo_redo(void) {
   setupGame();
-  game->startNewGame(GameModeId::CHESS_MOVES);
+  game->startNewGame();
   game->makeMove(6, 4, 4, 4);  // e2-e4
   game->makeMove(1, 4, 3, 4);  // e7-e5
 
@@ -739,7 +743,7 @@ void test_game_undo_redo(void) {
 
 void test_game_undo_at_start(void) {
   setupGame();
-  game->startNewGame(GameModeId::CHESS_MOVES);
+  game->startNewGame();
   TEST_ASSERT_FALSE(game->canUndo());
   TEST_ASSERT_FALSE(game->undoMove());
   teardownGame();
@@ -792,13 +796,6 @@ void test_game_result_pinned_values(void) {
   TEST_ASSERT_EQUAL_UINT8(7, static_cast<uint8_t>(GameResult::DRAW_AGREEMENT));
   TEST_ASSERT_EQUAL_UINT8(8, static_cast<uint8_t>(GameResult::TIMEOUT));
   TEST_ASSERT_EQUAL_UINT8(9, static_cast<uint8_t>(GameResult::ABORTED));
-}
-
-void test_game_mode_pinned_values(void) {
-  TEST_ASSERT_EQUAL_UINT8(0, static_cast<uint8_t>(GameModeId::NONE));
-  TEST_ASSERT_EQUAL_UINT8(1, static_cast<uint8_t>(GameModeId::CHESS_MOVES));
-  TEST_ASSERT_EQUAL_UINT8(2, static_cast<uint8_t>(GameModeId::BOT));
-  TEST_ASSERT_EQUAL_UINT8(3, static_cast<uint8_t>(GameModeId::LICHESS));
 }
 
 void test_fen_marker_no_collision(void) {
@@ -863,7 +860,6 @@ void register_history_persistence_tests() {
 
   // On-disk format stability
   RUN_TEST(test_game_result_pinned_values);
-  RUN_TEST(test_game_mode_pinned_values);
   RUN_TEST(test_fen_marker_no_collision);
   RUN_TEST(test_game_header_size);
 }

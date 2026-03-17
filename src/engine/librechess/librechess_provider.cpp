@@ -1,15 +1,19 @@
 #include "librechess_provider.h"
 
+#include "game_mode/game_mode.h"
 #include <Arduino.h>
 #include <esp_heap_caps.h>
+
+#include "notation.h"
+#include "square.h"
 
 // ---------------------------------------------------------------------------
 // LibreChessProvider — on-board chess engine using the core search library.
 //
 // Each requestMove() spawns a FreeRTOS task that:
-//   1. Creates a UCIHandler with an appropriately-sized TT.
-//   2. Sends "position fen <fen>" + "go depth N" (or "go movetime N").
-//   3. Reads the "bestmove" response from the string buffer.
+//   1. Creates an Engine with an appropriately-sized TT.
+//   2. Calls calculateMove(fen, limits) directly — no string serialization.
+//   3. Converts the SearchResult to an EngineResult.
 //   4. Sets the result and marks ready.
 //
 // The task is cooperative-cancellable via ctx->cancel → SearchLimits.stop.
@@ -27,8 +31,8 @@ bool LibreChessProvider::initialize(EngineInitResult& result) {
   logger_.infof("  depth=%d, moveTimeMs=%u", depth_, moveTimeMs_);
   result.playerColor = playerColor_;
   result.fen = "";  // Starting position
-  result.gameModeId = GameModeId::BOT;
-  result.depth = static_cast<uint8_t>(depth_);
+  result.mode = GameModeId::BOT;
+  result.difficulty = static_cast<uint8_t>(depth_);
   result.canResume = true;
   return true;
 }
@@ -80,58 +84,36 @@ void LibreChessProvider::taskFunction(void* param) {
   ctx->logger.infof("LibreChess: TT %d entries (%u bytes), free heap %u",
                      ttEntries, ttEntries * ENTRY_SIZE, freeHeap);
 
-  // Create an in-process UCI handler
-  LibreChess::uci::UCIHandler handler(ttEntries);
-  handler.setTimeFunc([]() -> uint32_t { return millis(); });
+  // Create Engine and configure stop/time
+  LibreChess::Engine engine(ttEntries);
+  engine.setTimeFunc([]() -> uint32_t { return millis(); });
+  engine.setExternalStop(&ctx->cancel);
 
-  // Wire the cancellation flag: when ctx->cancel is set by the main
-  // thread (via EngineProvider::cancelRequest), the search will see it
-  // via SearchLimits::stop and unwind cooperatively.
-  handler.setExternalStop(&ctx->cancel);
+  // Build search limits
+  LibreChess::search::SearchLimits limits;
+  if (ctx->depth > 0) limits.maxDepth = ctx->depth;
+  if (ctx->moveTimeMs > 0) limits.maxTimeMs = ctx->moveTimeMs;
+  if (ctx->depth <= 0 && ctx->moveTimeMs <= 0) limits.maxDepth = 6;
 
-  LibreChess::uci::StringUCIStream stream;
+  // Run the search — returns structured result, no string parsing needed
+  auto result = engine.calculateMove(ctx->fen, limits);
 
-  // Set up the position
-  stream.addInput("position fen " + ctx->fen);
-
-  // Build "go" command
-  std::string goCmd = "go";
-  if (ctx->depth > 0) goCmd += " depth " + std::to_string(ctx->depth);
-  if (ctx->moveTimeMs > 0) goCmd += " movetime " + std::to_string(ctx->moveTimeMs);
-  if (ctx->depth <= 0 && ctx->moveTimeMs <= 0) goCmd += " depth 6";
-  stream.addInput(goCmd);
-  stream.addInput("quit");
-
-  // Run the UCI loop (processes position, go, quit)
-  handler.loop(stream);
-
-  // Extract bestmove from output
-  for (const auto& line : stream.output()) {
-    if (line.substr(0, 9) == "bestmove ") {
-      std::string move = line.substr(9);
-      // Trim any trailing text (e.g., " ponder ...")
-      size_t sp = move.find(' ');
-      if (sp != std::string::npos) move = move.substr(0, sp);
-
-      ctx->result.type = EngineResult::MOVE;
-      ctx->result.move = move;
-      ctx->result.evaluation = 0;  // Could parse from info lines
-
-      // Parse evaluation from the last info line
-      for (const auto& info : stream.output()) {
-        if (info.find("info depth") != std::string::npos) {
-          size_t cpPos = info.find("score cp ");
-          if (cpPos != std::string::npos) {
-            ctx->result.evaluation = std::atoi(info.c_str() + cpPos + 9);
-          }
-        }
-      }
-      break;
+  // Convert SearchResult → EngineResult
+  if (result.bestMove.from != 0 || result.bestMove.to != 0) {
+    std::string moveStr = LibreChess::notation::toCoordinate(
+        LibreChess::rowOf(result.bestMove.from),
+        LibreChess::colOf(result.bestMove.from),
+        LibreChess::rowOf(result.bestMove.to),
+        LibreChess::colOf(result.bestMove.to));
+    if (result.bestMove.isPromotion()) {
+      static const char promoChars[] = {'n', 'b', 'r', 'q'};
+      moveStr += promoChars[result.bestMove.promoIndex()];
     }
-  }
-
-  if (ctx->result.type == EngineResult::NONE) {
-    ctx->logger.error("LibreChess: no bestmove found in output");
+    ctx->result.type = EngineResult::MOVE;
+    ctx->result.move = moveStr;
+    ctx->result.evaluation = result.score;
+  } else {
+    ctx->logger.error("LibreChess: no legal move found");
   }
 
   ctx->ready.store(true);

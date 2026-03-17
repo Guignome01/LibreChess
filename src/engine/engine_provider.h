@@ -9,12 +9,14 @@
 
 using namespace LibreChess;
 
+enum class GameModeId : uint8_t;  // Defined in game_mode.h.
+
 // Result from engine initialization (populated by the provider during begin()).
 struct EngineInitResult {
   char playerColor = 'w';       // Discovered at runtime (Lichess) or passed in (Stockfish)
   std::string fen;              // Empty = starting position; non-empty = load this FEN
-  GameModeId gameModeId;        // BOT, LICHESS, etc.
-  uint8_t depth = 0;            // For recording metadata (Stockfish depth); 0 = unused
+  GameModeId mode;                // BOT, LICHESS, etc. (firmware-owned enum)
+  uint8_t difficulty = 0;       // Engine search depth for recording metadata; 0 = unused
   bool canResume = true;        // false = skip tryResumeGame (Lichess: state comes from server)
 };
 

@@ -4,11 +4,6 @@
 #include <history.h>
 #include <types.h>
 
-// Shared globals from test_core.cpp
-extern BitboardSet bb;
-extern Piece mailbox[64];
-extern bool needsDefaultKings;
-
 // ---------------------------------------------------------------------------
 // Shared state
 // ---------------------------------------------------------------------------
@@ -253,6 +248,47 @@ void test_history_currentMoveIndex_direct(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Compact move encoding (History::encodeMove / decodeMove)
+// ---------------------------------------------------------------------------
+
+void test_encodeMove_roundtrip(void) {
+  uint16_t encoded = History::encodeMove(6, 4, 4, 4, ' '); // e2e4
+  int fr, fc, tr, tc;
+  char promo;
+  History::decodeMove(encoded, fr, fc, tr, tc, promo);
+  TEST_ASSERT_EQUAL_INT(6, fr);
+  TEST_ASSERT_EQUAL_INT(4, fc);
+  TEST_ASSERT_EQUAL_INT(4, tr);
+  TEST_ASSERT_EQUAL_INT(4, tc);
+  TEST_ASSERT_EQUAL_CHAR(' ', promo);
+}
+
+void test_encodeMove_with_promotion(void) {
+  uint16_t encoded = History::encodeMove(1, 4, 0, 4, 'q'); // e7e8q
+  int fr, fc, tr, tc;
+  char promo;
+  History::decodeMove(encoded, fr, fc, tr, tc, promo);
+  TEST_ASSERT_EQUAL_INT(1, fr);
+  TEST_ASSERT_EQUAL_INT(4, fc);
+  TEST_ASSERT_EQUAL_INT(0, tr);
+  TEST_ASSERT_EQUAL_INT(4, tc);
+  TEST_ASSERT_EQUAL_CHAR('q', promo);
+}
+
+void test_encodeMove_corner_squares(void) {
+  // a8 (0,0) -> h1 (7,7) with knight promotion
+  uint16_t encoded = History::encodeMove(0, 0, 7, 7, 'n');
+  int fr, fc, tr, tc;
+  char promo;
+  History::decodeMove(encoded, fr, fc, tr, tc, promo);
+  TEST_ASSERT_EQUAL_INT(0, fr);
+  TEST_ASSERT_EQUAL_INT(0, fc);
+  TEST_ASSERT_EQUAL_INT(7, tr);
+  TEST_ASSERT_EQUAL_INT(7, tc);
+  TEST_ASSERT_EQUAL_CHAR('n', promo);
+}
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
@@ -285,4 +321,9 @@ void register_history_tests() {
 
   // currentMoveIndex direct
   RUN_TEST(test_history_currentMoveIndex_direct);
+
+  // Compact move encoding (History::encodeMove / decodeMove)
+  RUN_TEST(test_encodeMove_roundtrip);
+  RUN_TEST(test_encodeMove_with_promotion);
+  RUN_TEST(test_encodeMove_corner_squares);
 }

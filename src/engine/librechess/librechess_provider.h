@@ -2,14 +2,14 @@
 #define LIBRECHESS_PROVIDER_H
 
 #include "engine/engine_provider.h"
-#include "uci.h"
+#include "engine.h"
 
 // ---------------------------------------------------------------------------
 // EngineProvider implementation for the built-in LibreChess engine.
 //
 // Runs the search on-board via a FreeRTOS background task.  Uses the
-// UCIHandler in-process — no network required.  The TT is sized to fit
-// available heap (capped at 128 KiB).
+// Engine facade in-process — no network required.  The TT is sized to
+// fit available heap (capped at 128 KiB).
 // ---------------------------------------------------------------------------
 
 class LibreChessProvider : public EngineProvider {

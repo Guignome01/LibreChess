@@ -1,5 +1,5 @@
-#ifndef CORE_OBSERVER_H
-#define CORE_OBSERVER_H
+#ifndef LIBRECHESS_OBSERVER_H
+#define LIBRECHESS_OBSERVER_H
 
 #include <string>
 

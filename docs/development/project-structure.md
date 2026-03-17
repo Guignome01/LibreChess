@@ -6,7 +6,9 @@ A comprehensive map of the codebase, covering firmware, web frontend, build tool
 
 ```
 ├── src/                    Firmware source code and web frontend sources
-├── lib/core/               Natively-compilable chess engine library (no Arduino deps)
+├── lib/core/               Chess foundation — board representation, rules, movegen, evaluation
+├── lib/game/               Game orchestrator — Game, History, recording, DI interfaces
+├── lib/engine/             Search engine — alpha-beta search, Engine facade, TT
 ├── test/                   Native unit tests (PlatformIO Unity framework)
 ├── data/                   Pre-built web assets (gzip-compressed) for LittleFS
 ├── docs/                   Project documentation
@@ -51,8 +53,7 @@ A comprehensive map of the codebase, covering firmware, web frontend, build tool
 | `engine/lichess/lichess_provider.h/.cpp` | `LichessProvider`: extends `EngineProvider`, blocking `initialize()` discovers active games (token verification + event polling). `requestMove()` spawns a FreeRTOS task that opens a persistent NDJSON stream and reads events; reconnects with exponential backoff on connection loss. `onPlayerMoveApplied()` sends moves to Lichess with retries. `onResignConfirmed()` resigns on the server. |
 | `engine/lichess/lichess_api.h/.cpp` | Lichess API client. Token management, game event polling, persistent game stream (`connectGameStream()` / `readStreamEvent()`), move submission, and resignation. Connects to `lichess.org` over HTTPS. |
 | `engine/lichess/lichess_config.h` | `LichessConfig` struct: holds the Lichess API token. |
-| `engine/librechess/librechess_provider.h/.cpp` | `LibreChessProvider`: extends `EngineProvider`, runs the on-board search engine in-process. Each `requestMove()` spawns a FreeRTOS task (16 KiB stack) that creates a `UCIHandler` with heap-sized TT, sends `position fen` + `go depth/movetime`, and extracts the `bestmove` response. Cancellation via `setExternalStop()`. No network required. |
-| `engine/librechess/librechess_serial.h` | `SerialUCIStream`: `UCIStream` implementation over hardware UART. Enables external UCI GUIs (Arena, CuteChess) to drive the engine over Serial. |
+| `engine/librechess/librechess_provider.h/.cpp` | `LibreChessProvider`: extends `EngineProvider`, runs the on-board search engine in-process via the `Engine` facade. Each `requestMove()` spawns a FreeRTOS task (16 KiB stack) that creates an `Engine` with heap-sized TT, sets time/stop, calls `calculateMove()`, and converts the `SearchResult` to `EngineResult`. No network, no string serialization. |
 
 ### Infrastructure
 
@@ -98,9 +99,13 @@ The ESP32 serves a web interface directly from flash storage. The frontend is bu
 - `src/web/pieces/` — SVG chess piece images (12 files: `wK.svg`, `bQ.svg`, etc.)
 - `src/web/sounds/` — Move sounds (`move.nogz.mp3`, `capture.nogz.mp3`). The `.nogz.` naming convention prevents gzip compression in the build pipeline — these are served as raw binary files.
 
-## Chess Engine Library (`lib/core/`)
+## Chess Libraries (`lib/`)
 
-The `lib/core/` library contains all natively-compilable chess logic with zero Arduino dependencies. PlatformIO's Library Dependency Finder auto-discovers it for both the ESP32 and native test environments. All code uses `std::string` (not Arduino `String`); firmware call sites bridge with `.c_str()` / `std::string()`.
+Three PlatformIO libraries with clean dependency boundaries: `core ← game`, `core ← engine`. Game never imports engine and vice versa. All use `std::string` (not Arduino `String`); firmware bridges with `.c_str()` / `std::string()`. PlatformIO's Library Dependency Finder auto-discovers all three for both the ESP32 and native test environments.
+
+### Foundation (`lib/core/`)
+
+Board representation, rules, movegen, evaluation, notation, FEN, and utilities. Zero Arduino dependencies — natively compilable for host-based unit testing.
 
 | File | Purpose |
 |------|---------|
@@ -115,47 +120,66 @@ The `lib/core/` library contains all natively-compilable chess logic with zero A
 | `src/iterator.h` | `iterator` namespace (header-only): board iteration helpers built on bitboard serialization. `forEachSquare(mailbox, fn)` loops 0–63. `forEachPiece(bb, mailbox, fn)` iterates occupied squares via `popLsb`. `somePiece(bb, mailbox, fn)` early-exit variant. `findPiece(bb, piece, positions, max)` locates pieces via their bitboard. All callbacks receive `(row, col, piece)`. |
 | `src/fen.h/.cpp` | `fen` namespace: FEN string handling — `boardToFEN()` (mailbox → FEN string), `fenToBoard()` (FEN string → `BitboardSet` + `mailbox` + state), `validateFEN()` (format validation: rank structure, piece chars, turn, castling, en passant, clocks). |
 | `src/notation.h/.cpp` | `notation` namespace: move notation conversion — coordinate (`"e2e4"`), SAN (`"Nf3"`), LAN (`"Ng1-f3"`) output and parsing. All functions are pure (`const BitboardSet&` + `const Piece mailbox[]` passed in). |
-| `src/types.h` | Shared chess types: `Piece`/`Color`/`PieceType` enums, `PositionState` struct (castling rights, en passant target, halfmove/fullmove clocks) with `initial()` static factory, `GameResult` enum class, `MoveResult` struct (returned by `Position::makeMove()`), `MoveEntry` struct (move log record), `Move` struct (3 bytes: from/to/flags with capture, EP, castling, promotion bits), `ScoredMove` struct (Move + int16_t score), `MoveList` struct (fixed-size `Move[218]` array + count, used by both per-piece and bulk move generation, with `targetRow`/`targetCol`/`target` adapter accessors for UI), `HashHistory` struct (Zobrist hash array + count, used by `Position`), `GameHeader` packed struct (16 bytes), `GameModeId` enum class, `MoveFormat` enum class (`COORDINATE`, `SAN`, `LAN`), storage constants (`FORMAT_VERSION`, `FEN_MARKER`, `MAX_GAMES`, `MAX_USAGE_PERCENT`), `invalidMoveResult()` factory. |
+| `src/types.h` | Core chess types: `Piece`/`Color`/`PieceType` enums, `PositionState` struct (castling rights, en passant target, halfmove/fullmove clocks) with `initial()` static factory, `GameResult` enum class, `gameResultName()`, `HashHistory` struct (Zobrist hash array + count, used by `Position`), `MoveFormat` enum class (`COORDINATE`, `SAN`, `LAN`). Game-management types (`GameHeader`, recording constants) live in `lib/game/src/types.h`. |
+| `src/move.h` | Move representation: `Move` struct (3 bytes: from/to/flags with capture, EP, castling, promotion bits), `ScoredMove` struct (Move + int16_t score), `MoveList` struct (fixed-size `Move[218]` array + count, used by both per-piece and bulk move generation, with `targetRow`/`targetCol`/`target` adapter accessors for UI), `MoveResult` struct (returned by `Position::makeMove()`), `MoveEntry` struct (move log record with `build()` factory), `invalidMoveResult()` factory. |
 | `src/zobrist.h` | `zobrist` namespace (header-only): constexpr-generated Zobrist keys, piece-index mapping, and full-board hash computation (`computeHash(bb, mailbox, turn, state)`). `Position` uses incremental hashing via XOR deltas in `applyMoveToBoard()`; `computeHash()` is retained for debug verification. |
-| `src/search.h/.cpp` | `search` namespace: on-board chess engine — negamax with alpha-beta pruning, quiescence search, iterative deepening, transposition table (`TTEntry` 12 bytes, `TranspositionTable`), move ordering (TT move → MVV-LVA → killers → history). `findBestMove(pos, limits, timeFunc, infoCallback, tt)` is the single public entry point. `SearchLimits` (depth/time/stop), `SearchResult` (bestMove/score/depth/nodes), `SearchState` (per-search heuristics). Constants: `MATE_SCORE`, `INF_SCORE`, `MAX_PLY`, `DEFAULT_TT_SIZE`. |
-| `src/uci.h/.cpp` | `uci` namespace: transport-agnostic UCI protocol handler. `UCIStream` (abstract I/O), `UCIHandler` (owns Position + TT + stop flag, dispatches `uci`/`isready`/`ucinewgame`/`position`/`go`/`stop`/`quit`), `StringUCIStream` (in-memory I/O for testing/in-process use). `setExternalStop()` wires FreeRTOS cancellation. Simple time management (remaining/30 + increment/2). |
-| `src/history.h/.cpp` | `History` class: in-memory game history and persistent game recording. Ordered move log (`MoveEntry` structs with full move metadata including previous position state), Zobrist hash tracking for threefold repetition detection, and game recording lifecycle (compact 2-byte move encoding via static `encodeMove()`/`decodeMove()`, manages `GameHeader`, delegates persistence to `IGameStorage`, flushes header every full turn to reduce flash wear, validates moves during replay, replays games directly into a `Position`). Fixed-size arrays (ESP32-friendly). Composed by `Game`. |
+### Game Orchestrator (`lib/game/`)
+
+Game lifecycle, history, recording, and DI interfaces. Depends on `lib/core/`.
+
+| File | Purpose |
+|------|---------|
 | `src/game.h/.cpp` | `Game` class: central game orchestrator. Composes `Position`, `History`, and optionally `IGameObserver`. Constructor: `(IGameStorage*, IGameObserver*, ILogger*)`. All chess-state mutations flow through this class. Handles threefold repetition detection (via Zobrist hashing), move history recording, persistent game recording (delegated to `History`), observer notification, and batching. Exposes `bitboards()` and `mailbox()` accessors, iterator helpers (`forEachSquare`, `forEachPiece`, `somePiece`), and notation convenience methods (`makeMove(string)`, `toCoordinate()`, `parseCoordinate()`, `parseMove()`, `getHistory(format)`) so firmware never needs to include core headers directly. |
-| `src/logger.h` | `ILogger` abstract interface: `info()`, `error()`, and `infof()`/`errorf()` formatted helpers. |
+| `src/types.h` | Game-management types: `GameHeader` packed struct (16 bytes, `#pragma pack(push, 1)`, on-disk recording format with opaque `meta[GAME_META_SIZE]` byte array for firmware-specific data), recording constants (`FORMAT_VERSION`, `FEN_MARKER`, `MAX_GAMES`, `MAX_USAGE_PERCENT`, `GAME_META_SIZE`). Includes `piece.h` to re-export core types — shared name with `lib/core/src/types.h` (see note in file header). |
+| `src/history.h/.cpp` | `History` class: in-memory game history and persistent game recording. Ordered move log (`MoveEntry` structs with full move metadata including previous position state), Zobrist hash tracking for threefold repetition detection, and game recording lifecycle (compact 2-byte move encoding via static `encodeMove()`/`decodeMove()`, manages `GameHeader`, delegates persistence to `IGameStorage`, flushes header every full turn to reduce flash wear, validates moves during replay, replays games directly into a `Position`). Fixed-size arrays (ESP32-friendly). Composed by `Game`. |
 | `src/observer.h` | `IGameObserver` abstract interface: `onBoardStateChanged(fen, evaluation)`. |
 | `src/storage.h` | `IGameStorage` abstract interface: game file lifecycle (begin, append, finalize, discard), read-back for replay, and storage management. |
 
+### Search Engine (`lib/engine/`)
+
+Alpha-beta search and Engine facade. Depends on `lib/core/`.
+
+| File | Purpose |
+|------|---------|
+| `src/search.h/.cpp` | `search` namespace: on-board chess engine — negamax with alpha-beta pruning, quiescence search, iterative deepening, transposition table (`TTEntry` 12 bytes, `TranspositionTable`), move ordering (TT move → MVV-LVA → killers → history). `findBestMove(pos, limits, timeFunc, infoCallback, tt)` is the single public entry point. `SearchLimits` (depth/time/stop), `SearchResult` (bestMove/score/depth/nodes), `SearchState` (per-search heuristics). Constants: `MATE_SCORE`, `INF_SCORE`, `MAX_PLY`, `DEFAULT_TT_SIZE`. |
+| `src/engine.h/.cpp` | `Engine` class: direct-call facade over `search::findBestMove()`. Owns `Position`, `TranspositionTable`, and stop control. API: `calculateMove(fen, limits) → SearchResult`, `newGame()`, `setTimeFunc()`, `stop()`, `setExternalStop()`. No string serialization. |
+
 ## Unit Tests (`test/`)
 
-Native unit tests using the PlatformIO Unity framework. All engine tests are consolidated in a single `test_core/` suite.
+Native unit tests using the PlatformIO Unity framework. Three test suites mirror the three-library structure, plus a perft suite.
 
 ```
 test/
-├── test_helpers.h                  Shared utilities (setupInitialBoard, clearBoard, placePiece, etc.)
-└── test_core/
-    ├── test_core.cpp             Main entry: setUp/tearDown, shared globals, register calls
-    ├── test_attacks.cpp                 attacks: leaper tables, slider attacks (+ bulk reference cross-check), x-ray attacks, geometry rays, AttackInfo
-    ├── test_bitboard.cpp                LibreChess: square mapping roundtrip, bit ops, square-color masks, BitboardSet mutations
-    ├── test_evaluation.cpp              eval: material scoring, pawn structure, tapered evaluation, pawn analysis functions
-    ├── test_fen.cpp                     FEN round-trip, boardToFEN/fenToBoard, validateFEN (valid/invalid positions, fields)
-    ├── test_game.cpp                    Game: threefold repetition, draw detection, observer notification/batching, history
-    ├── test_history.cpp                 History: move log with undo/redo, branch-on-undo
-    ├── test_history_persistence.cpp     History recording: persistence lifecycle, header flush, replay, branch-truncation, compact encode/decode
-    ├── test_iterator.cpp                Board iteration: forEachSquare, forEachPiece, somePiece, findPiece
-    ├── test_movegen.cpp                 Move generation per piece type, captures, bulk generation, legal move queries
-    ├── test_notation.cpp                Coordinate/SAN/LAN output and parsing, auto-format detection, roundtrip
-    ├── test_piece.cpp                   piece: type extraction, predicates, FEN chars, material values, Zobrist index, color helpers
-    ├── test_position.cpp                Position: moves, special moves, draws, FEN, API queries
-    ├── test_rules.cpp                   rules: check/checkmate/stalemate, pin-aware generation, castling, en passant, promotion
-    ├── test_utils.cpp                   utils: 50-move rule, castling rights, coordinate helpers, board transforms
-    ├── test_zobrist.cpp                 Zobrist hashing: key determinism, computeHash, position sensitivity
-    ├── test_search.cpp                  search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, time/stop control, TT store/probe/clear/pack/mate-score, move ordering
-    └── test_uci.cpp                     uci: id/isready output, position startpos/fen/moves, go depth/info, newgame, quit, unknown commands, loop
-    ├── test_search.cpp                  search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, time/stop control, TT store/probe/clear/pack/mate-score, move ordering
-    └── test_uci.cpp                     uci: id/isready output, position startpos/fen/moves, go depth/info, newgame, quit, unknown commands, loop
+├── test_helpers.h                       Shared utilities (setupInitialBoard, clearBoard, placePiece, etc.)
+├── test_shared.cpp                      Shared globals (bb, mailbox, needsDefaultKings)
+├── test_core/
+│   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls for core-only tests
+│   ├── test_attacks.cpp                 attacks: leaper tables, slider attacks (+ bulk reference cross-check), x-ray attacks, geometry rays, AttackInfo
+│   ├── test_bitboard.cpp               LibreChess: square mapping roundtrip, bit ops, square-color masks, BitboardSet mutations
+│   ├── test_evaluation.cpp             eval: material scoring, pawn structure, tapered evaluation, pawn analysis functions
+│   ├── test_fen.cpp                    FEN round-trip, boardToFEN/fenToBoard, validateFEN (valid/invalid positions, fields)
+│   ├── test_iterator.cpp               Board iteration: forEachSquare, forEachPiece, somePiece, findPiece
+│   ├── test_movegen.cpp                Move generation per piece type, captures, bulk generation, legal move queries
+│   ├── test_notation.cpp               Coordinate/SAN/LAN output and parsing, auto-format detection, roundtrip
+│   ├── test_piece.cpp                  piece: type extraction, predicates, FEN chars, material values, Zobrist index, color helpers
+│   ├── test_position.cpp               Position: moves, special moves, draws, FEN, API queries
+│   ├── test_rules.cpp                  rules: check/checkmate/stalemate, pin-aware generation, castling, en passant, promotion
+│   ├── test_utils.cpp                  utils: 50-move rule, castling rights, coordinate helpers, board transforms
+│   └── test_zobrist.cpp                Zobrist hashing: key determinism, computeHash, position sensitivity
+├── test_game/
+│   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls for game tests
+│   ├── test_game.cpp                   Game: threefold repetition, draw detection, observer notification/batching, history
+│   ├── test_history.cpp                History: move log with undo/redo, branch-on-undo, compact encode/decode
+│   └── test_history_persistence.cpp    History recording: persistence lifecycle, header flush, replay, branch-truncation, compact encode/decode
+├── test_engine/
+│   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls for engine tests
+│   ├── test_search.cpp                 search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, time/stop control, TT store/probe/clear/pack/mate-score, move ordering
+│   └── test_engine.cpp                 Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range
+└── test_perft/
+    └── test_perft.cpp                  Perft validation: initial position, kiwipete, and standard positions 3–6
 ```
 
-Run with `pio test -e native`. See [PlatformIO Unit Testing docs](https://docs.platformio.org/en/latest/advanced/unit-testing/index.html).
+Run all: `pio test -e native`. Run one suite: `pio test -e native -f test_core`. See [PlatformIO Unit Testing docs](https://docs.platformio.org/en/latest/advanced/unit-testing/index.html).
 
 ## Build Scripts (`src/web/build/`)
 

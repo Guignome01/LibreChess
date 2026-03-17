@@ -3,7 +3,6 @@
 #include <cstring>
 
 #include "fen.h"
-#include "history.h"
 
 namespace LibreChess {
 

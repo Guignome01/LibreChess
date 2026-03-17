@@ -4,9 +4,6 @@
 
 #include "../test_helpers.h"
 
-extern BitboardSet bb;
-extern Piece mailbox[64];
-
 // ── forEachSquare ────────────────────────────────────────────────────────────
 
 static void test_forEachSquare_visits_all_64(void) {

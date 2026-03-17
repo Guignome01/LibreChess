@@ -5,10 +5,6 @@
 
 #include "../test_helpers.h"
 
-extern BitboardSet bb;
-extern Piece mailbox[64];
-extern bool needsDefaultKings;
-
 // ---------------------------------------------------------------------------
 // Key generation spot-check (constexpr PRNG matches known values)
 // ---------------------------------------------------------------------------

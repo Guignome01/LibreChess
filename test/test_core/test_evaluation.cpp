@@ -8,10 +8,6 @@
 
 using namespace LibreChess::piece;
 
-extern BitboardSet bb;
-extern Piece mailbox[64];
-extern bool needsDefaultKings;
-
 // ===========================================================================
 // Material evaluation — eval::evaluatePosition
 // ===========================================================================

@@ -1,5 +1,5 @@
-#ifndef CORE_STORAGE_H
-#define CORE_STORAGE_H
+#ifndef LIBRECHESS_STORAGE_H
+#define LIBRECHESS_STORAGE_H
 
 #include <cstddef>
 #include <cstdint>

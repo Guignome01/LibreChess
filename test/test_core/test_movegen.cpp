@@ -3,10 +3,6 @@
 
 #include "../test_helpers.h"
 
-extern BitboardSet bb;
-extern Piece mailbox[64];
-extern bool needsDefaultKings;
-
 // ---------------------------------------------------------------------------
 // Pawn moves
 // ---------------------------------------------------------------------------

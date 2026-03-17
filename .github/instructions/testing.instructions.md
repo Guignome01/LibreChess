@@ -1,6 +1,6 @@
 ---
 description: "Use when writing, modifying, or debugging unit tests. Covers test architecture, file mirroring convention, test helpers, and per-file test group descriptions."
-applyTo: "test/**, lib/core/**"
+applyTo: "test/**, lib/core/**, lib/game/**, lib/engine/**"
 ---
 
 # Unit Testing Guide
@@ -9,67 +9,76 @@ applyTo: "test/**, lib/core/**"
 
 Tests run natively on the host (no ESP32) using PlatformIO Unity framework with `[env:native]`.
 
-The `lib/core/` library has zero Arduino dependencies — all chess logic compiles natively. Tests include `lib/core/` headers directly.
+The chess libraries (`lib/core/`, `lib/game/`, `lib/engine/`) have zero Arduino dependencies — all chess logic compiles natively. Tests include library headers directly.
 
 ## Running Tests
 
 | Action | Command |
 |--------|---------|
 | Run all tests | `pio test -e native` |
-| Run the suite | `pio test -e native -f test_core` || Run perft suite | `pio test -e native -f test_perft` |
+| Run core suite | `pio test -e native -f test_core` |
+| Run game suite | `pio test -e native -f test_game` |
+| Run engine suite | `pio test -e native -f test_engine` |
+| Run perft suite | `pio test -e native -f test_perft` |
+
 ## File Structure
 
-Fast unit tests live in `test/test_core/` (one suite, one binary). The heavyweight perft suite lives separately in `test/test_perft/`.
+Tests are split into three suites mirroring the library structure (`lib/core/`, `lib/game/`, `lib/engine/`), plus an independent perft suite. Each suite compiles into its own binary. Shared globals live in `test_shared.cpp` at the test root (compiled into every suite).
 
 ```
 test/
 ├── test_helpers.h                       Shared utilities (setupInitialBoard, clearBoard, placePiece, etc.)
-├── test_perft/
-│   └── test_perft.cpp                   Perft move-tree enumeration with detailed counters (captures, EP, castles, promotions, checks, checkmates)
-└── test_core/
-    ├── test_core.cpp                    Main entry: setUp/tearDown, shared globals, register calls
-    ├── test_attacks.cpp                 attacks: leaper tables, slider rays, x-ray attacks, geometry rays (between, line), computeAll
-    ├── test_bitboard.cpp                LibreChess: square mapping, bit ops, square-color masks, BitboardSet mutations
-    ├── test_evaluation.cpp              eval: material scoring, pawn structure (passed/isolated/doubled/backward), tapered evaluation
-    ├── test_fen.cpp                     FEN round-trip, boardToFEN/fenToBoard, validateFEN
-    ├── test_game.cpp                    Game: lifecycle, draws, observer, history, undo/redo, getHistory
-    ├── test_history.cpp                 History: move log with undo/redo, branch-on-undo
-    ├── test_history_persistence.cpp     Recording: persistence, header flush, replay, branch-truncation, encode/decode
-    ├── test_iterator.cpp                Board iteration: forEachSquare, forEachPiece, somePiece, findPiece
-    ├── test_movegen.cpp                 Move generation per piece type, captures, bulk generation, move flags, legal move queries
-    ├── test_notation.cpp                Coordinate/SAN/LAN output and parsing, roundtrip verification
-    ├── test_piece.cpp                   piece: type extraction, construction, predicates, FEN chars, material values, Zobrist index, color helpers
-    ├── test_position.cpp                Position: moves, special moves, draws, FEN, reverseMove, king cache, MoveList, HashHistory
-    ├── test_rules.cpp                   rules: check/checkmate/stalemate detection, pin-aware generation, castling, en passant, promotion, isDraw, isGameOver
-    ├── test_utils.cpp                   utils: 50-move rule, castling rights strings, coordinate helpers, board transforms, special-move analysis
-    ├── test_zobrist.cpp                 Zobrist hashing: key determinism, computeHash, position sensitivity
-    ├── test_search.cpp                  search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, time/stop, TT, move ordering
-    └── test_uci.cpp                     uci: id/isready, position startpos/fen/moves, go depth/info, newgame, quit, unknown, loop
+├── test_shared.cpp                      Shared globals (bb, mailbox, needsDefaultKings)
+├── test_core/                           Core library tests (lib/core/)
+│   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
+│   ├── test_attacks.cpp                 attacks: leaper tables, slider rays, x-ray attacks, geometry rays (between, line), computeAll
+│   ├── test_bitboard.cpp                LibreChess: square mapping, bit ops, square-color masks, BitboardSet mutations
+│   ├── test_evaluation.cpp              eval: material scoring, pawn structure (passed/isolated/doubled/backward), tapered evaluation
+│   ├── test_fen.cpp                     FEN round-trip, boardToFEN/fenToBoard, validateFEN
+│   ├── test_iterator.cpp                Board iteration: forEachSquare, forEachPiece, somePiece, findPiece
+│   ├── test_movegen.cpp                 Move generation per piece type, captures, bulk generation, move flags, legal move queries
+│   ├── test_notation.cpp                Coordinate/SAN/LAN output and parsing, roundtrip verification
+│   ├── test_piece.cpp                   piece: type extraction, construction, predicates, FEN chars, material values, Zobrist index, color helpers
+│   ├── test_position.cpp                Position: moves, special moves, draws, FEN, reverseMove, king cache, MoveList, HashHistory
+│   ├── test_rules.cpp                   rules: check/checkmate/stalemate detection, pin-aware generation, castling, en passant, promotion, isDraw, isGameOver
+│   ├── test_utils.cpp                   utils: 50-move rule, castling rights strings, coordinate helpers, board transforms, special-move analysis
+│   └── test_zobrist.cpp                 Zobrist hashing: key determinism, computeHash, position sensitivity
+├── test_game/                           Game library tests (lib/game/)
+│   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
+│   ├── test_game.cpp                    Game: lifecycle, draws, observer, history, undo/redo, getHistory
+│   ├── test_history.cpp                 History: move log with undo/redo, branch-on-undo, compact encode/decode
+│   └── test_history_persistence.cpp     Recording: persistence, header flush, replay, branch-truncation, encode/decode
+├── test_engine/                         Engine library tests (lib/engine/)
+│   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
+│   ├── test_search.cpp                  search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, time/stop, TT, move ordering
+│   └── test_engine.cpp                  Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range
+└── test_perft/                          Perft suite (standalone, heavyweight)
+    └── test_perft.cpp                   Perft move-tree enumeration with detailed counters (captures, EP, castles, promotions, checks, checkmates)
 ```
 
 ## File Mirroring Convention
 
-Each `lib/core/src/` source file has a corresponding `test/test_core/test_*.cpp`:
+Each library source file has a corresponding test file in the matching test suite:
 
-| Source | Test |
-|--------|------|
-| `position.cpp` | `test_position.cpp` |
-| `game.cpp` | `test_game.cpp` |
-| `history.cpp` | `test_history.cpp` + `test_history_persistence.cpp` |
-| `movegen.cpp` + `rules.cpp` | `test_movegen.cpp` + `test_rules.cpp` |
-| `piece.h` | `test_piece.cpp` |
-| `utils.cpp` | `test_utils.cpp` |
-| `evaluation.cpp` | `test_evaluation.cpp` |
-| `fen.cpp` | `test_fen.cpp` |
-| `notation.cpp` | `test_notation.cpp` |
-| `bitboard.h` | `test_bitboard.cpp` |
-| `attacks.h/cpp` | `test_attacks.cpp` |
-| `iterator.h` | `test_iterator.cpp` |
-| `zobrist.h/cpp` | `test_zobrist.cpp` |
-| `search.h/cpp` | `test_search.cpp` |
-| `uci.h/cpp` | `test_uci.cpp` |
+| Source | Test Suite | Test File |
+|--------|-----------|-----------|
+| `lib/core/src/position.cpp` | `test_core/` | `test_position.cpp` |
+| `lib/core/src/movegen.cpp` + `rules.cpp` | `test_core/` | `test_movegen.cpp` + `test_rules.cpp` |
+| `lib/core/src/piece.h` | `test_core/` | `test_piece.cpp` |
+| `lib/core/src/utils.cpp` | `test_core/` | `test_utils.cpp` |
+| `lib/core/src/evaluation.cpp` | `test_core/` | `test_evaluation.cpp` |
+| `lib/core/src/fen.cpp` | `test_core/` | `test_fen.cpp` |
+| `lib/core/src/notation.cpp` | `test_core/` | `test_notation.cpp` |
+| `lib/core/src/bitboard.h` | `test_core/` | `test_bitboard.cpp` |
+| `lib/core/src/attacks.h/cpp` | `test_core/` | `test_attacks.cpp` |
+| `lib/core/src/iterator.h` | `test_core/` | `test_iterator.cpp` |
+| `lib/core/src/zobrist.h/cpp` | `test_core/` | `test_zobrist.cpp` |
+| `lib/game/src/game.cpp` | `test_game/` | `test_game.cpp` |
+| `lib/game/src/history.cpp` | `test_game/` | `test_history.cpp` + `test_history_persistence.cpp` |
+| `lib/engine/src/search.h/cpp` | `test_engine/` | `test_search.cpp` |
+| `lib/engine/src/engine.h/cpp` | `test_engine/` | `test_engine.cpp` |
 
-Place tests in the file that mirrors the tested functionality. When creating a new `lib/core/src/` file, create a matching test file and register its test functions in `test_core.cpp`.
+Place tests in the suite that mirrors the owning library. When creating a new source file in any of the three libraries, create a matching test file in the corresponding `test_<lib>/` directory and register its test functions in that suite's main file.
 
 ## Test Helpers (`test_helpers.h`)
 
@@ -117,8 +126,8 @@ Material evaluation scoring. Pawn structure evaluation (symmetry, passed pawn bo
 ### Search (`test_search.cpp`)
 Mate-in-1 (white, black). Captures hanging piece. Quiescence avoids blunder. Stalemate avoidance. Symmetric position. Knight fork tactics. Legal move from random position. Checkmate no legal moves. Iterative deepening (deeper depth finds mate, info callback reports iterations). Time limit control. Stop flag. Mate stops early. TT store/probe exact, probe miss, clear, pack/unpack move, reduces nodes, mate score round-trip. Move ordering reduces nodes and finds tactics.
 
-### UCI (`test_uci.cpp`)
-UCI identification output. Isready/readyok. Position startpos, startpos + moves, FEN, FEN + moves. Go depth (bestmove output). Info output (depth/score/nodes). Newgame resets position. Quit returns false. Unknown commands silently ignored. Full loop integration.
+### Engine (`test_engine.cpp`)
+Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range.
 
 ### FEN (`test_fen.cpp`)
 Round-trip: board → FEN → board. `boardToFEN()` output correctness. `fenToBoard()` parsing. `validateFEN()`: valid positions, invalid rank structure, bad piece chars, wrong turn field, invalid castling, bad en passant, bad clocks.

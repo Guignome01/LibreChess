@@ -1,5 +1,6 @@
 #include "stockfish_provider.h"
 #include "engine/stockfish/stockfish_api.h"
+#include "game_mode/game_mode.h"
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
 
@@ -12,8 +13,8 @@ bool StockfishProvider::initialize(EngineInitResult& result) {
                               settings_.depth, settings_.timeoutMs, settings_.maxRetries);
   result.playerColor = playerColor_;
   result.fen = "";  // Starting position
-  result.gameModeId = GameModeId::BOT;
-  result.depth = static_cast<uint8_t>(settings_.depth);
+  result.mode = GameModeId::BOT;
+  result.difficulty = static_cast<uint8_t>(settings_.depth);
   result.canResume = true;
   return true;
 }

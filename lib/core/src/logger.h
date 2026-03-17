@@ -1,5 +1,5 @@
-#ifndef CORE_LOGGER_H
-#define CORE_LOGGER_H
+#ifndef LIBRECHESS_LOGGER_H
+#define LIBRECHESS_LOGGER_H
 
 #include <cstdarg>
 #include <cstdio>

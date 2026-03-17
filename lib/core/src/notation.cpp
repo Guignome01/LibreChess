@@ -2,7 +2,7 @@
 
 #include <cctype>
 
-#include "history.h"  // MoveEntry
+#include "move.h"
 #include "iterator.h"
 #include "movegen.h"
 #include "rules.h"

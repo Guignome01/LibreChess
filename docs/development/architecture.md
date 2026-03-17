@@ -6,10 +6,23 @@ Deep technical documentation of LibreChess internals. This document covers how t
 
 ```
 Core (lib/core/):
+  Position (board representation + position logic)
+  movegen/rules (stateless move generation + game state checks)
+  attacks (precomputed attack tables + slider functions)
+  eval (tapered evaluation)
+  notation/fen/utils/iterator/zobrist/piece (support namespaces)
+
+Game (lib/game/):
   Game (central game orchestrator)
-   ├─ composes Position (board representation + position logic)
+   ├─ composes Position (from core)
    ├─ composes History (move log + persistent game recording)
    └─ uses IGameObserver (notification)
+
+Engine (lib/engine/):
+  Engine (direct-call facade)
+   ├─ owns Position (from core)
+   └─ owns TranspositionTable + search state
+  search (alpha-beta + quiescence + iterative deepening)
 
 Firmware (src/):
   GameMode (abstract base, src/game_mode/)
@@ -34,7 +47,7 @@ Firmware (src/):
 
 `LichessProvider` extends `EngineProvider`. Its `initialize()` blocks during game discovery (token verification + polling for active games). Its `requestMove()` spawns a FreeRTOS task that opens a persistent NDJSON stream via `LichessAPI::connectGameStream()` and reads events via `readStreamEvent()`. On connection loss, it reconnects with exponential backoff (1s→2s→4s→8s, up to 5 attempts) — the game stays paused during reconnection; if all attempts are exhausted the game is aborted.
 
-`LibreChessProvider` extends `EngineProvider`. It runs the on-board chess engine entirely in-process — no network required. Each `requestMove()` spawns a FreeRTOS task (16 KiB stack) that creates a `UCIHandler` with a TT sized to fit available heap (capped at 128 KiB, minimum 64 entries), sends `position fen` + `go depth N` commands via a `StringUCIStream`, and extracts the `bestmove` response. Cancellation is cooperative: `ctx->cancel` is wired to the search's `SearchLimits::stop` via `UCIHandler::setExternalStop()`. `initialize()` always succeeds, reports `gameModeId = BOT`, `canResume = true`.
+`LibreChessProvider` extends `EngineProvider`. It runs the on-board chess engine entirely in-process via the `Engine` facade — no network, no string serialization required. Each `requestMove()` spawns a FreeRTOS task (16 KiB stack) that creates an `Engine` instance with a TT sized to fit available heap (capped at 128 KiB, minimum 64 entries), sets `millis` as the time function, wires `ctx->cancel` to `engine.setExternalStop()` for cooperative cancellation, builds `SearchLimits` with depth/moveTime, and calls `engine.calculateMove(fen, limits)`. The `SearchResult` (bestMove, score, depth, nodes) is converted to `EngineResult` using `notation::toCoordinate()`. `initialize()` always succeeds, reports `mode = GameModeId::BOT`, `canResume = true`.
 
 `SensorTest` follows the same `begin()`/`update()`/`isComplete()` lifecycle but is not a `GameMode` subclass — it doesn't need chess logic, FEN state, or move history.
 
@@ -130,7 +143,7 @@ The board uses a **dual representation**: a `BitboardSet` (12 piece bitboards + 
 
 ### History
 
-Also in `lib/core/` (`history.h/cpp`). In-memory game history and persistent game recording with two concerns:
+Also in `lib/game/` (`history.h/cpp`). In-memory game history and persistent game recording with two concerns:
 
 1. **Move log with undo/redo** — ordered list of `MoveEntry` structs with full move metadata (piece, captured, promotion, flags, previous `PositionState` for undo). Fixed-size array (`MAX_MOVES` = 300, ESP32-friendly). Cursor-based navigation: `addMove()`, `undoMove()` → `const MoveEntry*`, `redoMove()` → `const MoveEntry*`, `canUndo()`, `canRedo()`, `currentMoveIndex()`, `getMove()`, `lastMove()`, `moveCount()`, `clear()`. `addMove()` at a branch point (cursor not at end) wipes future moves and truncates the recording.
 2. **Persistent recording** — automatic and optional. When an `IGameStorage*` is provided and a header has been set via `setHeader()`, `addMove()` persists encoded moves transparently (no explicit record calls). Recording API: `setHeader(GameHeader)` (creates live file, starts recording — replaces old `startRecording()`), `snapshotPosition(fen)` (replaces old `recordFen()`), `save(result, winner)` (replaces old `finishRecording()`), `discard()` (replaces old `discardRecording()`), `isRecording()`, `hasActiveGame()`, `getActiveGameInfo()`, `replayInto(Position&)`. Constructor: `History(IGameStorage* storage = nullptr, ILogger* logger = nullptr)` — when storage is null, recording is silently skipped.
@@ -139,7 +152,7 @@ Composed by `Game`.
 
 ### Game
 
-Also in `lib/core/` (`game.h/cpp`). Central game orchestrator — the primary API for all game-level operations. Composes `Position`, `History`, and optionally `IGameObserver`. Constructor: `(IGameStorage*, IGameObserver*, ILogger*)`.
+Also in `lib/game/` (`game.h/cpp`). Central game orchestrator — the primary API for all game-level operations. Composes `Position`, `History`, and optionally `IGameObserver`. Constructor: `(IGameStorage*, IGameObserver*, ILogger*)`.
 
 All chess-state mutations (`makeMove`, `loadFEN`, `endGame`, `newGame`) flow through this class. `Game` is the sole owner of lifecycle state: `gameOver_`, `gameResult_`, and `winnerColor_`. The board has no concept of game-over — `endGame()`, `isGameOver()`, `gameResult()`, and `winnerColor()` exist only on `Game`. `makeMove()` atomically: validates via board, applies (`movegen::isGameOver()` handles all end conditions including threefold repetition, returning results via `MoveResult`), reads `MoveResult` to update lifecycle state, records in history with full `MoveEntry` metadata (addMove handles both in-memory log and persistence automatically), auto-saves recording on game-end and notifies observer. `undoMove()` and `redoMove()` step the history cursor and call `Position::reverseMove()`/`applyMoveEntry()` respectively; `undoMove()` clears lifecycle state. `canUndo()` and `canRedo()` delegate to `History`.
 
@@ -183,27 +196,26 @@ Manages WiFi connectivity, the web server, and all HTTP API endpoints. Key subsy
 
 Game recording and crash recovery follow a layered architecture with clean separation:
 
-- **`History`** (`lib/core/`) — handles in-memory move logging with cursor-based undo/redo and persistent recording orchestration. Recording is automatic: when an `IGameStorage*` is present and a header has been set, `addMove()` persists transparently. Compact 2-byte move encoding via public static `encodeMove()`/`decodeMove()` methods. Manages the `GameHeader`, delegates persistence to `IGameStorage`. Flushes the header to storage every full turn (2 half-moves) to reduce flash wear; FEN snapshots always trigger an immediate flush. Branch-on-undo: when `addMove()` is called with the cursor not at the end, future moves are wiped and storage is truncated via `IGameStorage::truncateMoveData()`. Validates moves during replay — rejects corrupted recordings with invalid moves. Replays games directly into a `Position` and populates the in-memory move log.
-- **`Game`** (`lib/core/`) — central game orchestrator composing `Position` + `History` + `IGameObserver`. Constructor: `(IGameStorage*, IGameObserver*, ILogger*)`. Each mutation (move, load FEN, end game) atomically updates the board, records in history (persistence is automatic via `addMove()`), and notifies the observer. Provides `startNewGame(mode, ...)` for atomic board-reset + recording-start. `endGame()` is guarded against double-calls. `undoMove()`/`redoMove()` step the history cursor and update the board. Exposes convenience pass-throughs to `Position` query methods: `getPossibleMoves()`, `isCheck()`, `findPiece()`, `checkEnPassant()`, `checkCastling()`, `isDraw()`, `isFiftyMoves()` — so game mode classes never need to access `Position` or `movegen`/`rules` directly. Also provides notation convenience methods (`makeMove(string)`, `toCoordinate()`, `parseCoordinate()`, `parseMove()`, `getHistory(format)`) so firmware never needs to include `notation` directly.
+- **`History`** (`lib/game/`) — handles in-memory move logging with cursor-based undo/redo and persistent recording orchestration. Recording is automatic: when an `IGameStorage*` is present and a header has been set, `addMove()` persists transparently. Compact 2-byte move encoding via public static `encodeMove()`/`decodeMove()` methods. Manages the `GameHeader`, delegates persistence to `IGameStorage`. Flushes the header to storage every full turn (2 half-moves) to reduce flash wear; FEN snapshots always trigger an immediate flush. Branch-on-undo: when `addMove()` is called with the cursor not at the end, future moves are wiped and storage is truncated via `IGameStorage::truncateMoveData()`. Validates moves during replay — rejects corrupted recordings with invalid moves. Replays games directly into a `Position` and populates the in-memory move log.
+- **`Game`** (`lib/game/`) — central game orchestrator composing `Position` + `History` + `IGameObserver`. Constructor: `(IGameStorage*, IGameObserver*, ILogger*)`. Each mutation (move, load FEN, end game) atomically updates the board, records in history (persistence is automatic via `addMove()`), and notifies the observer. Provides `startNewGame(playerColor, meta)` for atomic board-reset + recording-start. `endGame()` is guarded against double-calls. `undoMove()`/`redoMove()` step the history cursor and update the board. Exposes convenience pass-throughs to `Position` query methods: `getPossibleMoves()`, `isCheck()`, `findPiece()`, `checkEnPassant()`, `checkCastling()`, `isDraw()`, `isFiftyMoves()` — so game mode classes never need to access `Position` or `movegen`/`rules` directly. Also provides notation convenience methods (`makeMove(string)`, `toCoordinate()`, `parseCoordinate()`, `parseMove()`, `getHistory(format)`) so firmware never needs to include `notation` directly.
 - **`LittleFSStorage`** (`src/`) — concrete `IGameStorage` backed by LittleFS.
 
 **Binary format** — each game consists of two files:
 - `<id>.bin` (or `live.bin`) — 16-byte packed `GameHeader` followed by 2-byte compact-encoded move entries
 - `<id>_fen.bin` (or `live_fen.bin`) — FEN snapshot table for efficient position reconstruction
 
-The `GameHeader` struct (exactly 16 bytes, `__attribute__((packed))`) contains:
+The `GameHeader` struct (exactly 16 bytes, `#pragma pack(push, 1)`) contains:
 | Field | Type | Description |
 |-------|------|-------------|
 | `version` | `uint8_t` | Format version (currently 1) |
-| `mode` | `GameModeId` | Game mode (1 = CHESS_MOVES, 2 = BOT, 3 = LICHESS) |
 | `result` | `GameResult` | Game outcome enum class (0 = IN_PROGRESS, 1 = CHECKMATE, 2 = STALEMATE, 3 = DRAW_50, 4 = DRAW_3FOLD, 5 = RESIGNATION, 6 = DRAW_INSUFFICIENT, 7 = DRAW_AGREEMENT, 8 = TIMEOUT, 9 = ABORTED) |
 | `winnerColor` | `uint8_t` | `'w'`, `'b'`, `'d'` (draw), or `'?'` (in-progress) |
-| `playerColor` | `uint8_t` | Human's color for bot mode, `'?'` for ChessMoves |
-| `botDepth` | `uint8_t` | Stockfish depth for bot mode, 0 for ChessMoves |
+| `playerColor` | `uint8_t` | Human's color (`'w'`/`'b'`), `'?'` if unset |
 | `moveCount` | `uint16_t` | Number of 2-byte entries (including FEN markers) |
 | `fenEntryCnt` | `uint16_t` | Number of FEN table entries |
 | `lastFenOffset` | `uint16_t` | Byte offset of last FEN entry within the FEN table |
 | `timestamp` | `uint32_t` | Unix epoch from NTP (0 if unavailable) |
+| `meta` | `uint8_t[2]` | Opaque firmware metadata (mode + difficulty, interpreted by game_mode.h) |
 
 **Move encoding** — each move is packed into 2 bytes: `[from_square(6 bits)][to_square(6 bits)][promotion(4 bits)]`. Square index = `row * 8 + col`. Promotion codes: 0 = none, 1 = queen, 2 = rook, 3 = bishop, 4 = knight. The special marker `0xFFFF` (`FEN_MARKER`) indicates that a FEN snapshot was recorded at this point in the move sequence.
 
@@ -257,7 +269,7 @@ Every iteration of `loop()`:
 1. If not resuming, discard any leftover live game file
 2. `delete` the previous `activeGame` and `sensorTest` objects
 3. Create the new game object via `new` (the only heap allocation for game modes)
-4. Call `begin()` — which typically calls `waitForBoardSetup()` to wait for correct piece placement, then `chess_->startNewGame(mode, ...)` to begin recording
+4. Call `begin()` — which typically calls `waitForBoardSetup()` to wait for correct piece placement, then `chess_->startNewGame(playerColor, metaBytes(meta))` to begin recording
 
 For game resume: `begin()` detects the `resumingGame` flag, skips piece setup, calls `chess_->resumeGame()` which delegates to `History::replayInto()` to restore the full game state directly into the `Position`, then continues with normal `update()` calls.
 

@@ -5,8 +5,11 @@
 //
 // Foundation layer — leaf of the dependency tree. No includes beyond <cstdint>.
 // Defines the three fundamental enums (Color, PieceType, Piece) and their
-// raw() unwrap helpers, plus game-level enums (GameResult, GameModeId),
-// PositionState, HashHistory, GameHeader, and recording types.
+// raw() unwrap helpers, plus GameResult, gameResultName(), PositionState,
+// HashHistory, and MoveFormat.
+//
+// Game-management types (GameHeader, recording constants) live
+// in lib/game/src/types.h.
 
 #include <cstdint>
 
@@ -86,14 +89,6 @@ enum class GameResult : uint8_t {
   ABORTED = 9
 };
 
-// Game mode identifiers stored in the binary game header.
-enum class GameModeId : uint8_t {
-  NONE = 0,
-  CHESS_MOVES = 1,
-  BOT = 2,
-  LICHESS = 3
-};
-
 // Human-readable name for a GameResult value.
 inline const char* gameResultName(GameResult result) {
   static constexpr const char* NAMES[] = {
@@ -140,31 +135,6 @@ struct HashHistory {
   uint64_t keys[MAX_SIZE];
   int count = 0;
 };
-
-// ---------------------------------------------------------------------------
-// Recording types
-// ---------------------------------------------------------------------------
-
-// Binary file header for recorded games (on-disk format).
-struct __attribute__((packed)) GameHeader {
-  uint8_t version;        // Format version (currently 1)
-  GameModeId mode;        // Game mode identifier
-  GameResult result;      // Game outcome
-  uint8_t winnerColor;    // 'w', 'b', 'd' (draw), '?' (in-progress)
-  uint8_t playerColor;    // For bot mode: human's color ('w'/'b'), '?' for ChessMoves
-  uint8_t botDepth;       // For bot mode: Stockfish depth, 0 for ChessMoves
-  uint16_t moveCount;     // Number of 2-byte entries (incl. FEN markers)
-  uint16_t fenEntryCnt;   // Number of FEN table entries
-  uint16_t lastFenOffset; // Byte offset of the last FEN entry within the FEN table
-  uint32_t timestamp;     // Unix epoch (from NTP, 0 if unavailable)
-};
-static_assert(sizeof(GameHeader) == 16, "GameHeader must be 16 bytes");
-
-// Recording constants.
-static constexpr uint8_t FORMAT_VERSION = 1;
-static constexpr uint16_t FEN_MARKER = 0xFFFF;
-static constexpr int MAX_GAMES = 50;
-static constexpr float MAX_USAGE_PERCENT = 0.80f;
 
 // Move notation format identifiers — used by Game::getHistory().
 enum class MoveFormat : uint8_t {

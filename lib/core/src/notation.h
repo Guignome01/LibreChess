@@ -1,12 +1,11 @@
-#ifndef CORE_NOTATION_H
-#define CORE_NOTATION_H
+#ifndef LIBRECHESS_NOTATION_H
+#define LIBRECHESS_NOTATION_H
 
 #include <string>
 
 #include "bitboard.h"
+#include "move.h"
 #include "types.h"
-
-namespace LibreChess { struct MoveEntry; }  // forward declaration
 
 // ---------------------------------------------------------------------------
 // Move notation conversion — transforms between internal array coordinates

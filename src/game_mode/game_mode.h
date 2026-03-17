@@ -14,6 +14,39 @@ using namespace LibreChess;
 // Forward declaration to avoid circular dependency
 class WiFiManagerESP32;
 
+// ---------------------------------------------------------------------------
+// Game metadata — firmware-owned overlay for GameHeader::meta[]
+// ---------------------------------------------------------------------------
+
+// Game mode identifiers — firmware interprets these; the library stores them
+// as opaque bytes in GameHeader::meta[].
+enum class GameModeId : uint8_t {
+  NONE = 0,
+  PLAYER = 1,    // Human vs human
+  BOT = 2,       // Human vs engine (Stockfish / LibreChess)
+  LICHESS = 3    // Online via Lichess
+};
+
+/// Firmware-specific metadata packed into GameHeader::meta[GAME_META_SIZE].
+/// The lib stores these bytes without interpretation.
+struct GameMeta {
+  uint8_t mode;        // GameMode enum value
+  uint8_t difficulty;  // Engine search depth (0 = unused)
+};
+static_assert(sizeof(GameMeta) == GAME_META_SIZE, "GameMeta must match GAME_META_SIZE");
+
+// Helper — pack meta into the raw byte array expected by Game::startNewGame().
+inline const uint8_t* metaBytes(const GameMeta& m) {
+  return reinterpret_cast<const uint8_t*>(&m);
+}
+
+// Helper — read meta from the raw byte array returned by Game::getActiveGameInfo().
+inline GameMeta readMeta(const uint8_t* raw) {
+  GameMeta m;
+  memcpy(&m, raw, sizeof(GameMeta));
+  return m;
+}
+
 // Base class for chess game modes (shared state and common functionality).
 // All chess-state mutations flow through `chess_` (Game orchestrator),
 // which atomically updates the board, records moves, and notifies observers.

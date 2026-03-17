@@ -98,10 +98,13 @@ void setup() {
 }
 
 void checkForResumableGame() {
-  uint8_t resumePlayerColor = 0, resumeBotDepth = 0;
-  GameModeId resumeMode = static_cast<GameModeId>(0);
-  if (!chess.hasActiveGame() || !chess.getActiveGameInfo(resumeMode, resumePlayerColor, resumeBotDepth))
+  uint8_t resumePlayerColor = 0;
+  uint8_t metaRaw[GAME_META_SIZE] = {};
+  if (!chess.hasActiveGame() || !chess.getActiveGameInfo(resumePlayerColor, metaRaw))
     return;
+
+  GameMeta meta = readMeta(metaRaw);
+  GameModeId resumeMode = static_cast<GameModeId>(meta.mode);
 
   Serial.println("========== Live game found on flash ==========");
 
@@ -110,7 +113,7 @@ void checkForResumableGame() {
   bool flipped = false;
 
   switch (resumeMode) {
-    case GameModeId::CHESS_MOVES:
+    case GameModeId::PLAYER:
       indicatorColor = LedColors::Blue;
       modeName = "Chess Moves";
       break;
@@ -118,7 +121,7 @@ void checkForResumableGame() {
       indicatorColor = LedColors::Green;
       modeName = "Bot";
       flipped = (resumePlayerColor == 'b');
-      Serial.printf("  Mode: Bot (player=%c, depth=%d)\n", (char)resumePlayerColor, resumeBotDepth);
+      Serial.printf("  Mode: Bot (player=%c, difficulty=%d)\n", (char)resumePlayerColor, meta.difficulty);
       break;
     case GameModeId::LICHESS:
       Serial.println("  Lichess game found — cannot resume locally, discarding");
@@ -140,7 +143,7 @@ void checkForResumableGame() {
   if (boardConfirm(&boardDriver, flipped)) {
     Serial.println("  -> Player chose to RESUME");
     switch (resumeMode) {
-      case GameModeId::CHESS_MOVES:
+      case GameModeId::PLAYER:
         currentMode = AppMode::CHESS_MOVES;
         resumingGame = true;
         break;
@@ -148,7 +151,7 @@ void checkForResumableGame() {
         currentMode = AppMode::BOT;
         resumingGame = true;
         playerColor = (char)resumePlayerColor;
-        stockfishSettings = StockfishSettings(resumeBotDepth);
+        stockfishSettings = StockfishSettings(meta.difficulty);
         break;
     }
   } else {

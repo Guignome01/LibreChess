@@ -1,5 +1,5 @@
-#ifndef CORE_UTILS_H
-#define CORE_UTILS_H
+#ifndef LIBRECHESS_UTILS_H
+#define LIBRECHESS_UTILS_H
 
 #include <cctype>
 #include <cstdint>

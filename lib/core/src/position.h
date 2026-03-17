@@ -36,8 +36,6 @@
 
 namespace LibreChess {
 
-struct MoveEntry;  // forward declaration for reverseMove/applyMoveEntry
-
 // ---------------------------------------------------------------------------
 // UndoInfo — saved state for unmake().  Returned by make(), passed to unmake().
 // ---------------------------------------------------------------------------
