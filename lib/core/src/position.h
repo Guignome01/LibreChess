@@ -77,6 +77,15 @@ class Position {
   // including hash (one assignment, no recomputation).
   void unmake(Move m, const UndoInfo& undo);
 
+  // --- Null move (search-only) ---
+  // Pass the move: flip side-to-move without moving any piece.  Used by
+  // null-move pruning to test if "doing nothing" still beats beta.
+  // Flips turn, clears EP, toggles side hash key.  No piece state changes.
+  // Returns UndoInfo for unmakeNullMove().
+  // Reference: https://www.chessprogramming.org/Null_Move_Pruning
+  UndoInfo makeNullMove();
+  void unmakeNullMove(const UndoInfo& undo);
+
   // --- Queries ---
 
   Piece getSquare(int row, int col) const {

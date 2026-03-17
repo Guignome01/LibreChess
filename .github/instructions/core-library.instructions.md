@@ -15,7 +15,7 @@ Pure C++ with no hardware dependencies. Natively compilable for unit tests. Uses
 
 | Class/Namespace | Role | State |
 |-----------------|------|-------|
-| `Position` | Position container, move execution, game-end detection | Board array, turn, PositionState, king cache, HashHistory |
+| `Position` | Position container, move execution, game-end detection, null move support | Board array, turn, PositionState, king cache, HashHistory |
 | `piece` | Type-safe piece representation: type/color extraction, construction, predicates, color-derived constants, FEN char conversion | Stateless namespace (all constexpr), defined in `piece.h` |
 | `movegen`/`rules` | Per-piece and bulk move generation, check/checkmate/stalemate detection | Stateless (all static) |
 | `eval` | Tapered evaluation: material + phase-specific PSTs (midgame/endgame for king and pawn, shared for other pieces) + pawn structure (passed, isolated, doubled, backward, connected passers). Game phase from non-pawn material (N=1, B=1, R=2, Q=4; max 24). Returns centipawns (`int`). | Stateless namespace |
@@ -39,7 +39,7 @@ Pure C++ with no hardware dependencies. Natively compilable for unit tests. Uses
 
 | Class/Namespace | Role | State |
 |-----------------|------|-------|
-| `search` | On-board chess engine: negamax + alpha-beta + quiescence, iterative deepening, transposition table, move ordering (TT move → MVV-LVA → killers → history) | Stateless namespace (search state passed in/out) |
+| `search` | On-board chess engine: negamax + alpha-beta + quiescence, iterative deepening, check extensions, PVS, null move pruning, late move reductions, aspiration windows, root move reordering, transposition table, move ordering (TT move → MVV-LVA → killers → history) | Stateless namespace (search state passed in/out) |
 | `Engine` | Direct-call facade over `search::findBestMove()`. Owns Position, TranspositionTable, stop control. API: `calculateMove(fen, limits) → SearchResult` | Stateful (owns Position + TT) |
 
 ### Interfaces (DI)
@@ -122,7 +122,7 @@ These explain *why* the architecture is the way it is — constraints that code 
 
 - **Fixed-size arrays everywhere** — `MoveEntry[300]`, `HashHistory` (256 entries), `MoveList` (218 entries, stores `Move` structs), no `std::vector`. This is for ESP32: heap fragmentation from repeated vector growth is a real problem with 320KB RAM.
 
-- **Search is a stateless namespace** — `search::findBestMove()` takes a `Position` (by const ref), `SearchLimits`, and optional TT pointer. All per-search state (killers, history table, node counter) lives in `SearchState`, allocated on the stack or task stack. The search does not own the position — it creates temporary copies for make/unmake. This makes search safe to run from any context (FreeRTOS task, test, Engine facade).
+- **Search is a stateless namespace** — `search::findBestMove()` takes a `Position` (by ref), `SearchLimits`, and optional TT pointer. All per-search state (killers, history table, node counter) lives in `SearchState`, allocated on the stack or task stack. The search does not own the position — it uses make/unmake (including `makeNullMove()`/`unmakeNullMove()` for NMP) directly on the passed-in position. This makes search safe to run from any context (FreeRTOS task, test, Engine facade). The negamax core uses check extensions, PVS, NMP, and LMR; iterative deepening uses aspiration windows and root move reordering.
 
 - **Engine facade owns search infrastructure** — `Engine` owns a `Position`, `TranspositionTable`, and stop control. `calculateMove(fen, limits)` loads the FEN, wires stop flags, calls `findBestMove()`, and returns the structured `SearchResult`. Threading is the caller's responsibility (FreeRTOS task in `LibreChessProvider`). `setExternalStop()` wires an external cancellation flag (e.g. `ctx->cancel`) to `SearchLimits::stop` so the search cooperatively unwinds on cancellation.
 

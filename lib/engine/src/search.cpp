@@ -92,6 +92,49 @@ namespace {
 constexpr uint32_t CHECK_INTERVAL = 1024;
 
 // ---------------------------------------------------------------------------
+// Null Move Pruning constants.
+//
+// NMP_DEPTH_THRESHOLD: minimum remaining depth to attempt null move.
+// NMP_REDUCTION: depth reduction for the null-move search (R).
+// The null-move search uses a zero-window at (beta-1, beta) to test
+// whether "doing nothing" still beats beta.
+//
+// Reference: https://www.chessprogramming.org/Null_Move_Pruning
+// ---------------------------------------------------------------------------
+
+static constexpr int NMP_DEPTH_THRESHOLD = 3;
+static constexpr int NMP_REDUCTION       = 3;
+
+// ---------------------------------------------------------------------------
+// Late Move Reduction constants.
+//
+// LMR_FULL_DEPTH_MOVES: number of moves searched at full depth before
+// applying reductions.  The first few moves (TT, captures, killers) are
+// searched at full depth; later quiet moves get reduced.
+// LMR_DEPTH_THRESHOLD: minimum remaining depth to apply LMR.
+//
+// Reference: https://www.chessprogramming.org/Late_Move_Reductions
+// ---------------------------------------------------------------------------
+
+static constexpr int LMR_FULL_DEPTH_MOVES = 4;
+static constexpr int LMR_DEPTH_THRESHOLD  = 3;
+
+// ---------------------------------------------------------------------------
+// Aspiration window constants.
+//
+// After the first iteration (depth 1, always full window), subsequent
+// iterations use a narrow window centred on the previous score.  When the
+// search falls outside the window (fail-low or fail-high), we progressively
+// widen until a valid score is obtained.
+//
+// ASPIRATION_DELTA: initial half-width of the window (centipawns).
+//
+// Reference: https://www.chessprogramming.org/Aspiration_Windows
+// ---------------------------------------------------------------------------
+
+static constexpr int ASPIRATION_DELTA = 50;
+
+// ---------------------------------------------------------------------------
 // Mate score adjustment for TT storage.
 //
 // Mate scores are relative to the root: -MATE_SCORE + ply.  When storing
@@ -230,6 +273,21 @@ int evaluate(const Position& pos) {
 }
 
 // ---------------------------------------------------------------------------
+// Non-pawn material check — used by NMP to avoid null-move in endgame
+// positions prone to zugzwang (e.g. K+P vs K).  Returns true if the side
+// to move has at least one knight, bishop, rook, or queen.
+// ---------------------------------------------------------------------------
+
+bool hasNonPawnMaterial(const Position& pos) {
+  uint8_t c = raw(pos.sideToMove());
+  const BitboardSet& bb = pos.bitboards();
+  // Zobrist indices: white N=1 B=2 R=3 Q=4, black offset +6
+  int base = c * 6;
+  return (bb.byPiece[base + 1] | bb.byPiece[base + 2] |
+          bb.byPiece[base + 3] | bb.byPiece[base + 4]) != 0;
+}
+
+// ---------------------------------------------------------------------------
 // Quiescence search — resolve captures so the static eval is reliable.
 //
 // At the horizon (depth 0), instead of returning the static eval directly,
@@ -279,7 +337,12 @@ int quiescence(Position& pos, int alpha, int beta, SearchState& state) {
 // At depth 0, delegates to quiescence search.  Detects draws (repetition,
 // 50-move rule) and terminal nodes (checkmate, stalemate) within the tree.
 //
-// Reference: https://www.chessprogramming.org/Alpha-Beta
+// References:
+//   https://www.chessprogramming.org/Alpha-Beta
+//   https://www.chessprogramming.org/Check_Extensions
+//   https://www.chessprogramming.org/Null_Move_Pruning
+//   https://www.chessprogramming.org/Principal_Variation_Search
+//   https://www.chessprogramming.org/Late_Move_Reductions
 // ---------------------------------------------------------------------------
 
 int negamax(Position& pos, int depth, int alpha, int beta,
@@ -294,8 +357,19 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   if (ply > 0 && (pos.isRepetition() || pos.isFiftyMoves()))
     return DRAW_SCORE;
 
+  // --- Check extension ---
+  // When the side to move is in check, extend search by one ply to avoid
+  // misevaluating forced sequences that end at the horizon.  The check
+  // status is also used by NMP (as a guard) and LMR (to skip reductions).
+  bool inCheck = pos.inCheck();
+  if (inCheck) ++depth;
+
   // --- Horizon: quiescence search ---
   if (depth <= 0) return quiescence(pos, alpha, beta, state);
+
+  // PV node: the initial window is wider than a zero-window scout.
+  // Non-PV nodes use a null window (beta == alpha + 1).
+  bool pvNode = (beta - alpha) > 1;
 
   // --- TT probe ---
   const int origAlpha = alpha;
@@ -317,9 +391,38 @@ int negamax(Position& pos, int depth, int alpha, int beta,
       if (alpha >= beta)
         return ttScore;
     }
-    // Extract TT best move for ordering (used in Phase 4)
     if (entry)
       ttMove = unpackMove(entry->bestMove);
+  }
+
+  // --- Null Move Pruning (NMP) ---
+  // If the position is so strong that even "passing" (null move) beats
+  // beta, we can prune the entire subtree.
+  //
+  // Guards:
+  //   - Not at root (ply > 0)
+  //   - Sufficient depth remaining (avoids useless shallow null searches)
+  //   - Not in check (null move while in check is illegal)
+  //   - Not a PV node (PV nodes need accurate scores, not cut estimates)
+  //   - Side has non-pawn material (avoids zugzwang in K+P endgames)
+  //
+  // Reference: https://www.chessprogramming.org/Null_Move_Pruning
+  if (ply > 0 && depth >= NMP_DEPTH_THRESHOLD && !inCheck &&
+      !pvNode && hasNonPawnMaterial(pos)) {
+    UndoInfo nullUndo = pos.makeNullMove();
+    // Zero-window search at reduced depth: just testing if score >= beta.
+    int nullScore = -negamax(pos, depth - 1 - NMP_REDUCTION,
+                             -beta, -beta + 1, ply + 1, state);
+    pos.unmakeNullMove(nullUndo);
+
+    if (state.stopped) return 0;
+
+    // Null-move cutoff: the position is so good that even passing beats beta.
+    if (nullScore >= beta) {
+      // Don't return unproven mate scores from null-move searches —
+      // they can be unreliable.  Clamp to beta instead.
+      return (nullScore >= MATE_SCORE - MAX_PLY) ? beta : nullScore;
+    }
   }
 
   // --- Generate all legal moves ---
@@ -329,7 +432,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
 
   // No legal moves: checkmate or stalemate
   if (moves.count == 0) {
-    if (pos.inCheck())
+    if (inCheck)
       return -MATE_SCORE + ply;  // Checkmate — worse the further from root
     return DRAW_SCORE;            // Stalemate
   }
@@ -340,15 +443,83 @@ int negamax(Position& pos, int depth, int alpha, int beta,
                ply, pos.sideToMove(), state);
 
   Move bestMove = moves.moves[0];
+  int movesSearched = 0;
+
   for (int i = 0; i < moves.count; ++i) {
     pickBest(moves, scores, i);
     Move m = moves.moves[i];
 
     UndoInfo undo = pos.make(m);
-    int score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, state);
+
+    int score;
+
+    // --- Principal Variation Search (PVS) + Late Move Reductions (LMR) ---
+    //
+    // PVS: the first move that improves alpha is the presumed best (PV).
+    // All subsequent moves are searched with a zero-window ("scout") to
+    // confirm they are worse.  If a scout search fails high, we re-search
+    // with the full window.
+    //
+    // LMR: quiet moves searched late in the move list are unlikely to be
+    // good.  We search them at reduced depth first.  If the reduced search
+    // surprises (fails high), we re-search at full depth.
+    //
+    // The combination: late quiet moves get both LMR and PVS zero-window.
+    // If the reduced search fails high, we re-search at full depth with
+    // a zero-window.  If that also fails high, we re-search with the full
+    // PV window.  This three-tier approach minimizes wasted work.
+    //
+    // References:
+    //   https://www.chessprogramming.org/Principal_Variation_Search
+    //   https://www.chessprogramming.org/Late_Move_Reductions
+
+    if (movesSearched == 0) {
+      // First move: always search with full window and full depth.
+      score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, state);
+    } else {
+      // --- LMR: determine if this move should be reduced ---
+      // Conditions for reduction:
+      //   - Enough moves already searched at full depth
+      //   - Sufficient depth remaining
+      //   - Move is quiet (not a capture or promotion)
+      //   - Side was not in check before the move
+      bool doLMR = movesSearched >= LMR_FULL_DEPTH_MOVES &&
+                   depth >= LMR_DEPTH_THRESHOLD &&
+                   !m.isCapture() && !m.isPromotion() &&
+                   !inCheck;
+
+      if (doLMR) {
+        // Reduced-depth zero-window scout search.
+        // Reduction: 1 ply, or 2 for very late moves at high depth.
+        int reduction = 1;
+        if (movesSearched >= LMR_FULL_DEPTH_MOVES * 2 && depth >= 6)
+          reduction = 2;
+
+        score = -negamax(pos, depth - 1 - reduction,
+                         -alpha - 1, -alpha, ply + 1, state);
+      } else {
+        // Not reducing — force a full-depth scout below.
+        score = alpha + 1;
+      }
+
+      // If the LMR search (or skip) suggests this move might be good,
+      // re-search at full depth with a zero-window.
+      if (score > alpha) {
+        score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, state);
+      }
+
+      // PVS re-search: if the zero-window scout failed high within the
+      // PV window, we need an exact score — re-search with full window.
+      if (score > alpha && score < beta) {
+        score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, state);
+      }
+    }
+
     pos.unmake(m, undo);
 
     if (state.stopped) return 0;
+
+    ++movesSearched;
 
     if (score > alpha) {
       alpha = score;
@@ -436,23 +607,77 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
     return result;
   }
 
-  // --- Iterative deepening loop ---
+  // --- Iterative deepening loop with aspiration windows ---
+  //
+  // Depth 1 always uses a full window.  Subsequent depths use a narrow
+  // aspiration window centred on the previous iteration's score.  On
+  // fail-low or fail-high the window is progressively widened, falling
+  // back to a full-width search if necessary.
+  //
+  // After each completed iteration, the best move is promoted to index 0
+  // of rootMoves so it is searched first in the next iteration (root move
+  // reordering).
+  //
+  // References:
+  //   https://www.chessprogramming.org/Aspiration_Windows
+  //   https://www.chessprogramming.org/Iterative_Deepening
+
+  int prevScore = 0;  // score from the last completed iteration
+
   for (int depth = 1; depth <= maxDepth; ++depth) {
-    int alpha = -INF_SCORE;
-    int beta  =  INF_SCORE;
+    // --- Aspiration window setup ---
+    int alpha, beta;
+    if (depth == 1) {
+      alpha = -INF_SCORE;
+      beta  =  INF_SCORE;
+    } else {
+      alpha = prevScore - ASPIRATION_DELTA;
+      beta  = prevScore + ASPIRATION_DELTA;
+    }
+
     Move iterBestMove = rootMoves.moves[0];
     int iterBestScore = -INF_SCORE;
 
-    for (int i = 0; i < rootMoves.count; ++i) {
-      int score = searchRootMove(pos, rootMoves.moves[i], depth,
-                                 alpha, beta, state);
+    // Aspiration re-search loop: widen the window on fail-low / fail-high.
+    //
+    // IMPORTANT: the root move loop updates `alpha` as better moves are
+    // found (standard alpha-beta).  We must compare the final score against
+    // the *original* aspiration bounds, not the modified alpha, to decide
+    // whether a re-search is needed.
+    while (true) {
+      int aspAlpha = alpha;  // snapshot before root search modifies alpha
+      int aspBeta  = beta;
+      iterBestMove  = rootMoves.moves[0];
+      iterBestScore = -INF_SCORE;
+
+      for (int i = 0; i < rootMoves.count; ++i) {
+        int score = searchRootMove(pos, rootMoves.moves[i], depth,
+                                   alpha, beta, state);
+        if (state.stopped) break;
+
+        if (score > iterBestScore) {
+          iterBestScore = score;
+          iterBestMove = rootMoves.moves[i];
+          if (score > alpha) alpha = score;
+        }
+      }
+
       if (state.stopped) break;
 
-      if (score > iterBestScore) {
-        iterBestScore = score;
-        iterBestMove = rootMoves.moves[i];
-        if (score > alpha) alpha = score;
+      // Fail-low: every root move scored at or below the aspiration lower
+      // bound.  Widen the lower bound to -INF and re-search.
+      if (iterBestScore <= aspAlpha) {
+        alpha = -INF_SCORE;
+        continue;
       }
+      // Fail-high: the best score met or exceeded the upper bound.
+      // Widen the upper bound to +INF and re-search.
+      if (iterBestScore >= aspBeta) {
+        beta = INF_SCORE;
+        continue;
+      }
+      // Score falls within the window — iteration is complete.
+      break;
     }
 
     // If stopped mid-iteration, discard partial results
@@ -463,6 +688,21 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
     result.score    = iterBestScore;
     result.depth    = depth;
     result.nodes    = state.nodes;
+    prevScore       = iterBestScore;
+
+    // --- Root move reordering ---
+    // Move the best move to index 0 so it is searched first at the next
+    // depth, improving alpha-beta cutoffs.
+    for (int i = 1; i < rootMoves.count; ++i) {
+      if (rootMoves.moves[i].from == iterBestMove.from &&
+          rootMoves.moves[i].to   == iterBestMove.to   &&
+          rootMoves.moves[i].flags == iterBestMove.flags) {
+        Move tmp = rootMoves.moves[0];
+        rootMoves.moves[0] = rootMoves.moves[i];
+        rootMoves.moves[i] = tmp;
+        break;
+      }
+    }
 
     // Notify caller (e.g. UCI "info" line)
     if (info) info(result);

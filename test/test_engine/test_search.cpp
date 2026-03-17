@@ -282,13 +282,13 @@ static void test_search_stop_flag(void) {
 }
 
 // Mate-in-1 search stops early (no need to deepen further).
-// Finding mate requires depth 2 in ID terms: root move + one response ply
-// where the opponent has no legal moves.
+// With check extension the engine may resolve the mate at depth 1 or 2,
+// depending on whether the opponent's reply triggers an extension.
 static void test_search_mate_stops_early(void) {
   const char* fen = "1k6/8/1K6/8/8/8/8/7R w - - 0 1";
   auto result = searchFEN(fen, 10);
-  // Should find mate at depth 2 and stop, not search all 10 depths.
-  TEST_ASSERT_EQUAL_INT(2, result.depth);
+  // Should find mate within the first few depths and stop early.
+  TEST_ASSERT_TRUE(result.depth <= 2);
   TEST_ASSERT_TRUE(result.score >= search::MATE_SCORE - 10);
 }
 
@@ -415,6 +415,123 @@ static void test_tt_mate_score_roundtrip(void) {
 }
 
 // ===========================================================================
+// Phase 3.5 — Search pruning & reduction tests (check ext, NMP, PVS, LMR,
+//              aspiration windows, root move reordering)
+// ===========================================================================
+
+// Check extension: positions with checks are extended, so the engine sees
+// deeper into forced check sequences than the nominal depth suggests.
+// Here we verify a simple back-rank mate is still found correctly.
+static void test_check_extension_finds_mate(void) {
+  // White Kb6, Rh1; Black Kb8.  Rh8# is mate in 1.
+  const char* fen = "1k6/8/1K6/8/8/8/8/7R w - - 0 1";
+  auto result = searchFEN(fen, 2);
+  std::string move = moveToStr(result.bestMove);
+  TEST_ASSERT_EQUAL_STRING("h1h8", move.c_str());
+  TEST_ASSERT_TRUE(result.score >= search::MATE_SCORE - 10);
+}
+
+// NMP: engine solves a quiet middlegame at depth 5 without blundering.
+// This position has plenty of non-pawn material, so NMP should fire and
+// prune aggressively, keeping the node count manageable.
+static void test_nmp_quiet_position(void) {
+  const char* fen =
+      "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4";
+  auto result = searchFEN(fen, 5);
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+  TEST_ASSERT_EQUAL_INT(5, result.depth);
+}
+
+// NMP is disabled in K+P endings (hasNonPawnMaterial guard).
+// The engine must not blunder in a won K+P endgame due to null-move misjudgement.
+static void test_nmp_kp_endgame_no_blunder(void) {
+  // White Kd5, Pd4; Black Kd7.  White pushes the pawn to win.
+  const char* fen = "8/3k4/8/3K4/3P4/8/8/8 w - - 0 1";
+  auto result = searchFEN(fen, 6);
+  TEST_ASSERT_TRUE(result.score > 0);  // White is winning
+}
+
+// PVS + LMR: complex middlegame solved at depth 5 with reasonable node count.
+// With PVS zero-window scouts + LMR reductions + NMP + TT, the tree should
+// be much smaller than pure alpha-beta.
+static void test_pvs_lmr_middlegame_efficiency(void) {
+  const char* fen =
+      "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4";
+  search::TranspositionTable tt;
+  tt.resize(search::DEFAULT_TT_SIZE);
+
+  Position pos;
+  pos.loadFEN(fen);
+  search::SearchLimits limits;
+  limits.maxDepth = 5;
+
+  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  TEST_ASSERT_EQUAL_INT(5, result.depth);
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+  TEST_ASSERT_TRUE(result.nodes < 500000);
+
+  tt.free();
+}
+
+// Pruning must not hide tactical shots.  Existing mate/fork tests provide
+// implicit coverage; this adds a different tactical position.
+static void test_pruning_preserves_tactics(void) {
+  // White Nd5 can fork king (e8) and rook (a8) via Nc7+.
+  const char* fen =
+      "r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1";
+  auto result = searchFEN(fen, 4);
+  std::string move = moveToStr(result.bestMove);
+  TEST_ASSERT_EQUAL_STRING("d5c7", move.c_str());
+}
+
+// Aspiration windows: Nc7+ fork must still be found when aspiration is active.
+static void test_aspiration_windows_correctness(void) {
+  const char* fen = "r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1";
+  auto result = searchFEN(fen, 4);
+  std::string move = moveToStr(result.bestMove);
+  TEST_ASSERT_EQUAL_STRING("d5c7", move.c_str());
+}
+
+// Aspiration windows: info callback fires for every completed depth
+// (no gaps from re-searches).
+static void test_aspiration_depth_continuity(void) {
+  const char* fen =
+      "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+  Position pos;
+  pos.loadFEN(fen);
+  search::SearchLimits limits;
+  limits.maxDepth = 4;
+
+  static int maxReportedDepth;
+  static int infoCallCount;
+  maxReportedDepth = 0;
+  infoCallCount    = 0;
+
+  auto result = search::findBestMove(pos, limits, nullptr,
+    [](const search::SearchResult& r) {
+      maxReportedDepth = r.depth;
+      infoCallCount++;
+    });
+
+  TEST_ASSERT_EQUAL_INT(4, result.depth);
+  TEST_ASSERT_EQUAL_INT(4, maxReportedDepth);
+  TEST_ASSERT_EQUAL_INT(4, infoCallCount);
+}
+
+// Root move reordering: repeated searches on the same position must return
+// the same best move, confirming the swap logic doesn't corrupt rootMoves.
+static void test_root_reordering_consistency(void) {
+  const char* fen =
+      "r1bqkbnr/pppppppp/2n5/4P3/8/8/PPPP1PPP/RNBQKBNR w KQkq - 1 3";
+  auto result1 = searchFEN(fen, 4);
+  auto result2 = searchFEN(fen, 4);
+
+  std::string move1 = moveToStr(result1.bestMove);
+  std::string move2 = moveToStr(result2.bestMove);
+  TEST_ASSERT_EQUAL_STRING(move1.c_str(), move2.c_str());
+}
+
+// ===========================================================================
 // Phase 4 — Move ordering tests
 // ===========================================================================
 
@@ -487,6 +604,14 @@ void register_search_tests() {
   RUN_TEST(test_tt_pack_unpack_move);
   RUN_TEST(test_tt_reduces_nodes);
   RUN_TEST(test_tt_mate_score_roundtrip);
+  RUN_TEST(test_check_extension_finds_mate);
+  RUN_TEST(test_nmp_quiet_position);
+  RUN_TEST(test_nmp_kp_endgame_no_blunder);
+  RUN_TEST(test_pvs_lmr_middlegame_efficiency);
+  RUN_TEST(test_pruning_preserves_tactics);
+  RUN_TEST(test_aspiration_windows_correctness);
+  RUN_TEST(test_aspiration_depth_continuity);
+  RUN_TEST(test_root_reordering_consistency);
   RUN_TEST(test_ordering_reduces_nodes);
   RUN_TEST(test_ordering_finds_tactics);
 }

@@ -387,6 +387,53 @@ void Position::unmake(Move m, const UndoInfo& undo) {
 }
 
 // ---------------------------------------------------------------------------
+// Null move — pass the turn without moving any piece.
+//
+// Used by null-move pruning in the search.  Flips side-to-move, clears EP
+// state, and records the new hash for repetition detection.  No piece state
+// is modified, so unmake just restores from the saved UndoInfo.
+//
+// Reference: https://www.chessprogramming.org/Null_Move
+// ---------------------------------------------------------------------------
+
+UndoInfo Position::makeNullMove() {
+  UndoInfo undo;
+  undo.state = state_;
+  undo.hash = hash_;
+  undo.captured = Piece::NONE;
+  undo.capturedSquare = SQ_NONE;
+  undo.historyCount = hashHistory_.count;
+
+  // Remove old EP key (if the current EP square is legal)
+  if (state_.epRow >= 0 && state_.epCol >= 0 &&
+      movegen::hasLegalEnPassantCapture(bb_, mailbox_, currentTurn_, state_))
+    hash_ ^= zob::KEYS.enPassant[state_.epCol];
+
+  // Clear EP — null move resets en passant opportunity
+  state_.epRow = -1;
+  state_.epCol = -1;
+
+  // Flip side to move
+  currentTurn_ = ~currentTurn_;
+  hash_ ^= zob::KEYS.sideToMove;
+
+  // Increment halfmove clock (null move is not a pawn move or capture)
+  state_.halfmoveClock++;
+
+  recordPosition();
+  invalidateCache();
+  return undo;
+}
+
+void Position::unmakeNullMove(const UndoInfo& undo) {
+  currentTurn_ = ~currentTurn_;
+  state_ = undo.state;
+  hash_ = undo.hash;
+  hashHistory_.count = undo.historyCount;
+  invalidateCache();
+}
+
+// ---------------------------------------------------------------------------
 // Queries
 // ---------------------------------------------------------------------------
 
