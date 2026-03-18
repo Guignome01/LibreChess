@@ -611,6 +611,147 @@ static void evalKingSafety(const BitboardSet& bb,
 }
 
 // ---------------------------------------------------------------------------
+// Central square constants (LERF) — used by center control and outposts.
+// ---------------------------------------------------------------------------
+
+constexpr Square SQ_D4 = 27, SQ_D5 = 35, SQ_E4 = 28, SQ_E5 = 36;
+
+// Center mask: the four central squares {d4, d5, e4, e5}.
+static constexpr Bitboard CENTER_MASK =
+    squareBB(SQ_D4) | squareBB(SQ_D5) | squareBB(SQ_E4) | squareBB(SQ_E5);
+
+// ---------------------------------------------------------------------------
+// Center Control — bonus for pawns occupying or attacking centre squares.
+//
+// Controlling the centre (d4/d5/e4/e5) is a fundamental positional goal.
+// Pawns in the centre provide a stable presence, while pawns that attack
+// centre squares exert influence without committing.
+//
+// Values: +15cp per pawn occupying a centre square,
+//         +5cp  per centre square attacked by a friendly pawn.
+// Applied to both MG and EG.
+//
+// Reference: https://www.chessprogramming.org/Center_Control
+// ---------------------------------------------------------------------------
+
+static constexpr int CENTER_OCCUPATION_BONUS = 15;
+static constexpr int CENTER_ATTACK_BONUS     = 5;
+
+static void evalCenterControl(const BitboardSet& bb,
+                              int& mgScore, int& egScore) {
+  Bitboard whitePawns = bb.byPiece[0];
+  Bitboard blackPawns = bb.byPiece[6];
+
+  // Occupation bonus: pawns standing on centre squares.
+  int whiteOccupation = popcount(whitePawns & CENTER_MASK);
+  int blackOccupation = popcount(blackPawns & CENTER_MASK);
+
+  // Attack bonus: centre squares attacked by friendly pawns.
+  Bitboard whitePawnAtk = shiftNE(whitePawns) | shiftNW(whitePawns);
+  Bitboard blackPawnAtk = shiftSE(blackPawns) | shiftSW(blackPawns);
+  int whiteAttacks = popcount(whitePawnAtk & CENTER_MASK);
+  int blackAttacks = popcount(blackPawnAtk & CENTER_MASK);
+
+  int bonus = (whiteOccupation - blackOccupation) * CENTER_OCCUPATION_BONUS
+            + (whiteAttacks - blackAttacks)       * CENTER_ATTACK_BONUS;
+  mgScore += bonus;
+  egScore += bonus;
+}
+
+// ---------------------------------------------------------------------------
+// King Tropism — penalty when enemy pieces are close to the king.
+//
+// Each enemy minor/major piece receives a bonus proportional to its
+// proximity (Chebyshev distance) to the defending king.  Closer pieces are
+// more threatening.  Weight varies by piece type — queens and rooks carry
+// more weight than minor pieces.
+//
+// Formula per piece: weight[type] × (7 − distance).
+// Only applied to the MG score — in endgames, king activity is encouraged
+// and tropism is irrelevant.
+//
+// Reference: https://www.chessprogramming.org/King_Safety#King_Tropism
+// ---------------------------------------------------------------------------
+
+// Per-piece-type weights for king tropism (N=0, B=1, R=2, Q=3).
+static constexpr int TROPISM_WEIGHT[] = {2, 1, 2, 4};
+
+// Chebyshev distance between two LERF squares.
+static int chebyshevDist(Square a, Square b) {
+  int dr = (a >> 3) - (b >> 3);  // rank difference
+  int df = (a & 7)  - (b & 7);   // file difference
+  if (dr < 0) dr = -dr;
+  if (df < 0) df = -df;
+  return dr > df ? dr : df;
+}
+
+static void evalKingTropism(const BitboardSet& bb, int& mgScore) {
+  // Locate both kings.
+  Bitboard wkBB = bb.byPiece[5];
+  Bitboard bkBB = bb.byPiece[11];
+  if (!wkBB || !bkBB) return;
+  Square wkSq = lsb(wkBB);
+  Square bkSq = lsb(bkBB);
+
+  // Black pieces threatening the white king.
+  for (int pt = 0; pt < 4; ++pt) {
+    Bitboard pieces = bb.byPiece[pt + 7];  // B_KNIGHT..B_QUEEN (7-10)
+    while (pieces) {
+      Square sq = popLsb(pieces);
+      mgScore -= TROPISM_WEIGHT[pt] * (7 - chebyshevDist(sq, wkSq));
+    }
+  }
+
+  // White pieces threatening the black king.
+  for (int pt = 0; pt < 4; ++pt) {
+    Bitboard pieces = bb.byPiece[pt + 1];  // W_KNIGHT..W_QUEEN (1-4)
+    while (pieces) {
+      Square sq = popLsb(pieces);
+      mgScore += TROPISM_WEIGHT[pt] * (7 - chebyshevDist(sq, bkSq));
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Space — bonus for territory behind own pawns in the centre files.
+//
+// Controlling space behind the pawn chain gives pieces room to manoeuvre.
+// For each side, count safe squares on files c–f, ranks 2–4 (for White)
+// or ranks 5–7 (for Black) that are not attacked by enemy pawns.
+//
+// Value: +1cp per safe square. Applied to both MG and EG.
+//
+// Reference: https://www.chessprogramming.org/Space
+// ---------------------------------------------------------------------------
+
+static constexpr int SPACE_BONUS = 1;
+
+// Files c–f, ranks 2–4 (LERF ranks 1–3) for White.
+static constexpr Bitboard WHITE_SPACE_ZONE =
+    (FILE_C | FILE_D | FILE_E | FILE_F) & (RANK_2 | RANK_3 | RANK_4);
+
+// Files c–f, ranks 5–7 (LERF ranks 4–6) for Black.
+static constexpr Bitboard BLACK_SPACE_ZONE =
+    (FILE_C | FILE_D | FILE_E | FILE_F) & (RANK_5 | RANK_6 | RANK_7);
+
+static void evalSpace(const BitboardSet& bb,
+                      int& mgScore, int& egScore) {
+  Bitboard whitePawns = bb.byPiece[0];
+  Bitboard blackPawns = bb.byPiece[6];
+
+  // Pawn attack masks — squares attacked by enemy pawns are unsafe.
+  Bitboard blackPawnAtk = shiftSE(blackPawns) | shiftSW(blackPawns);
+  Bitboard whitePawnAtk = shiftNE(whitePawns) | shiftNW(whitePawns);
+
+  int whiteSpace = popcount(WHITE_SPACE_ZONE & ~blackPawnAtk);
+  int blackSpace = popcount(BLACK_SPACE_ZONE & ~whitePawnAtk);
+
+  int bonus = (whiteSpace - blackSpace) * SPACE_BONUS;
+  mgScore += bonus;
+  egScore += bonus;
+}
+
+// ---------------------------------------------------------------------------
 // Knight outposts — bonus for knights on squares that are:
 //   (a) protected by a friendly pawn, and
 //   (b) not attackable by any enemy pawn (no enemy pawn on adjacent files
@@ -627,8 +768,6 @@ static constexpr int OUTPOST_BONUS = 15;
 
 static void evalKnightOutposts(const BitboardSet& bb,
                                int& mgScore, int& egScore) {
-  // Central squares — d4/d5/e4/e5 (LERF)
-  constexpr Square SQ_D4 = 27, SQ_D5 = 35, SQ_E4 = 28, SQ_E5 = 36;
 
   Bitboard whitePawns = bb.byPiece[0];
   Bitboard blackPawns = bb.byPiece[6];
@@ -750,6 +889,9 @@ int evaluatePosition(const BitboardSet& bb) {
   evalRookOnSeventh(bb, mgScore, egScore);
   evalKnightOutposts(bb, mgScore, egScore);
   evalKingSafety(bb, mgScore, egScore);
+  evalCenterControl(bb, mgScore, egScore);
+  evalKingTropism(bb, mgScore);
+  evalSpace(bb, mgScore, egScore);
 
   // Mobility requires full attack computation — one call per evaluation.
   attacks::init();

@@ -199,6 +199,19 @@ static constexpr int LMP_THRESHOLD[] = {0, 5, 12, 20};  // indexed by depth
 static constexpr int RAZOR_MARGIN[] = {0, 300, 500};  // indexed by depth
 
 // ---------------------------------------------------------------------------
+// Tempo bonus (centipawns).
+//
+// A small bonus given to the side-to-move, reflecting the inherent
+// advantage of having the initiative.  Applied in the evaluate() wrapper
+// (not in evaluatePosition) because it depends on side-to-move context
+// which the pure-bitboard evaluator does not track.
+//
+// Reference: https://www.chessprogramming.org/Tempo
+// ---------------------------------------------------------------------------
+
+static constexpr int TEMPO_BONUS = 10;
+
+// ---------------------------------------------------------------------------
 // Mate score adjustment for TT storage.
 //
 // Mate scores are relative to the root: -MATE_SCORE + ply.  When storing
@@ -373,7 +386,8 @@ inline void updateHistory(Move m, int depth, Color side, SearchState& state) {
 
 int evaluate(const Position& pos) {
   int score = eval::evaluatePosition(pos.bitboards());
-  return (pos.sideToMove() == Color::WHITE) ? score : -score;
+  int stm = (pos.sideToMove() == Color::WHITE) ? score : -score;
+  return stm + TEMPO_BONUS;
 }
 
 // ---------------------------------------------------------------------------

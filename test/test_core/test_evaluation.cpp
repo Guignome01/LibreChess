@@ -150,9 +150,11 @@ static void test_eval_tapered_phase_affects_king(void) {
   placePiece(bb, mailbox, Piece::B_KING, "h8");
   int endgameEval = eval::evaluatePosition(bb);
 
-  // Add symmetric rook pair → increases phase toward midgame.
-  placePiece(bb, mailbox, Piece::W_ROOK, "a1");
-  placePiece(bb, mailbox, Piece::B_ROOK, "a8");
+  // Add symmetric queen pair → large phase swing (phase 8 vs 0).
+  // Queens produce enough MG/EG blending difference (including king tropism
+  // asymmetry) to avoid accidental coincidence with the endgame score.
+  placePiece(bb, mailbox, Piece::W_QUEEN, "a1");
+  placePiece(bb, mailbox, Piece::B_QUEEN, "a8");
   int midgameEval = eval::evaluatePosition(bb);
 
   // Phase change shifts the king PST blend, producing different eval.
@@ -492,6 +494,94 @@ static void test_eval_knight_outpost(void) {
 }
 
 // ===========================================================================
+// Center control
+// ===========================================================================
+
+static void test_eval_center_pawn_occupation(void) {
+  // White pawn on e4 (center) vs pawn on a3 (rim).
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "e4");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  int center = eval::evaluatePosition(bb);
+
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "a3");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  int rim = eval::evaluatePosition(bb);
+
+  // Center pawn should be evaluated higher.
+  TEST_ASSERT_TRUE(center > rim);
+}
+
+static void test_eval_center_pawn_attack(void) {
+  // White pawn on c3 attacks d4 (center) vs pawn on a3 (attacks b4, not center).
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "c3");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  int attacking = eval::evaluatePosition(bb);
+
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "a3");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  int notAttacking = eval::evaluatePosition(bb);
+
+  // Pawn attacking center should score higher.
+  TEST_ASSERT_TRUE(attacking > notAttacking);
+}
+
+// ===========================================================================
+// King tropism
+// ===========================================================================
+
+static void test_eval_king_tropism_close_piece(void) {
+  // White queen close to black king vs far from black king.
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::W_QUEEN, "f7");  // 1 square from e8
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  int close = eval::evaluatePosition(bb);
+
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::W_QUEEN, "a2");  // far from e8
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  int far = eval::evaluatePosition(bb);
+
+  // Queen near enemy king should score higher for white.
+  TEST_ASSERT_TRUE(close > far);
+}
+
+// ===========================================================================
+// Space
+// ===========================================================================
+
+static void test_eval_space_more_territory(void) {
+  // More white space (unrestricted) vs less white space (restricted by black
+  // pawns that attack the space zone).
+  //
+  // Position A: black pawns on the rim (a6, h6) — they do not attack any
+  //   square in White's space zone (files c–f, ranks 2–4).
+  // Position B: black pawns in the centre (d5, e5) — they attack c4, e4,
+  //   d4, f4, removing 4 squares from White's safe space zone.
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_PAWN, "a6");
+  placePiece(bb, mailbox, Piece::B_PAWN, "h6");
+  int open = eval::evaluatePosition(bb);
+
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_PAWN, "d5");
+  placePiece(bb, mailbox, Piece::B_PAWN, "e5");
+  int cramped = eval::evaluatePosition(bb);
+
+  // White scores better when its space is unrestricted.
+  TEST_ASSERT_TRUE(open > cramped);
+}
+
+// ===========================================================================
 // Registration
 // ===========================================================================
 
@@ -545,4 +635,14 @@ void register_evaluation_tests() {
 
   // Knight outpost
   RUN_TEST(test_eval_knight_outpost);
+
+  // Center control
+  RUN_TEST(test_eval_center_pawn_occupation);
+  RUN_TEST(test_eval_center_pawn_attack);
+
+  // King tropism
+  RUN_TEST(test_eval_king_tropism_close_piece);
+
+  // Space
+  RUN_TEST(test_eval_space_more_territory);
 }
