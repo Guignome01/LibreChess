@@ -21,8 +21,9 @@ Game (lib/game/):
 Engine (lib/engine/):
   Engine (direct-call facade)
    ├─ owns Position (from core)
-   └─ owns TranspositionTable + search state
+   └─ owns TranspositionTable + stop control
   search (alpha-beta + quiescence + iterative deepening + check ext + PVS + NMP + LMR + LMP + razoring + aspiration windows + IID + delta pruning + futility pruning + SEE-based ordering + countermove heuristic)
+  SearchState (heap-allocated via std::unique_ptr in findBestMove, ~19 KiB)
 
 Firmware (src/):
   GameMode (abstract base, src/game_mode/)

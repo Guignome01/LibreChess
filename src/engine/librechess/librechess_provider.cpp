@@ -42,8 +42,15 @@ void LibreChessProvider::requestMove(const std::string& fen) {
   ctx->fen = fen;
   ctx->depth = depth_;
   ctx->moveTimeMs = moveTimeMs_;
-  // 16 KiB stack: search uses ~2 KiB for MAX_MOVES arrays per ply,
-  // plus ~16 KiB for SearchState (killers + history).
+  // Stack budget for lcTask (16 KiB = 16384 bytes):
+  //   Engine (Position w/ HashHistory 256) ............. ~2,350 B
+  //   MoveList rootMoves (findBestMove local) .......... ~  876 B
+  //   Per-ply recursion (MoveList + scores + UndoInfo) . ~1,844 B × depth
+  //   At depth 6: ..................................... ~11,064 B
+  //   SearchState (history + killers + countermoves) ... heap (std::unique_ptr)
+  //   Transposition table .............................. heap (new[])
+  //   Estimated total at depth 6: ..................... ~14,290 B
+  //   Headroom: ....................................... ~ 2,094 B
   spawnTask(ctx, "lcTask", taskFunction, 16384);
 }
 

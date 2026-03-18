@@ -1,6 +1,7 @@
 #include "search.h"
 
 #include <cstring>
+#include <memory>
 
 #include "attacks.h"
 #include "evaluation.h"
@@ -822,7 +823,11 @@ int searchRootMove(Position& pos, Move m, int depth,
 SearchResult findBestMove(Position& pos, const SearchLimits& limits,
                           TimeFunc timeFunc, InfoCallback info,
                           TranspositionTable* tt) {
-  SearchState state;
+  // Heap-allocate SearchState (~19 KiB) to avoid overflowing the 16 KiB
+  // FreeRTOS task stack.  Contains history[2][64][64] (16 KiB), killers
+  // (1 KiB), and countermoves (1.5 KiB).
+  auto statePtr = std::make_unique<SearchState>();
+  SearchState& state = *statePtr;
   state.timeFunc     = timeFunc;
   state.startTime    = timeFunc ? timeFunc() : 0;
   state.maxTimeMs    = limits.maxTimeMs;

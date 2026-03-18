@@ -1216,7 +1216,7 @@ void test_hashhistory_add_and_read(void) {
 }
 
 void test_hashhistory_max_size(void) {
-  TEST_ASSERT_EQUAL_INT(512, HashHistory::MAX_SIZE);
+  TEST_ASSERT_EQUAL_INT(256, HashHistory::MAX_SIZE);
 }
 
 // ---------------------------------------------------------------------------

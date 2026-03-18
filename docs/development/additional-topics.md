@@ -60,6 +60,77 @@ Common commands:
 
 Serial monitor runs at **115200 baud** (configured in `platformio.ini`).
 
+## Memory Budget
+
+ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-core.
+
+### Flash Partitions
+
+| Partition | Size |
+|-----------|------|
+| nvs | 20 KiB |
+| otadata | 8 KiB |
+| app0 (OTA slot A) | 1.75 MiB |
+| app1 (OTA slot B) | 1.75 MiB |
+| spiffs (LittleFS data) | 448 KiB |
+
+### Heap Allocations
+
+| Component | Size | Notes |
+|-----------|------|-------|
+| WiFi + networking | ~60–70 KiB | Persistent after `WiFi.begin()` |
+| Async web server | ~10–20 KiB | ESPAsyncWebServer buffers |
+| LittleFS | ~5–10 KiB | Filesystem metadata |
+| NeoPixelBus (LED) | ~2–3 KiB | DMA buffer for 64 LEDs |
+| Transposition table | up to 128 KiB | Dynamic: `(freeHeap - 32KB) / 4`, capped, 16B/entry |
+| SearchState | ~19 KiB | `std::unique_ptr` in `findBestMove()` |
+| **Free after persistent allocs** | **~80–100 KiB** | Available for TT + SearchState |
+
+### FreeRTOS Task Stacks
+
+| Task | Stack Size | Purpose |
+|------|-----------|---------|
+| lcTask (LibreChess engine) | 16 KiB | Search: Engine + per-ply recursion |
+| AnimWorker | 4 KiB | LED animation queue processing |
+| WiFi connect | default | ESP-IDF WiFi connection |
+| OTA reboot | 2 KiB | Short-lived reboot task |
+
+### Engine Stack Budget (lcTask, 16 KiB)
+
+| Component | Size | Location |
+|-----------|------|----------|
+| Engine (Position w/ HashHistory 256) | ~2,350 B | stack |
+| MoveList rootMoves | 876 B | stack |
+| Per-ply recursion (MoveList + scores + UndoInfo) | ~1,844 B × depth | stack |
+| At depth 6 | ~11,064 B | stack |
+| SearchState (history + killers + countermoves) | ~19 KiB | **heap** (`std::unique_ptr`) |
+| Transposition table | varies | **heap** (`new[]`) |
+| **Estimated total at depth 6** | **~14,290 B** | fits in 16 KiB |
+
+### Per-Ply Recursion Breakdown
+
+| Component | Size |
+|-----------|------|
+| MoveList (Move[218] + count) | 876 B |
+| scores[218] (int array) | 872 B |
+| UndoInfo (PositionState + hash + piece + sq + int) | ~36 B |
+| Local variables | ~60 B |
+| **Total per ply** | **~1,844 B** |
+
+### Position Size (on stack inside Engine)
+
+| Field | Size |
+|-------|------|
+| BitboardSet (12 piece + 2 color + occupancy) | 120 B |
+| Piece mailbox[64] | 64 B |
+| Color currentTurn | 1 B |
+| PositionState | ~20 B |
+| Square kingSquare[2] | 2 B |
+| uint64_t hash | 8 B |
+| HashHistory (256 × 8B + int) | ~2,052 B |
+| Cache fields (FEN string + eval + dirty flags) | ~36 B |
+| **Total** | **~2,303 B** |
+
 ## References
 
 - [Chess Programming Wiki](https://www.chessprogramming.org/Main_Page) — comprehensive resource for chess engine programming: board representations (bitboards, mailbox), move generation, search algorithms, evaluation, and endgame tablebases.

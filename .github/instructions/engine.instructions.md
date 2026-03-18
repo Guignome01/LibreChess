@@ -65,6 +65,17 @@ Each provider has a companion API module in its subdirectory:
 
 API modules handle raw HTTP + TLS. Providers handle chess-domain logic and FreeRTOS lifecycle.
 
+## Memory
+
+`LibreChessProvider` runs the search in a FreeRTOS task (`lcTask`) with a 16 KiB stack. The major allocations:
+
+- **SearchState** (~19 KiB: `history[2][64][64]` = 16 KiB, `killers[128][2]` = 1 KiB, `countermoves[12][64]` = 1.5 KiB) — **heap-allocated** via `std::unique_ptr` in `findBestMove()`. Too large for the 16 KiB task stack.
+- **Transposition table** — heap-allocated (`new TTEntry[]`), dynamically sized to available heap, capped at 128 KiB.
+- **Engine** (owns Position + TT pointers) — stack-allocated in `taskFunction()`. Position contains `HashHistory` (256 × 8B = 2 KiB) plus board state (~300B).
+- **Per-ply recursion** — ~1.8 KiB per ply (MoveList 876B + scores[218] 872B + UndoInfo ~36B). At depth 6: ~11 KiB on the task stack.
+
+Estimated total stack usage at depth 6: ~14.3 KiB (fits in the 16 KiB stack with ~1.7 KiB headroom). See `docs/development/additional-topics.md` for the full budget breakdown.
+
 ## Design Decisions
 
 - **Providers never touch hardware** — providers return `EngineResult` structs only. All LED, sensor, and animation logic stays in `BotMode`. This means providers can be tested or replaced without any hardware dependency, and `BotMode` controls the full user interaction sequence.
