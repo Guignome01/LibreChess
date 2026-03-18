@@ -172,6 +172,13 @@ struct SearchState {
   // Reference: https://www.chessprogramming.org/History_Heuristic
   int16_t history[2][64][64];
 
+  // Countermove heuristic: for each (piece, toSquare) of the previous move,
+  // stores the quiet move that caused a beta cutoff in response.  Used as a
+  // 3rd-tier ordering hint (between killers and history).
+  // Indexed by [pieceZobristIndex(0..11)][toSquare(0..63)].  ~1.5 KiB.
+  // Reference: https://www.chessprogramming.org/Countermove_Heuristic
+  PackedMove countermoves[12][64];
+
   // Initialize killer and history tables to zero.
   void clearHeuristics();
 

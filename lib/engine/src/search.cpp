@@ -82,6 +82,7 @@ void TranspositionTable::store(uint64_t hash, int score, Move bestMove,
 void SearchState::clearHeuristics() {
   std::memset(killers, 0, sizeof(killers));
   std::memset(history, 0, sizeof(history));
+  std::memset(countermoves, 0, sizeof(countermoves));
 }
 
 namespace {
@@ -166,6 +167,38 @@ static constexpr int DELTA_MARGIN = 200;
 static constexpr int FUTILITY_MARGIN[] = {0, 200, 500};  // indexed by depth
 
 // ---------------------------------------------------------------------------
+// Late Move Pruning (LMP) thresholds.
+//
+// At shallow depths (depth <= 3) in non-PV, non-check nodes, once enough
+// moves have been searched without improving alpha, remaining quiet moves
+// are skipped entirely.  More aggressive than LMR (which only reduces
+// depth; LMP skips the move outright).
+//
+// LMP_THRESHOLD[depth] = max quiet moves to search before pruning the rest.
+// Captures, promotions, and the first move are never pruned.
+//
+// Reference: https://www.chessprogramming.org/Late_Move_Pruning
+// ---------------------------------------------------------------------------
+
+static constexpr int LMP_THRESHOLD[] = {0, 5, 12, 20};  // indexed by depth
+
+// ---------------------------------------------------------------------------
+// Razoring margins.
+//
+// At shallow depths (depth 1-2) in non-PV, non-check nodes, if the static
+// eval plus a depth-dependent margin falls below alpha, the position is
+// likely unsalvageable by quiet moves.  Drop directly into quiescence
+// search instead of expanding the full move tree.
+//
+// Complements futility pruning: futility skips individual quiet moves when
+// static eval is low; razoring skips the entire subtree.
+//
+// Reference: https://www.chessprogramming.org/Razoring
+// ---------------------------------------------------------------------------
+
+static constexpr int RAZOR_MARGIN[] = {0, 300, 500};  // indexed by depth
+
+// ---------------------------------------------------------------------------
 // Mate score adjustment for TT storage.
 //
 // Mate scores are relative to the root: -MATE_SCORE + ply.  When storing
@@ -216,16 +249,35 @@ static constexpr int SCORE_CAPTURE  = 10000;
 static constexpr int SCORE_KILLER_1 = 9000;
 static constexpr int SCORE_KILLER_2 = 8000;
 
+// Countermove: quiet move that previously caused a beta cutoff in response
+// to the opponent's last (piece, toSquare).  Ranked between killers and
+// history for move ordering.
+// Reference: https://www.chessprogramming.org/Countermove_Heuristic
+static constexpr int SCORE_COUNTERMOVE = 7500;
+
 // Simple piece value for MVV-LVA (indexed by PieceType).
 // PieceType: NONE=0, PAWN=1, KNIGHT=2, BISHOP=3, ROOK=4, QUEEN=5, KING=6.
 static constexpr int MVV_LVA_VALUE[] = {0, 1, 3, 3, 5, 9, 0};
 
 // Assign ordering scores to all moves in the list.
 // Uses a parallel `scores[]` array (caller must provide MAX_MOVES capacity).
+// `prevPiece` and `prevTo` describe the opponent's last move (for countermove
+// lookup).  Pass prevPiece=Piece::NONE at the root (no previous move).
 void assignScores(const MoveList& moves, int scores[],
                   const BitboardSet& bb, const Piece mailbox[], Move ttMove,
-                  int ply, Color side, const SearchState& state) {
+                  int ply, Color side, const SearchState& state,
+                  Piece prevPiece, int prevTo) {
   uint8_t c = raw(side);
+
+  // Look up the countermove for the opponent's last (piece, toSquare).
+  // A countermove of 0 (default) means no countermove recorded.
+  PackedMove counterPM = 0;
+  if (!isEmpty(prevPiece)) {
+    int idx = pieceZobristIndex(prevPiece);
+    if (idx >= 0) counterPM = state.countermoves[idx][prevTo];
+  }
+  Move counterMove = unpackMove(counterPM);
+
   for (int i = 0; i < moves.count; ++i) {
     const Move& m = moves.moves[i];
 
@@ -262,6 +314,15 @@ void assignScores(const MoveList& moves, int scores[],
     }
     if (m == state.killers[ply][1]) {
       scores[i] = SCORE_KILLER_2;
+      continue;
+    }
+
+    // Countermove — the quiet move that previously refuted the opponent's
+    // last move.  Ranked between killers and history.
+    if (counterPM != 0 &&
+        m.from == counterMove.from && m.to == counterMove.to &&
+        m.flags == counterMove.flags) {
+      scores[i] = SCORE_COUNTERMOVE;
       continue;
     }
 
@@ -405,7 +466,7 @@ int quiescence(Position& pos, int alpha, int beta, SearchState& state) {
 // ---------------------------------------------------------------------------
 
 int negamax(Position& pos, int depth, int alpha, int beta,
-            int ply, SearchState& state) {
+            int ply, SearchState& state, Piece prevPiece, int prevTo) {
   state.nodes++;
 
   // Periodic time / cancellation check
@@ -429,6 +490,24 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // PV node: the initial window is wider than a zero-window scout.
   // Non-PV nodes use a null window (beta == alpha + 1).
   bool pvNode = (beta - alpha) > 1;
+
+  // --- Static evaluation (shared by razoring + futility pruning) ---
+  // Computed once and reused.  Only needed outside PV / non-check nodes,
+  // but the cost is negligible and simplifies the control flow.
+  int staticEval = evaluate(pos);
+
+  // --- Razoring ---
+  // At shallow depths, if the static eval is far below alpha, the position
+  // is unlikely to be rescued by quiet moves.  Fall back to quiescence
+  // search to resolve captures and return immediately.
+  //
+  // Guards: not PV, not in check, shallow depth (1-2).
+  //
+  // Reference: https://www.chessprogramming.org/Razoring
+  if (!pvNode && !inCheck && depth <= 2 && depth >= 1 &&
+      staticEval + RAZOR_MARGIN[depth] <= alpha) {
+    return quiescence(pos, alpha, beta, state);
+  }
 
   // --- TT probe ---
   const int origAlpha = alpha;
@@ -471,7 +550,8 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     UndoInfo nullUndo = pos.makeNullMove();
     // Zero-window search at reduced depth: just testing if score >= beta.
     int nullScore = -negamax(pos, depth - 1 - NMP_REDUCTION,
-                             -beta, -beta + 1, ply + 1, state);
+                             -beta, -beta + 1, ply + 1, state,
+                             Piece::NONE, 0);
     pos.unmakeNullMove(nullUndo);
 
     if (state.stopped) return 0;
@@ -501,11 +581,11 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // a depth-dependent margin still falls short of alpha, quiet moves are
   // unlikely to improve the position enough.  We flag this to skip them
   // in the move loop (captures/promotions and the first move are exempt).
+  // Reuses the `staticEval` computed earlier (above razoring).
   //
   // Reference: https://www.chessprogramming.org/Futility_Pruning
   bool futilityPruning = false;
   if (!pvNode && !inCheck && depth <= 2 && depth >= 1) {
-    int staticEval = evaluate(pos);
     if (staticEval + FUTILITY_MARGIN[depth] <= alpha)
       futilityPruning = true;
   }
@@ -513,7 +593,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // --- Move ordering: score and pick-best during iteration ---
   int scores[MAX_MOVES];
   assignScores(moves, scores, pos.bitboards(), pos.mailbox(), ttMove,
-               ply, pos.sideToMove(), state);
+               ply, pos.sideToMove(), state, prevPiece, prevTo);
 
   Move bestMove = moves.moves[0];
   int movesSearched = 0;
@@ -529,6 +609,21 @@ int negamax(Position& pos, int depth, int alpha, int beta,
         !m.isCapture() && !m.isPromotion()) {
       continue;
     }
+
+    // --- Late Move Pruning (LMP): skip late quiet moves at shallow depth ---
+    // Once enough moves have been searched without a beta cutoff, remaining
+    // quiet moves at low depth are unlikely to improve — skip them entirely.
+    // Guards: not PV, not in check, shallow depth, not the first move,
+    //         not a capture or promotion (those are always searched).
+    if (!pvNode && !inCheck && depth <= 3 && movesSearched > 0 &&
+        movesSearched >= LMP_THRESHOLD[depth] &&
+        !m.isCapture() && !m.isPromotion()) {
+      continue;
+    }
+
+    // Capture the moving piece identity before make() alters the mailbox.
+    // Used to index the countermove table in child nodes.
+    Piece movingPiece = pos.mailbox()[m.from];
 
     UndoInfo undo = pos.make(m);
 
@@ -556,7 +651,8 @@ int negamax(Position& pos, int depth, int alpha, int beta,
 
     if (movesSearched == 0) {
       // First move: always search with full window and full depth.
-      score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, state);
+      score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, state,
+                       movingPiece, m.to);
     } else {
       // --- LMR: determine if this move should be reduced ---
       // Conditions for reduction:
@@ -577,7 +673,8 @@ int negamax(Position& pos, int depth, int alpha, int beta,
           reduction = 2;
 
         score = -negamax(pos, depth - 1 - reduction,
-                         -alpha - 1, -alpha, ply + 1, state);
+                         -alpha - 1, -alpha, ply + 1, state,
+                         movingPiece, m.to);
       } else {
         // Not reducing — force a full-depth scout below.
         score = alpha + 1;
@@ -586,13 +683,15 @@ int negamax(Position& pos, int depth, int alpha, int beta,
       // If the LMR search (or skip) suggests this move might be good,
       // re-search at full depth with a zero-window.
       if (score > alpha) {
-        score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, state);
+        score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, state,
+                         movingPiece, m.to);
       }
 
       // PVS re-search: if the zero-window scout failed high within the
       // PV window, we need an exact score — re-search with full window.
       if (score > alpha && score < beta) {
-        score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, state);
+        score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, state,
+                         movingPiece, m.to);
       }
     }
 
@@ -610,6 +709,15 @@ int negamax(Position& pos, int depth, int alpha, int beta,
         if (!m.isCapture()) {
           updateKillers(m, ply, state);
           updateHistory(m, depth, pos.sideToMove(), state);
+
+          // Store as countermove for the opponent's previous (piece, toSq).
+          // On future visits, this move will be tried earlier when the same
+          // previous move is encountered.
+          if (!isEmpty(prevPiece)) {
+            int idx = pieceZobristIndex(prevPiece);
+            if (idx >= 0)
+              state.countermoves[idx][prevTo] = packMove(m);
+          }
         }
         break;
       }
@@ -637,8 +745,10 @@ int negamax(Position& pos, int depth, int alpha, int beta,
 
 int searchRootMove(Position& pos, Move m, int depth,
                    int alpha, int beta, SearchState& state) {
+  Piece movingPiece = pos.mailbox()[m.from];
   UndoInfo undo = pos.make(m);
-  int score = -negamax(pos, depth - 1, -beta, -alpha, 1, state);
+  int score = -negamax(pos, depth - 1, -beta, -alpha, 1, state,
+                       movingPiece, m.to);
   pos.unmake(m, undo);
   return score;
 }

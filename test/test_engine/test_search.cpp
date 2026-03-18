@@ -659,6 +659,95 @@ static void test_see_qsearch_skips_losing_capture(void) {
 }
 
 // ===========================================================================
+// Phase 1 additions — LMP, Razoring, Countermove Heuristic
+// ===========================================================================
+
+// --- Late Move Pruning (LMP) ---
+// LMP skips quiet moves at shallow depths once enough moves have been tried.
+// Verify it still finds obvious tactical wins (captures/promotions exempt).
+
+// LMP must not hide a winning capture: with many quiet moves available,
+// the engine should still capture an undefended piece.
+static void test_lmp_preserves_winning_capture(void) {
+  // White: Ke1, Nb1, Rh5.  Black: Ke8, Qd5 (undefended).
+  // Many quiet knight/king moves available, but Rh5xd5 wins the queen.
+  const char* fen = "4k3/8/8/3q3R/8/8/8/1N2K3 w - - 0 1";
+  auto result = searchFEN(fen, 3);
+  std::string move = moveToStr(result.bestMove);
+  TEST_ASSERT_EQUAL_STRING("h5d5", move.c_str());
+}
+
+// LMP should reduce node count compared to a baseline without pruning.
+// We test indirectly: a middlegame at shallow depth should complete quickly
+// without hanging or blundering (the pruning is active but correct).
+static void test_lmp_completes_without_blunder(void) {
+  const char* fen =
+      "r1bqkb1r/pppppppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4";
+  auto result = searchFEN(fen, 4);
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+  TEST_ASSERT_EQUAL_INT(4, result.depth);
+}
+
+// --- Razoring ---
+// Razoring drops into quiescence at shallow depths when static eval is far
+// below alpha.  Must not cause tactical oversights.
+
+// Razoring must not skip a position with a winning capture.
+// If white has a hanging piece to capture, razoring should either not
+// trigger (eval not far below alpha) or the quiescence fallback finds it.
+static void test_razoring_preserves_winning_capture(void) {
+  // White Ke1, Rh5.  Black Ke8, Qd5.  Rh5xd5 wins the queen.
+  const char* fen = "4k3/8/8/3q3R/8/8/8/4K3 w - - 0 1";
+  auto result = searchFEN(fen, 3);
+  std::string move = moveToStr(result.bestMove);
+  TEST_ASSERT_EQUAL_STRING("h5d5", move.c_str());
+}
+
+// Razoring should reduce node count in clearly winning/losing positions
+// without causing incorrect play.
+static void test_razoring_completes_correctly(void) {
+  // White is up a queen in a quiet position — should complete fast.
+  const char* fen =
+      "4k3/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQ - 0 1";
+  auto result = searchFEN(fen, 4);
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+  TEST_ASSERT_TRUE(result.score > 0);  // White is clearly winning
+}
+
+// --- Countermove Heuristic ---
+// The countermove table stores refutation moves indexed by the previous
+// move's (piece, toSquare).  Verify it integrates without breaking search.
+
+// Countermove ordering must not break tactical correctness.
+// Nc7+ fork must still be found (ordering change shouldn't affect outcome).
+static void test_countermove_preserves_tactics(void) {
+  const char* fen = "r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1";
+  auto result = searchFEN(fen, 4);
+  std::string move = moveToStr(result.bestMove);
+  TEST_ASSERT_EQUAL_STRING("d5c7", move.c_str());
+}
+
+// Verify countermove heuristic integrates with TT and doesn't crash or
+// produce illegal moves.
+static void test_countermove_with_tt(void) {
+  const char* fen =
+      "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4";
+  Position pos;
+  pos.loadFEN(fen);
+
+  search::TranspositionTable tt;
+  tt.resize(search::DEFAULT_TT_SIZE);
+  search::SearchLimits limits;
+  limits.maxDepth = 5;
+
+  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+  TEST_ASSERT_EQUAL_INT(5, result.depth);
+
+  tt.free();
+}
+
+// ===========================================================================
 // Registration
 // ===========================================================================
 
@@ -698,4 +787,10 @@ void register_search_tests() {
   RUN_TEST(test_futility_allows_discovered_attack);
   RUN_TEST(test_see_ordering_preserves_tactics);
   RUN_TEST(test_see_qsearch_skips_losing_capture);
+  RUN_TEST(test_lmp_preserves_winning_capture);
+  RUN_TEST(test_lmp_completes_without_blunder);
+  RUN_TEST(test_razoring_preserves_winning_capture);
+  RUN_TEST(test_razoring_completes_correctly);
+  RUN_TEST(test_countermove_preserves_tactics);
+  RUN_TEST(test_countermove_with_tt);
 }
