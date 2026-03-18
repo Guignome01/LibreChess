@@ -10,7 +10,7 @@ ESP32 Arduino smart chessboard: detects piece movements via hall-effect sensors 
 
 **Game (`lib/game/`)**: `Game` is the central game orchestrator composing `Position` (from core), `History` (in-memory move log + persistent game recording), and optionally `IGameObserver`. All chess-state mutations flow through `Game`. Also contains `IGameStorage` and `IGameObserver` interfaces.
 
-**Engine (`lib/engine/`)**: `search` (negamax + alpha-beta + quiescence, iterative deepening, check extensions, PVS, null move pruning, late move reductions, late move pruning, razoring, aspiration windows, root move reordering, delta pruning, futility pruning, SEE-based move ordering, transposition table, move ordering, countermove heuristic) and `Engine` (direct-call facade: `calculateMove(fen, limits) → SearchResult`). Depends on core only.
+**Engine (`lib/engine/`)**: `search` (negamax + alpha-beta + quiescence, iterative deepening, check extensions, PVS, null move pruning, late move reductions, late move pruning, razoring, aspiration windows, root move reordering, internal iterative deepening (IID), delta pruning, futility pruning, SEE-based move ordering, transposition table, move ordering, countermove heuristic) and `Engine` (direct-call facade: `calculateMove(fen, limits) → SearchResult`). Depends on core only.
 
 **Dependency model**: `core ← game`, `core ← engine`. Game never imports engine and vice versa.
 
@@ -21,7 +21,7 @@ ESP32 Arduino smart chessboard: detects piece movements via hall-effect sensors 
 
 **Game library** (`lib/game/`): `Game` (orchestrator, lifecycle owner), `History` (move log + persistent recording), `IGameStorage`/`IGameObserver` (DI interfaces), `types.h` (game-management types: `GameHeader` packed struct with opaque `meta[]` byte array, recording constants).
 
-**Engine library** (`lib/engine/`): `search` (negamax + alpha-beta + quiescence, iterative deepening, check extensions, PVS, null move pruning, late move reductions, late move pruning, razoring, aspiration windows, root move reordering, delta pruning, futility pruning, SEE-based move ordering, transposition table, move ordering, countermove heuristic), `Engine` (direct-call facade over search: `calculateMove(fen, limits) → SearchResult`).
+**Engine library** (`lib/engine/`): `search` (negamax + alpha-beta + quiescence, iterative deepening, check extensions, PVS, null move pruning, late move reductions, late move pruning, razoring, aspiration windows, root move reordering, internal iterative deepening (IID), delta pruning, futility pruning, SEE-based move ordering, transposition table, move ordering, countermove heuristic), `Engine` (direct-call facade over search: `calculateMove(fen, limits) → SearchResult`).
 
 **Firmware** (`src/`): `BoardDriver` (LED + sensors + calibration), `WiFiManagerESP32` (web server + API + WiFi + NVS), `LittleFSStorage` (`IGameStorage` impl), `SerialLogger` (`ILogger` impl), `SystemUtils` (Arduino helpers), `SensorTest` (standalone sensor testing), `BoardMenu`/`MenuNavigator` (board-as-GUI).
 

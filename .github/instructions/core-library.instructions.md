@@ -39,7 +39,7 @@ Pure C++ with no hardware dependencies. Natively compilable for unit tests. Uses
 
 | Class/Namespace | Role | State |
 |-----------------|------|-------|
-| `search` | On-board chess engine: negamax + alpha-beta + quiescence, iterative deepening, check extensions, PVS, null move pruning, late move reductions, late move pruning (skip late quiet moves at shallow depths), razoring (drop to quiescence when static eval is far below alpha), aspiration windows, root move reordering, delta pruning (quiescence), futility pruning (shallow negamax), SEE-based capture ordering (losing captures demoted below quiets), transposition table, move ordering (TT move → good captures (MVV-LVA, SEE≥0) → killers → countermove heuristic → history → bad captures (SEE<0)) | Stateless namespace (search state passed in/out) |
+| `search` | On-board chess engine: negamax + alpha-beta + quiescence, iterative deepening, check extensions, PVS, null move pruning, late move reductions, late move pruning (skip late quiet moves at shallow depths), razoring (drop to quiescence when static eval is far below alpha), aspiration windows, root move reordering, internal iterative deepening (IID), delta pruning (quiescence), futility pruning (shallow negamax), SEE-based capture ordering (losing captures demoted below quiets), transposition table, move ordering (TT move → good captures (MVV-LVA, SEE≥0) → killers → countermove heuristic → history → bad captures (SEE<0)) | Stateless namespace (search state passed in/out) |
 | `Engine` | Direct-call facade over `search::findBestMove()`. Owns Position, TranspositionTable, stop control. API: `calculateMove(fen, limits) → SearchResult` | Stateful (owns Position + TT) |
 
 ### Interfaces (DI)

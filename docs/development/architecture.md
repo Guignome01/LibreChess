@@ -22,7 +22,7 @@ Engine (lib/engine/):
   Engine (direct-call facade)
    ├─ owns Position (from core)
    └─ owns TranspositionTable + search state
-  search (alpha-beta + quiescence + iterative deepening + check ext + PVS + NMP + LMR + LMP + razoring + aspiration windows + delta pruning + futility pruning + SEE-based ordering + countermove heuristic)
+  search (alpha-beta + quiescence + iterative deepening + check ext + PVS + NMP + LMR + LMP + razoring + aspiration windows + IID + delta pruning + futility pruning + SEE-based ordering + countermove heuristic)
 
 Firmware (src/):
   GameMode (abstract base, src/game_mode/)
@@ -458,7 +458,7 @@ All menu layout data lives in `menu_config.h/cpp`:
 
 The on-board engine runs entirely within `lib/core/` — no network, no external API. Two namespaces:
 
-- **`search`** (`search.h/cpp`) — Negamax with alpha-beta pruning, quiescence search, iterative deepening, check extensions, PVS (Principal Variation Search), NMP (Null Move Pruning), LMR (Late Move Reductions), LMP (Late Move Pruning — skip late quiet moves at shallow depths), razoring (drop into quiescence when static eval is far below alpha at shallow depths), aspiration windows, root move reordering, delta pruning (quiescence capture futility), futility pruning (shallow negamax leaf skipping), SEE-based capture ordering (losing captures demoted below quiets), transposition table (16-byte entries), and move ordering (TT move → good captures (MVV-LVA, SEE≥0) → killer moves → countermove heuristic → history heuristic → bad captures (SEE<0)). `findBestMove(pos, limits, timeFunc, infoCallback, tt)` is the single public entry point. `SearchLimits` controls depth, time, and external stop flag. `SearchState` holds per-search heuristics (killers, history table, countermove table) and TT pointer.
+- **`search`** (`search.h/cpp`) — Negamax with alpha-beta pruning, quiescence search, iterative deepening, check extensions, PVS (Principal Variation Search), NMP (Null Move Pruning), LMR (Late Move Reductions), LMP (Late Move Pruning — skip late quiet moves at shallow depths), razoring (drop into quiescence when static eval is far below alpha at shallow depths), aspiration windows, root move reordering, internal iterative deepening (IID), delta pruning (quiescence capture futility), futility pruning (shallow negamax leaf skipping), SEE-based capture ordering (losing captures demoted below quiets), transposition table (16-byte entries), and move ordering (TT move → good captures (MVV-LVA, SEE≥0) → killer moves → countermove heuristic → history heuristic → bad captures (SEE<0)). `findBestMove(pos, limits, timeFunc, infoCallback, tt)` is the single public entry point. `SearchLimits` controls depth, time, and external stop flag. `SearchState` holds per-search heuristics (killers, history table, countermove table) and TT pointer.
 
 - **`uci`** (`uci.h/cpp`) — Transport-agnostic UCI protocol handler. `UCIStream` is the abstract I/O interface (Serial, string buffer). `UCIHandler` owns a `Position`, `TranspositionTable`, and stop flag; dispatches standard UCI commands (`uci`, `isready`, `ucinewgame`, `position`, `go`, `stop`, `quit`). Simple time management from game clocks (remaining/30 + increment/2). `StringUCIStream` provides in-memory I/O for testing and in-process use.
 

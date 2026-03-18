@@ -747,6 +747,50 @@ static void test_countermove_with_tt(void) {
   tt.free();
 }
 
+// --- Internal Iterative Deepening (IID) ---
+// IID runs a reduced-depth search at PV nodes without a TT move to populate
+// the TT and improve move ordering.  Verify it integrates correctly.
+
+// IID must not break tactical correctness.  The Nc7+ knight fork should
+// still be found even though IID changes the search path at PV nodes.
+static void test_iid_preserves_tactics(void) {
+  // White Ke1, Nd5.  Black Ke8, Ra8.  Nc7+ forks king and rook.
+  const char* fen = "r3k3/8/8/3N4/8/8/8/4K3 w - - 0 1";
+  Position pos;
+  pos.loadFEN(fen);
+
+  search::TranspositionTable tt;
+  tt.resize(search::DEFAULT_TT_SIZE);
+  search::SearchLimits limits;
+  limits.maxDepth = 5;  // depth >= IID_DEPTH_THRESHOLD triggers IID
+
+  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  std::string move = moveToStr(result.bestMove);
+  TEST_ASSERT_EQUAL_STRING("d5c7", move.c_str());
+
+  tt.free();
+}
+
+// IID with TT at sufficient depth should complete correctly and produce
+// a sensible result in a standard middlegame opening.
+static void test_iid_completes_with_tt(void) {
+  const char* fen =
+      "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4";
+  Position pos;
+  pos.loadFEN(fen);
+
+  search::TranspositionTable tt;
+  tt.resize(search::DEFAULT_TT_SIZE);
+  search::SearchLimits limits;
+  limits.maxDepth = 5;
+
+  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+  TEST_ASSERT_EQUAL_INT(5, result.depth);
+
+  tt.free();
+}
+
 // ===========================================================================
 // Registration
 // ===========================================================================
@@ -793,4 +837,6 @@ void register_search_tests() {
   RUN_TEST(test_razoring_completes_correctly);
   RUN_TEST(test_countermove_preserves_tactics);
   RUN_TEST(test_countermove_with_tt);
+  RUN_TEST(test_iid_preserves_tactics);
+  RUN_TEST(test_iid_completes_with_tt);
 }

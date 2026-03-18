@@ -199,6 +199,24 @@ static constexpr int LMP_THRESHOLD[] = {0, 5, 12, 20};  // indexed by depth
 static constexpr int RAZOR_MARGIN[] = {0, 300, 500};  // indexed by depth
 
 // ---------------------------------------------------------------------------
+// Internal Iterative Deepening (IID) constants.
+//
+// At PV nodes without a TT move, move ordering is essentially blind —
+// the first move searched is arbitrary.  IID runs a shallow search first
+// to deposit a best-move entry in the TT, then re-probes to get a hash
+// move for ordering.  This dramatically improves cutoff rates at PV nodes.
+//
+// IID_DEPTH_THRESHOLD: minimum remaining depth to trigger IID (shallow
+// nodes don't benefit enough to justify the extra work).
+// IID_REDUCTION: depth reduction for the preliminary search.
+//
+// Reference: https://www.chessprogramming.org/Internal_Iterative_Deepening
+// ---------------------------------------------------------------------------
+
+static constexpr int IID_DEPTH_THRESHOLD = 4;
+static constexpr int IID_REDUCTION       = 2;
+
+// ---------------------------------------------------------------------------
 // Tempo bonus (centipawns).
 //
 // A small bonus given to the side-to-move, reflecting the inherent
@@ -545,6 +563,25 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     }
     if (entry)
       ttMove = unpackMove(entry->bestMove);
+  }
+
+  // --- Internal Iterative Deepening (IID) ---
+  // At PV nodes with sufficient depth but no TT move, move ordering is
+  // blind — the first move searched is whatever the generator produces.
+  // IID runs a reduced-depth search to populate the TT with a best move,
+  // then re-probes to get a hash move for ordering the full-depth search.
+  //
+  // Guards: PV node, TT available, no hash move found, sufficient depth.
+  //
+  // Reference: https://www.chessprogramming.org/Internal_Iterative_Deepening
+  if (pvNode && state.tt && depth >= IID_DEPTH_THRESHOLD &&
+      ttMove.from == 0 && ttMove.to == 0) {
+    negamax(pos, depth - IID_REDUCTION, alpha, beta, ply, state,
+            prevPiece, prevTo);
+    // Re-probe TT — the shallow search will have stored a best move.
+    const TTEntry* iidEntry = state.tt->probe(pos.hash());
+    if (iidEntry)
+      ttMove = unpackMove(iidEntry->bestMove);
   }
 
   // --- Null Move Pruning (NMP) ---
