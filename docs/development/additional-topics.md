@@ -82,9 +82,11 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 | Async web server | ~10–20 KiB | ESPAsyncWebServer buffers |
 | LittleFS | ~5–10 KiB | Filesystem metadata |
 | NeoPixelBus (LED) | ~2–3 KiB | DMA buffer for 64 LEDs |
-| Transposition table | up to 128 KiB | Dynamic: `(freeHeap - 32KB) / 4`, capped, 16B/entry |
+| Transposition table | up to 128 KiB | Dynamic: `(freeHeap - 48KB) / 4`, capped, 16B/entry |
+| Pawn hash table | 8 KiB | 1024 entries × 8B, owned by Engine |
+| Eval hash table | 8 KiB | 1024 entries × 8B, owned by Engine |
 | SearchState | ~19 KiB | `std::unique_ptr` in `findBestMove()` |
-| **Free after persistent allocs** | **~80–100 KiB** | Available for TT + SearchState |
+| **Free after persistent allocs** | **~80–100 KiB** | Available for TT + hash tables + SearchState |
 
 ### FreeRTOS Task Stacks
 

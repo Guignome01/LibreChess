@@ -23,6 +23,13 @@
 #include "position.h"
 
 namespace LibreChess {
+
+// Forward declarations for hash table types owned by the eval layer.
+namespace eval {
+struct PawnHashTable;
+struct EvalHashTable;
+}  // namespace eval
+
 namespace search {
 
 // ---------------------------------------------------------------------------
@@ -163,6 +170,14 @@ struct SearchState {
   // Transposition table (externally owned, nullable).
   TranspositionTable* tt = nullptr;
 
+  // Pawn hash table (externally owned, nullable).
+  // Caches pawn structure MG/EG scores — ~95%+ hit rate in typical searches.
+  eval::PawnHashTable* pawnHash = nullptr;
+
+  // Evaluation hash table (externally owned, nullable).
+  // Caches full evaluatePosition() results — avoids redundant evaluations.
+  eval::EvalHashTable* evalHash = nullptr;
+
   // --- Move ordering heuristics ---
   // Killer moves: two per ply, quiet moves that caused beta cutoffs.
   // Reference: https://www.chessprogramming.org/Killer_Move
@@ -208,10 +223,14 @@ struct SearchState {
 // `timeFunc` may be nullptr if no time limit is needed.
 // `info` is called after each completed iteration (nullptr to skip).
 // `tt` is an optional transposition table (nullptr to skip TT).
+// `pawnHash` and `evalHash` are optional hash tables for caching evaluation
+// results (nullptr to skip).  Owned by the caller (typically Engine).
 SearchResult findBestMove(Position& pos, const SearchLimits& limits,
                           TimeFunc timeFunc = nullptr,
                           InfoCallback info = nullptr,
-                          TranspositionTable* tt = nullptr);
+                          TranspositionTable* tt = nullptr,
+                          eval::PawnHashTable* pawnHash = nullptr,
+                          eval::EvalHashTable* evalHash = nullptr);
 
 }  // namespace search
 }  // namespace LibreChess

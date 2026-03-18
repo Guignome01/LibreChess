@@ -118,6 +118,8 @@ Also in `lib/core/` (`zobrist.h`, header-only). `zobrist` namespace provides Zob
 
 - `computeHash(bb, mailbox, turn, state)` — computes the full Zobrist hash for a position. Iterates pieces via `iterator::forEachPiece()`, uses `piece::pieceZobristIndex()` for piece-to-table-index mapping, XORs castling rights, conditionally XORs en passant only when a legal capture exists (via `movegen::hasLegalEnPassantCapture()`), and XORs side-to-move for black. Used for debug verification; the hot path uses incremental hashing.
 
+- `computePawnHash(bb)` — computes a pawn-only Zobrist hash. XORs piece keys for all white pawns (index 0) and black pawns (index 6). Used as the lookup key for the pawn hash table (`eval::PawnHashTable`).
+
 - **Incremental hashing** — `Position::applyMoveToBoard()` updates `hash_` inline via XOR deltas: `hash_ ^= pieceKey[piece][from] ^ pieceKey[piece][to]`, plus castling key changes, en passant key changes, and side-to-move toggle. No full-board recompute on every move.
 
 Consumed by `Position::recordPosition()` for position history tracking.

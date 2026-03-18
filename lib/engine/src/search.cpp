@@ -401,12 +401,29 @@ inline void updateHistory(Move m, int depth, Color side, SearchState& state) {
 
 // ---------------------------------------------------------------------------
 // Static evaluation from the side-to-move perspective (negamax convention).
+// Uses the eval hash table (if available) to avoid redundant evaluations.
+// The cached value is the final STM-relative score including tempo.
 // ---------------------------------------------------------------------------
 
-int evaluate(const Position& pos) {
-  int score = eval::evaluatePosition(pos.bitboards());
+int evaluate(const Position& pos, SearchState& state) {
+  uint64_t posHash = pos.hash();
+
+  // --- Eval hash probe ---
+  if (state.evalHash) {
+    const eval::EvalEntry* cached = state.evalHash->probe(posHash);
+    if (cached) return cached->score;
+  }
+
+  int score = eval::evaluatePosition(pos.bitboards(), state.pawnHash);
   int stm = (pos.sideToMove() == Color::WHITE) ? score : -score;
-  return stm + TEMPO_BONUS;
+  int result = stm + TEMPO_BONUS;
+
+  // --- Eval hash store ---
+  if (state.evalHash) {
+    state.evalHash->store(posHash, static_cast<int16_t>(result));
+  }
+
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -443,7 +460,7 @@ int quiescence(Position& pos, int alpha, int beta, SearchState& state) {
   if (state.stopped) return 0;
 
   // Standing pat — assume we can do at least as well as the static eval.
-  int standPat = evaluate(pos);
+  int standPat = evaluate(pos, state);
   if (standPat >= beta) return beta;
   if (standPat > alpha) alpha = standPat;
 
@@ -527,7 +544,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // --- Static evaluation (shared by razoring + futility pruning) ---
   // Computed once and reused.  Only needed outside PV / non-check nodes,
   // but the cost is negligible and simplifies the control flow.
-  int staticEval = evaluate(pos);
+  int staticEval = evaluate(pos, state);
 
   // --- Razoring ---
   // At shallow depths, if the static eval is far below alpha, the position
@@ -822,7 +839,9 @@ int searchRootMove(Position& pos, Move m, int depth,
 
 SearchResult findBestMove(Position& pos, const SearchLimits& limits,
                           TimeFunc timeFunc, InfoCallback info,
-                          TranspositionTable* tt) {
+                          TranspositionTable* tt,
+                          eval::PawnHashTable* pawnHash,
+                          eval::EvalHashTable* evalHash) {
   // Heap-allocate SearchState (~19 KiB) to avoid overflowing the 16 KiB
   // FreeRTOS task stack.  Contains history[2][64][64] (16 KiB), killers
   // (1 KiB), and countermoves (1.5 KiB).
@@ -833,6 +852,8 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
   state.maxTimeMs    = limits.maxTimeMs;
   state.externalStop = limits.stop;
   state.tt           = tt;
+  state.pawnHash     = pawnHash;
+  state.evalHash     = evalHash;
   state.clearHeuristics();
 
   int maxDepth = limits.maxDepth;

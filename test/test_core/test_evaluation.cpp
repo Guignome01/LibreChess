@@ -3,6 +3,7 @@
 #include <bitboard.h>
 #include <evaluation.h>
 #include <piece.h>
+#include <zobrist.h>
 
 #include "../test_helpers.h"
 
@@ -582,6 +583,133 @@ static void test_eval_space_more_territory(void) {
 }
 
 // ===========================================================================
+// Pawn Hash Table — probe / store / clear cycle
+// ===========================================================================
+
+static void test_pawn_hash_probe_miss(void) {
+  eval::PawnHashTable ph;
+  ph.resize(64);   // Small table for testing
+
+  // Empty table — probe should miss
+  TEST_ASSERT_NULL(ph.probe(0x123456789ABCDEF0ULL));
+
+  ph.free();
+}
+
+static void test_pawn_hash_store_and_probe(void) {
+  eval::PawnHashTable ph;
+  ph.resize(64);
+
+  uint64_t hash = 0xDEADBEEFCAFEBABEULL;
+  ph.store(hash, 42, -17);
+
+  const eval::PawnEntry* e = ph.probe(hash);
+  TEST_ASSERT_NOT_NULL(e);
+  TEST_ASSERT_EQUAL_INT(42, e->mgScore);
+  TEST_ASSERT_EQUAL_INT(-17, e->egScore);
+
+  ph.free();
+}
+
+static void test_pawn_hash_clear_invalidates(void) {
+  eval::PawnHashTable ph;
+  ph.resize(64);
+
+  uint64_t hash = 0x1111222233334444ULL;
+  ph.store(hash, 10, 20);
+  TEST_ASSERT_NOT_NULL(ph.probe(hash));
+
+  ph.clear();
+  TEST_ASSERT_NULL(ph.probe(hash));
+
+  ph.free();
+}
+
+static void test_pawn_hash_integration(void) {
+  // Verify that evaluatePosition with a pawn hash produces the same result
+  // as without, and that the second call hits the cache.
+  eval::PawnHashTable ph;
+  ph.resize(256);
+
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::W_PAWN, "e4");
+  placePiece(bb, mailbox, Piece::W_PAWN, "d4");
+  placePiece(bb, mailbox, Piece::B_PAWN, "e5");
+  placePiece(bb, mailbox, Piece::B_PAWN, "d5");
+
+  int without = eval::evaluatePosition(bb);
+  int with1   = eval::evaluatePosition(bb, &ph);
+  int with2   = eval::evaluatePosition(bb, &ph);  // Cache hit
+
+  TEST_ASSERT_EQUAL_INT(without, with1);
+  TEST_ASSERT_EQUAL_INT(with1, with2);
+
+  // Verify the entry is actually in the table
+  uint64_t pHash = zobrist::computePawnHash(bb);
+  TEST_ASSERT_NOT_NULL(ph.probe(pHash));
+
+  ph.free();
+}
+
+// ===========================================================================
+// Eval Hash Table — probe / store / clear cycle
+// ===========================================================================
+
+static void test_eval_hash_probe_miss(void) {
+  eval::EvalHashTable eh;
+  eh.resize(64);
+
+  TEST_ASSERT_NULL(eh.probe(0xAAAABBBBCCCCDDDDULL));
+
+  eh.free();
+}
+
+static void test_eval_hash_store_and_probe(void) {
+  eval::EvalHashTable eh;
+  eh.resize(64);
+
+  uint64_t hash = 0xFEDCBA9876543210ULL;
+  eh.store(hash, 123);
+
+  const eval::EvalEntry* e = eh.probe(hash);
+  TEST_ASSERT_NOT_NULL(e);
+  TEST_ASSERT_EQUAL_INT(123, e->score);
+
+  eh.free();
+}
+
+static void test_eval_hash_clear_invalidates(void) {
+  eval::EvalHashTable eh;
+  eh.resize(64);
+
+  uint64_t hash = 0x5555666677778888ULL;
+  eh.store(hash, 50);
+  TEST_ASSERT_NOT_NULL(eh.probe(hash));
+
+  eh.clear();
+  TEST_ASSERT_NULL(eh.probe(hash));
+
+  eh.free();
+}
+
+static void test_eval_hash_overwrite(void) {
+  eval::EvalHashTable eh;
+  eh.resize(64);
+
+  uint64_t hash = 0xAAAABBBBCCCCDDDDULL;
+  eh.store(hash, 100);
+  eh.store(hash, 200);
+
+  const eval::EvalEntry* e = eh.probe(hash);
+  TEST_ASSERT_NOT_NULL(e);
+  TEST_ASSERT_EQUAL_INT(200, e->score);
+
+  eh.free();
+}
+
+// ===========================================================================
 // Registration
 // ===========================================================================
 
@@ -645,4 +773,16 @@ void register_evaluation_tests() {
 
   // Space
   RUN_TEST(test_eval_space_more_territory);
+
+  // Pawn hash table
+  RUN_TEST(test_pawn_hash_probe_miss);
+  RUN_TEST(test_pawn_hash_store_and_probe);
+  RUN_TEST(test_pawn_hash_clear_invalidates);
+  RUN_TEST(test_pawn_hash_integration);
+
+  // Eval hash table
+  RUN_TEST(test_eval_hash_probe_miss);
+  RUN_TEST(test_eval_hash_store_and_probe);
+  RUN_TEST(test_eval_hash_clear_invalidates);
+  RUN_TEST(test_eval_hash_overwrite);
 }

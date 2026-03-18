@@ -66,6 +66,11 @@ static constexpr Keys KEYS PROGMEM = Keys();
 uint64_t computeHash(const BitboardSet& bb, const Piece mailbox[],
                      Color turn, const PositionState& state);
 
+// Compute a pawn-only Zobrist hash.  XORs piece keys for all white and black
+// pawns — used as the lookup key for the pawn hash table.  Pawn structures
+// change infrequently, so caching yields ~95%+ hit rate in typical searches.
+uint64_t computePawnHash(const BitboardSet& bb);
+
 }  // namespace zobrist
 }  // namespace LibreChess
 

@@ -75,14 +75,17 @@ void LibreChessProvider::taskFunction(void* param) {
 
   // Size the TT based on available heap, capped at 128 KiB.
   // Each TTEntry is ≤16 bytes.  Leave at least 32 KiB free for other tasks.
+  // The Engine also allocates a pawn hash table (8 KiB) and eval hash table
+  // (8 KiB), so reserve an additional 16 KiB for those.
   static constexpr size_t MAX_TT_BYTES = 128 * 1024;
   static constexpr size_t MIN_FREE_HEAP = 32 * 1024;
+  static constexpr size_t EVAL_HASH_OVERHEAD = 16 * 1024;  // pawn + eval hash
   static constexpr size_t ENTRY_SIZE = sizeof(LibreChess::search::TTEntry);
 
   size_t freeHeap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
   size_t ttBytes = 0;
-  if (freeHeap > MIN_FREE_HEAP) {
-    ttBytes = (freeHeap - MIN_FREE_HEAP) / 4;
+  if (freeHeap > MIN_FREE_HEAP + EVAL_HASH_OVERHEAD) {
+    ttBytes = (freeHeap - MIN_FREE_HEAP - EVAL_HASH_OVERHEAD) / 4;
     if (ttBytes > MAX_TT_BYTES) ttBytes = MAX_TT_BYTES;
   }
   int ttEntries = static_cast<int>(ttBytes / ENTRY_SIZE);

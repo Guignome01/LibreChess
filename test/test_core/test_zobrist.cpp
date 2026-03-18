@@ -168,6 +168,64 @@ void test_computeHash_incremental_vs_full(void) {
   TEST_ASSERT_EQUAL_HEX64(full, full2);
 }
 
+// ===========================================================================
+// computePawnHash — pawn-only Zobrist key
+// ===========================================================================
+
+// Same pawn structure produces the same hash.
+void test_computePawnHash_deterministic(void) {
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::W_PAWN, "e4");
+  placePiece(bb, mailbox, Piece::B_PAWN, "d5");
+
+  uint64_t h1 = zobrist::computePawnHash(bb);
+  uint64_t h2 = zobrist::computePawnHash(bb);
+  TEST_ASSERT_EQUAL_HEX64(h1, h2);
+  TEST_ASSERT_NOT_EQUAL(0ULL, h1);
+}
+
+// Different pawn placements produce different hashes.
+void test_computePawnHash_different_pawns(void) {
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::W_PAWN, "e4");
+  uint64_t h1 = zobrist::computePawnHash(bb);
+
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::W_PAWN, "d4");
+  uint64_t h2 = zobrist::computePawnHash(bb);
+
+  TEST_ASSERT_NOT_EQUAL(h1, h2);
+}
+
+// Non-pawn pieces do not affect the pawn hash.
+void test_computePawnHash_ignores_non_pawns(void) {
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::W_PAWN, "e4");
+  uint64_t h1 = zobrist::computePawnHash(bb);
+
+  // Add a knight — pawn hash should not change
+  placePiece(bb, mailbox, Piece::W_KNIGHT, "c3");
+  uint64_t h2 = zobrist::computePawnHash(bb);
+  TEST_ASSERT_EQUAL_HEX64(h1, h2);
+}
+
+// No pawns on board yields hash of zero.
+void test_computePawnHash_no_pawns(void) {
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  uint64_t h = zobrist::computePawnHash(bb);
+  TEST_ASSERT_EQUAL_HEX64(0ULL, h);
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -196,4 +254,10 @@ void register_zobrist_tests() {
   RUN_TEST(test_computeHash_en_passant_sensitivity);
   RUN_TEST(test_computeHash_king_vs_king);
   RUN_TEST(test_computeHash_incremental_vs_full);
+
+  // computePawnHash
+  RUN_TEST(test_computePawnHash_deterministic);
+  RUN_TEST(test_computePawnHash_different_pawns);
+  RUN_TEST(test_computePawnHash_ignores_non_pawns);
+  RUN_TEST(test_computePawnHash_no_pawns);
 }

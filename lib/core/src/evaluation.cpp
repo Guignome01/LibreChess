@@ -1,5 +1,8 @@
 #include "evaluation.h"
 #include "attacks.h"
+#include "zobrist.h"
+
+#include <cstring>       // memset
 
 namespace {
 
@@ -269,11 +272,24 @@ static constexpr int BACKWARD_PENALTY    = -10;
 // ---------------------------------------------------------------------------
 
 static void evalPawnStructure(const BitboardSet& bb,
-                              int& mgScore, int& egScore) {
+                              int& mgScore, int& egScore,
+                              PawnHashTable* pawnHash) {
   Bitboard whitePawns = bb.byPiece[0];   // pieceZobristIndex(W_PAWN) = 0
   Bitboard blackPawns = bb.byPiece[6];   // pieceZobristIndex(B_PAWN) = 6
 
   if (!whitePawns && !blackPawns) return;
+
+  // --- Pawn hash probe ---
+  uint64_t pHash = 0;
+  if (pawnHash) {
+    pHash = zobrist::computePawnHash(bb);
+    const PawnEntry* cached = pawnHash->probe(pHash);
+    if (cached) {
+      mgScore += cached->mgScore;
+      egScore += cached->egScore;
+      return;
+    }
+  }
 
   Bitboard blackPawnAttacks = shiftSE(blackPawns) | shiftSW(blackPawns);
   Bitboard whitePawnAttacks = shiftNE(whitePawns) | shiftNW(whitePawns);
@@ -348,6 +364,11 @@ static void evalPawnStructure(const BitboardSet& bb,
 
   mgScore += mg;
   egScore += eg;
+
+  // --- Pawn hash store ---
+  if (pawnHash) {
+    pawnHash->store(pHash, static_cast<int16_t>(mg), static_cast<int16_t>(eg));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -856,11 +877,109 @@ static void evalKnightOutposts(const BitboardSet& bb,
   }
 }
 
+// ===========================================================================
+// Hash table implementations
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Power-of-2 rounding helper (shared by both tables).
+// ---------------------------------------------------------------------------
+
+static int roundDownPow2(int n) {
+  if (n <= 0) return 0;
+  int v = 1;
+  while (v * 2 <= n) v *= 2;
+  return v;
+}
+
+// ---------------------------------------------------------------------------
+// Pawn Hash Table
+// ---------------------------------------------------------------------------
+
+void PawnHashTable::resize(int numEntries) {
+  free();
+  size = roundDownPow2(numEntries);
+  if (size == 0) return;
+  mask = size - 1;
+  entries = new PawnEntry[size];
+  clear();
+}
+
+void PawnHashTable::free() {
+  delete[] entries;
+  entries = nullptr;
+  size = 0;
+  mask = 0;
+}
+
+void PawnHashTable::clear() {
+  if (entries) std::memset(entries, 0, size * sizeof(PawnEntry));
+}
+
+const PawnEntry* PawnHashTable::probe(uint64_t hash) const {
+  if (!entries) return nullptr;
+  int idx = static_cast<int>(hash) & mask;
+  uint32_t key32 = static_cast<uint32_t>(hash >> 32);
+  const PawnEntry& e = entries[idx];
+  return (e.key == key32) ? &e : nullptr;
+}
+
+void PawnHashTable::store(uint64_t hash, int16_t mg, int16_t eg) {
+  if (!entries) return;
+  int idx = static_cast<int>(hash) & mask;
+  PawnEntry& e = entries[idx];
+  e.key     = static_cast<uint32_t>(hash >> 32);
+  e.mgScore = mg;
+  e.egScore = eg;
+}
+
+// ---------------------------------------------------------------------------
+// Evaluation Hash Table
+// ---------------------------------------------------------------------------
+
+void EvalHashTable::resize(int numEntries) {
+  free();
+  size = roundDownPow2(numEntries);
+  if (size == 0) return;
+  mask = size - 1;
+  entries = new EvalEntry[size];
+  clear();
+}
+
+void EvalHashTable::free() {
+  delete[] entries;
+  entries = nullptr;
+  size = 0;
+  mask = 0;
+}
+
+void EvalHashTable::clear() {
+  if (entries) std::memset(entries, 0, size * sizeof(EvalEntry));
+}
+
+const EvalEntry* EvalHashTable::probe(uint64_t hash) const {
+  if (!entries) return nullptr;
+  int idx = static_cast<int>(hash) & mask;
+  uint32_t key32 = static_cast<uint32_t>(hash >> 32);
+  const EvalEntry& e = entries[idx];
+  return (e.key == key32) ? &e : nullptr;
+}
+
+void EvalHashTable::store(uint64_t hash, int16_t s) {
+  if (!entries) return;
+  int idx = static_cast<int>(hash) & mask;
+  EvalEntry& e = entries[idx];
+  e.key   = static_cast<uint32_t>(hash >> 32);
+  e.score = s;
+  e.pad   = 0;
+}
+
 // ---------------------------------------------------------------------------
 // Main evaluation entry point
 // ---------------------------------------------------------------------------
 
-int evaluatePosition(const BitboardSet& bb) {
+int evaluatePosition(const BitboardSet& bb,
+                     PawnHashTable* pawnHash) {
   // Lazy-init pawn structure masks on first call.
   initPawnMasks();
 
@@ -883,7 +1002,7 @@ int evaluatePosition(const BitboardSet& bb) {
     }
   }
 
-  evalPawnStructure(bb, mgScore, egScore);
+  evalPawnStructure(bb, mgScore, egScore, pawnHash);
   evalBishopPair(bb, mgScore, egScore);
   evalRookFiles(bb, mgScore, egScore);
   evalRookOnSeventh(bb, mgScore, egScore);

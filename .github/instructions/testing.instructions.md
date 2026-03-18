@@ -33,7 +33,7 @@ test/
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
 │   ├── test_attacks.cpp                 attacks: leaper tables, slider rays, x-ray attacks, geometry rays (between, line), computeAll, SEE
 │   ├── test_bitboard.cpp                LibreChess: square mapping, bit ops, square-color masks, BitboardSet mutations
-│   ├── test_evaluation.cpp              eval: material scoring, pawn structure (passed/isolated/doubled/backward), tapered evaluation
+│   ├── test_evaluation.cpp              eval: material scoring, pawn structure, tapered evaluation, pawn/eval hash tables
 │   ├── test_fen.cpp                     FEN round-trip, boardToFEN/fenToBoard, validateFEN
 │   ├── test_iterator.cpp                Board iteration: forEachSquare, forEachPiece, somePiece, findPiece
 │   ├── test_movegen.cpp                 Move generation per piece type, captures, bulk generation, move flags, legal move queries
@@ -42,7 +42,7 @@ test/
 │   ├── test_position.cpp                Position: moves, special moves, draws, FEN, reverseMove, king cache, MoveList, HashHistory
 │   ├── test_rules.cpp                   rules: check/checkmate/stalemate detection, pin-aware generation, castling, en passant, promotion, isDraw, isGameOver
 │   ├── test_utils.cpp                   utils: 50-move rule, castling rights strings, coordinate helpers, board transforms, special-move analysis
-│   └── test_zobrist.cpp                 Zobrist hashing: key determinism, computeHash, position sensitivity
+│   └── test_zobrist.cpp                 Zobrist hashing: key determinism, computeHash, computePawnHash, position sensitivity
 ├── test_game/                           Game library tests (lib/game/)
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
 │   ├── test_game.cpp                    Game: lifecycle, draws, observer, history, undo/redo, getHistory
@@ -121,7 +121,7 @@ Persistence lifecycle with MockGameStorage. Header flush timing. Game replay fro
 50-move rule counter. Castling rights string formatting and parsing (`castlingCharToBit`, `hasCastlingRight`). Coordinate helpers (`squareName`, `fileChar`, `rankChar`, `fileIndex`, `rankIndex`, `isValidSquare`). Special-move analysis (`checkEnPassant`, `checkCastling`, `updateCastlingRights`). `applyBoardTransform`. `boardToText`. `positionState`. `gameResultName`. `isValidPromotionChar`.
 
 ### Evaluation (`test_evaluation.cpp`)
-Material evaluation scoring. Pawn structure evaluation (symmetry, passed pawn bonus, doubled/isolated penalties). Tapered evaluation (opening symmetry, endgame king centralization, phase-dependent king PST blend). Pawn-structure analysis functions: `isPassed`, `isIsolated`, `isDoubled`, `isBackward`. Positional terms: bishop pair bonus (single side / both sides), rook on open file, rook on semi-open file, rook on 7th rank, mobility (centralized vs edge pieces), king safety (intact pawn shield), knight outpost, center control (pawn occupation and attack), king tropism (close attackers score higher), space (territory behind pawn chain).
+Material evaluation scoring. Pawn structure evaluation (symmetry, passed pawn bonus, doubled/isolated penalties). Tapered evaluation (opening symmetry, endgame king centralization, phase-dependent king PST blend). Pawn-structure analysis functions: `isPassed`, `isIsolated`, `isDoubled`, `isBackward`. Positional terms: bishop pair bonus (single side / both sides), rook on open file, rook on semi-open file, rook on 7th rank, mobility (centralized vs edge pieces), king safety (intact pawn shield), knight outpost, center control (pawn occupation and attack), king tropism (close attackers score higher), space (territory behind pawn chain). Pawn hash table: probe miss, store/probe round-trip, clear invalidation, integration with evaluatePosition. Eval hash table: probe miss, store/probe round-trip, clear invalidation, overwrite.
 
 ### Search (`test_search.cpp`)
 Mate-in-1 (white, black). Captures hanging piece. Quiescence avoids blunder. Stalemate avoidance. Symmetric position. Knight fork tactics. Legal move from random position. Checkmate no legal moves. Iterative deepening (deeper depth finds mate, info callback reports iterations). IID preserves tactics, completes with TT. Time limit control. Stop flag. Mate stops early. TT store/probe exact, probe miss, clear, pack/unpack move, reduces nodes, mate score round-trip. Check extension finds mate. NMP quiet position, K+P endgame no blunder. PVS+LMR middlegame efficiency. Pruning preserves tactics. Aspiration windows correctness, depth continuity. Root move reordering consistency. Move ordering reduces nodes and finds tactics. Delta pruning quiet position. Futility pruning preserves winning capture and discovered attack. SEE ordering preserves tactics. SEE qsearch skips losing capture. LMP preserves winning capture, completes without blunder. Razoring preserves winning capture, completes correctly. Countermove heuristic preserves tactics, integrates with TT.
@@ -142,7 +142,7 @@ piece namespace: bit extraction (`pieceType()` for all 12 pieces + NONE, `pieceC
 `forEachSquare` visits all 64 squares. `forEachPiece` skips empty. `somePiece` early-exit. `findPiece` locates specific pieces with max limit.
 
 ### Zobrist (`test_zobrist.cpp`)
-Zobrist key determinism. `pieceZobristIndex` mapping. `computeHash` stability. Hash changes with turn flip, castling rights, en passant. Hash equality for identical positions.
+Zobrist key determinism. `pieceZobristIndex` mapping. `computeHash` stability. Hash changes with turn flip, castling rights, en passant. Hash equality for identical positions. `computePawnHash`: determinism, different pawn placements produce different hashes, ignores non-pawn pieces, no pawns yields zero.
 
 ### Perft (`test_perft/test_perft.cpp`)
 Exhaustive move-tree enumeration for 6 positions from the Chess Programming Wiki. Positions 1–4 verify detailed leaf-level counters: nodes, captures, en passant, castles, promotions, checks, and checkmates. Positions 5–6 verify node counts only (no wiki reference counters). Catches compensating bugs that node-only perft misses (e.g. a missed capture offset by a phantom quiet move).

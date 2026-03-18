@@ -23,6 +23,7 @@
 #include <atomic>
 #include <string>
 
+#include "evaluation.h"
 #include "position.h"
 #include "search.h"
 
@@ -61,6 +62,8 @@ class Engine {
  private:
   Position pos_;
   search::TranspositionTable tt_;
+  eval::PawnHashTable pawnHash_;
+  eval::EvalHashTable evalHash_;
   std::atomic<bool> stop_{false};
   std::atomic<bool>* externalStop_ = nullptr;
   search::TimeFunc timeFunc_ = nullptr;
