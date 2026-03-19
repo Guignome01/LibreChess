@@ -29,10 +29,7 @@ const Piece Position::INITIAL_BOARD[8][8] = {
 
 Position::Position()
     : currentTurn_(Color::WHITE),
-      hash_(0),
-      cachedEval_(0),
-      fenDirty_(true),
-      evalDirty_(true) {
+      hash_(0) {
   attacks::init();
   bb_.clear();
   memset(mailbox_, 0, sizeof(mailbox_));
@@ -71,7 +68,6 @@ void Position::newGame() {
   kingSquare_[0] = squareOf(7, 4);
   kingSquare_[1] = squareOf(0, 4);
   hash_ = zob::computeHash(bb_, mailbox_, currentTurn_, state_);
-  invalidateCache();
   recordPosition();
 }
 
@@ -88,7 +84,6 @@ bool Position::loadFEN(const std::string& fen) {
   kingSquare_[1] = bb_.byPiece[bkIdx] ? lsb(bb_.byPiece[bkIdx]) : SQ_NONE;
 
   hash_ = zob::computeHash(bb_, mailbox_, currentTurn_, state_);
-  invalidateCache();
   recordPosition();
   return true;
 }
@@ -130,7 +125,6 @@ MoveResult Position::makeMove(int fromRow, int fromCol, int toRow, int toCol, ch
     result.isCheck = true;
   }
 
-  invalidateCache();
   return result;
 }
 
@@ -180,8 +174,6 @@ void Position::reverseMove(const MoveEntry& entry) {
   if (hashHistory_.count > 0)
     hashHistory_.count--;
   hash_ = zob::computeHash(bb_, mailbox_, currentTurn_, state_);
-
-  invalidateCache();
 }
 
 MoveResult Position::applyMoveEntry(const MoveEntry& entry) {
@@ -325,7 +317,6 @@ UndoInfo Position::make(Move m) {
 
   // --- Record position for threefold detection ---
   recordPosition();
-  invalidateCache();
 
   return undo;
 }
@@ -382,8 +373,6 @@ void Position::unmake(Move m, const UndoInfo& undo) {
   state_ = undo.state;
   hash_ = undo.hash;
   hashHistory_.count = undo.historyCount;
-
-  invalidateCache();
 }
 
 // ---------------------------------------------------------------------------
@@ -421,7 +410,6 @@ UndoInfo Position::makeNullMove() {
   state_.halfmoveClock++;
 
   recordPosition();
-  invalidateCache();
   return undo;
 }
 
@@ -430,7 +418,6 @@ void Position::unmakeNullMove(const UndoInfo& undo) {
   state_ = undo.state;
   hash_ = undo.hash;
   hashHistory_.count = undo.historyCount;
-  invalidateCache();
 }
 
 // ---------------------------------------------------------------------------
@@ -438,19 +425,7 @@ void Position::unmakeNullMove(const UndoInfo& undo) {
 // ---------------------------------------------------------------------------
 
 std::string Position::getFen() const {
-  if (fenDirty_) {
-    cachedFen_ = fen::boardToFEN(mailbox_, currentTurn_, &state_);
-    fenDirty_ = false;
-  }
-  return cachedFen_;
-}
-
-int Position::getEvaluation() const {
-  if (evalDirty_) {
-    cachedEval_ = eval::evaluatePosition(bb_);
-    evalDirty_ = false;
-  }
-  return cachedEval_;
+  return fen::boardToFEN(mailbox_, currentTurn_, &state_);
 }
 
 std::string Position::boardToText() const {
@@ -470,11 +445,6 @@ std::string Position::boardToText() const {
   result += "  a b c d e f g h\n";
   result += "===================";
   return result;
-}
-
-void Position::invalidateCache() {
-  fenDirty_ = true;
-  evalDirty_ = true;
 }
 
 // ---------------------------------------------------------------------------

@@ -8,7 +8,8 @@ namespace LibreChess {
 
 Game::Game(IGameStorage* storage, IGameObserver* observer, ILogger* logger)
     : history_(storage, logger), observer_(observer), logger_(logger), batchDepth_(0),
-      batchDirty_(false), gameOver_(false), gameResult_(GameResult::IN_PROGRESS), winnerColor_(' ') {}
+      batchDirty_(false), gameOver_(false), gameResult_(GameResult::IN_PROGRESS), winnerColor_(' '),
+      cachedEval_(0), fenDirty_(true), evalDirty_(true) {}
 
 static const char* STANDARD_START_FEN =
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
@@ -24,6 +25,7 @@ void Game::newGame() {
   gameOver_ = false;
   gameResult_ = GameResult::IN_PROGRESS;
   winnerColor_ = ' ';
+  invalidateCache();
   notifyObserver();
 }
 
@@ -97,6 +99,8 @@ MoveResult Game::makeMove(int fromRow, int fromCol, int toRow, int toCol, char p
   MoveEntry entry = MoveEntry::build(fromRow, fromCol, toRow, toCol, piece, targetPiece, result, prevState);
   history_.addMove(entry);
 
+  invalidateCache();
+
   // Auto-end game on checkmate/stalemate/draw
   if (result.gameResult != GameResult::IN_PROGRESS) {
     endGame(result.gameResult, result.winnerColor);  // calls notifyObserver()
@@ -130,6 +134,7 @@ bool Game::loadFEN(const std::string& fen) {
   winnerColor_ = ' ';
   history_.snapshotPosition(fen);  // no-op if not recording
 
+  invalidateCache();
   notifyObserver();
   return true;
 }
@@ -145,6 +150,7 @@ bool Game::undoMove() {
   gameOver_ = false;
   gameResult_ = GameResult::IN_PROGRESS;
   winnerColor_ = ' ';
+  invalidateCache();
   notifyObserver();
   return true;
 }
@@ -163,6 +169,7 @@ bool Game::redoMove() {
     gameResult_ = result.gameResult;
     winnerColor_ = result.winnerColor;
   }
+  invalidateCache();
   notifyObserver();
   return true;
 }
@@ -285,7 +292,7 @@ void Game::endBatch() {
   if (batchDepth_ == 0 && batchDirty_) {
     batchDirty_ = false;
     if (observer_)
-      observer_->onBoardStateChanged(board_.getFen(), board_.getEvaluation());
+      observer_->onBoardStateChanged(getFen(), getEvaluation());
   }
 }
 
@@ -299,7 +306,32 @@ void Game::notifyObserver() {
     return;
   }
   if (observer_)
-    observer_->onBoardStateChanged(board_.getFen(), board_.getEvaluation());
+    observer_->onBoardStateChanged(getFen(), getEvaluation());
+}
+
+// ---------------------------------------------------------------------------
+// Cached queries
+// ---------------------------------------------------------------------------
+
+std::string Game::getFen() const {
+  if (fenDirty_) {
+    cachedFen_ = board_.getFen();
+    fenDirty_ = false;
+  }
+  return cachedFen_;
+}
+
+int Game::getEvaluation() const {
+  if (evalDirty_) {
+    cachedEval_ = eval::evaluatePosition(board_.bitboards());
+    evalDirty_ = false;
+  }
+  return cachedEval_;
+}
+
+void Game::invalidateCache() {
+  fenDirty_ = true;
+  evalDirty_ = true;
 }
 
 }  // namespace LibreChess

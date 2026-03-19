@@ -2,6 +2,7 @@
 
 #include "../test_helpers.h"
 #include <game.h>
+#include <evaluation.h>
 #include <observer.h>
 #include <types.h>
 
@@ -612,6 +613,67 @@ void test_game_history_accessor(void) {
 }
 
 // ---------------------------------------------------------------------------
+// FEN / evaluation caching (Game layer)
+// ---------------------------------------------------------------------------
+
+void test_game_fen_cache_consistent(void) {
+  setUpGame();
+  std::string fen1 = game.getFen();
+  std::string fen2 = game.getFen();
+  TEST_ASSERT_EQUAL_STRING(fen1.c_str(), fen2.c_str());
+
+  game.makeMove(6, 4, 4, 4);  // e2e4
+  std::string fen3 = game.getFen();
+  TEST_ASSERT_TRUE(fen3 != fen1);
+}
+
+void test_game_eval_cache_consistent(void) {
+  setUpGame();
+  int eval1 = game.getEvaluation();
+  int eval2 = game.getEvaluation();
+  TEST_ASSERT_EQUAL_INT(eval1, eval2);
+
+  // Load asymmetric position (white missing e-pawn) and verify eval updates
+  game.loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
+  int eval3 = game.getEvaluation();
+  TEST_ASSERT_TRUE(eval3 < eval1);
+}
+
+void test_game_eval_updates_after_capture(void) {
+  setUpGame();
+  game.loadFEN("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2");
+  int evalBefore = game.getEvaluation();
+  game.makeMove(4, 4, 3, 3);  // exd5
+  int evalAfter = game.getEvaluation();
+  TEST_ASSERT_TRUE(evalAfter > evalBefore);
+}
+
+void test_game_fen_updates_after_move(void) {
+  setUpGame();
+  std::string fenBefore = game.getFen();
+  game.makeMove(6, 4, 4, 4);  // e2e4
+  std::string fenAfter = game.getFen();
+  TEST_ASSERT_FALSE(fenBefore == fenAfter);
+  TEST_ASSERT_TRUE(fenAfter.find(" b ") != std::string::npos);
+}
+
+void test_game_cache_invalidated_on_undo(void) {
+  setUpGame();
+  std::string fenBefore = game.getFen();
+  game.makeMove(6, 4, 4, 4);  // e2e4
+  TEST_ASSERT_TRUE(game.getFen() != fenBefore);
+  game.undoMove();
+  TEST_ASSERT_EQUAL_STRING(fenBefore.c_str(), game.getFen().c_str());
+}
+
+void test_game_cache_invalidated_on_load_fen(void) {
+  setUpGame();
+  game.loadFEN("4k3/8/8/8/8/8/8/4K3 w - - 0 1");
+  std::string fen = game.getFen();
+  TEST_ASSERT_TRUE(fen.find("4k3") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
@@ -682,4 +744,12 @@ void register_game_tests() {
   // board() / history() accessors
   RUN_TEST(test_game_board_accessor);
   RUN_TEST(test_game_history_accessor);
+
+  // FEN / evaluation caching
+  RUN_TEST(test_game_fen_cache_consistent);
+  RUN_TEST(test_game_eval_cache_consistent);
+  RUN_TEST(test_game_eval_updates_after_capture);
+  RUN_TEST(test_game_fen_updates_after_move);
+  RUN_TEST(test_game_cache_invalidated_on_undo);
+  RUN_TEST(test_game_cache_invalidated_on_load_fen);
 }

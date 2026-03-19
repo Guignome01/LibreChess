@@ -8,6 +8,7 @@
 #include "history.h"
 #include "notation.h"
 #include "position.h"
+#include "evaluation.h"
 #include "types.h"
 
 // ---------------------------------------------------------------------------
@@ -97,9 +98,9 @@ class Game {
   int kingCol(Color c) const { return board_.kingCol(c); }
   uint8_t getCastlingRights() const { return board_.getCastlingRights(); }
   const PositionState& positionState() const { return board_.positionState(); }
-  std::string getFen() const { return board_.getFen(); }
-  int getEvaluation() const { return board_.getEvaluation(); }
-  float getEvaluationFloat() const { return board_.getEvaluation() / 100.0f; }
+  std::string getFen() const;
+  int getEvaluation() const;
+  float getEvaluationFloat() const { return getEvaluation() / 100.0f; }
 
   // --- Convenience wrappers ---
 
@@ -177,6 +178,14 @@ class Game {
   bool gameOver_;
   GameResult gameResult_;
   char winnerColor_;
+
+  // Lazy caches — invalidated on game-layer mutations only.
+  // Avoids recomputation when observers query the same state multiple times.
+  mutable std::string cachedFen_;
+  mutable int cachedEval_;
+  mutable bool fenDirty_;
+  mutable bool evalDirty_;
+  void invalidateCache();
 
   void notifyObserver();
 };

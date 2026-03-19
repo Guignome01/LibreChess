@@ -80,7 +80,6 @@ Understanding this flow prevents bugs where steps get skipped or reordered:
    - Updates `PositionState` (castling rights, EP target, halfmove/fullmove clocks)
    - Records position hash in `HashHistory`
    - Runs `movegen::isGameOver()` → sets `MoveResult.gameResult` if checkmate/stalemate/draw
-   - Invalidates FEN/eval caches
 3. **Game** logs the move description via `ILogger` (piece, type, from/to square, promotion)
 4. **Game** records the move in `History` (which auto-persists if recording)
 5. **Game** checks threefold repetition (Zobrist comparison), auto-ends game if detected
@@ -136,7 +135,7 @@ These explain *why* the architecture is the way it is — constraints that code 
 
 ## Key Patterns
 
-- **Dirty-flag caching**: `Position` caches FEN and evaluation, recomputes only when `fenDirty_`/`evalDirty_` are set by mutations.
+- **Dirty-flag caching**: `Game` caches FEN and evaluation, recomputes only when `fenDirty_`/`evalDirty_` are set by game-layer mutations. `Position` is a pure state container with no caching overhead.
 - **Composition over inheritance**: `Game` composes `Position` + `History`. No inheritance hierarchy.
 - **Nullable DI**: Storage, observer, and logger are pointer-injected. All nullable — storage and observer guard with `if (ptr_)`, logger uses `Log` proxy (no manual guards).
 - **Compact 2-byte move encoding**: `encodeMove()`/`decodeMove()` — bits 15..10 = from (row*8+col), bits 9..4 = to, bits 3..0 = promo code. Used for binary storage.

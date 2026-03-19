@@ -2,6 +2,7 @@
 
 #include "../test_helpers.h"
 #include <position.h>
+#include <evaluation.h>
 #include <zobrist.h>
 #include <move.h>
 #include <square.h>
@@ -47,7 +48,7 @@ void test_position_new_game_fen(void) {
 
 void test_position_initial_evaluation_zero(void) {
   setUpPosition();
-  TEST_ASSERT_EQUAL_INT(0, pos.getEvaluation());
+  TEST_ASSERT_EQUAL_INT(0, eval::evaluatePosition(pos.bitboards()));
 }
 
 // ---------------------------------------------------------------------------
@@ -592,13 +593,13 @@ void test_position_fen_cache_consistent(void) {
 
 void test_position_eval_cache_consistent(void) {
   setUpPosition();
-  int eval1 = pos.getEvaluation();
-  int eval2 = pos.getEvaluation();
-  TEST_ASSERT_EQUAL_INT(eval1, eval2);  // Same value from cache
+  int eval1 = eval::evaluatePosition(pos.bitboards());
+  int eval2 = eval::evaluatePosition(pos.bitboards());
+  TEST_ASSERT_EQUAL_INT(eval1, eval2);
 
-  // Load asymmetric position (white missing e-pawn) and verify cache updates
+  // Load asymmetric position (white missing e-pawn) and verify eval updates
   pos.loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
-  int eval3 = pos.getEvaluation();
+  int eval3 = eval::evaluatePosition(pos.bitboards());
   // White has one fewer pawn → negative evaluation
   TEST_ASSERT_TRUE(eval3 < eval1);
 }
@@ -614,11 +615,11 @@ void test_position_end_game_preserves_fen(void) {
 
 void test_position_eval_after_capture(void) {
   setUpPosition();
-  int initialEval = pos.getEvaluation();
+  int initialEval = eval::evaluatePosition(pos.bitboards());
   // White captures black's e-pawn (material advantage for white)
   pos.loadFEN("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2");
   pos.makeMove(4, 3, 3, 4); // d4xe5
-  int evalAfter = pos.getEvaluation();
+  int evalAfter = eval::evaluatePosition(pos.bitboards());
   TEST_ASSERT_TRUE(evalAfter > initialEval); // white gained material
 }
 
@@ -1246,31 +1247,6 @@ void test_position_load_fen_sets_clocks(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Dirty-flag caching (getEvaluation / getFen)
-// ---------------------------------------------------------------------------
-
-void test_position_getEvaluation_updates_after_capture(void) {
-  setUpPosition();
-  int evalBefore = pos.getEvaluation();
-  // Set up a capture scenario
-  pos.loadFEN("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2");
-  pos.makeMove(4, 4, 3, 3);  // exd5
-  int evalAfter = pos.getEvaluation();
-  // White captured a pawn, should be up ~100 cp
-  TEST_ASSERT_TRUE(evalAfter > evalBefore);
-}
-
-void test_position_getFen_updates_after_move(void) {
-  setUpPosition();
-  std::string fenBefore = pos.getFen();
-  pos.makeMove(6, 4, 4, 4);  // e2e4
-  std::string fenAfter = pos.getFen();
-  TEST_ASSERT_FALSE(fenBefore == fenAfter);
-  // FEN should reflect black to move
-  TEST_ASSERT_TRUE(fenAfter.find(" b ") != std::string::npos);
-}
-
-// ---------------------------------------------------------------------------
 // Board-level threefold repetition query
 // ---------------------------------------------------------------------------
 
@@ -1314,17 +1290,17 @@ void test_position_reverse_move_restores_fen(void) {
 void test_position_reverse_move_restores_eval(void) {
   setUpPosition();
   pos.loadFEN("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2");
-  int evalBefore = pos.getEvaluation();
+  int evalBefore = eval::evaluatePosition(pos.bitboards());
   PositionState before = pos.positionState();
   MoveResult r = pos.makeMove(4, 4, 3, 3);  // exd5 capture
   TEST_ASSERT_TRUE(r.valid);
   // Eval should change after capture
-  TEST_ASSERT_FALSE(evalBefore == pos.getEvaluation());
+  TEST_ASSERT_FALSE(evalBefore == eval::evaluatePosition(pos.bitboards()));
 
   MoveEntry e = makeBoardEntry(4, 4, 3, 3, Piece::W_PAWN, Piece::B_PAWN, before);
   pos.reverseMove(e);
 
-  TEST_ASSERT_EQUAL_INT(evalBefore, pos.getEvaluation());
+  TEST_ASSERT_EQUAL_INT(evalBefore, eval::evaluatePosition(pos.bitboards()));
 }
 
 // ---------------------------------------------------------------------------
@@ -1807,15 +1783,11 @@ void register_position_tests() {
   RUN_TEST(test_position_load_fen_sets_ep_target);
   RUN_TEST(test_position_load_fen_sets_clocks);
 
-  // Dirty-flag caching
-  RUN_TEST(test_position_getEvaluation_updates_after_capture);
-  RUN_TEST(test_position_getFen_updates_after_move);
-
   // Board-level threefold repetition
   RUN_TEST(test_position_isThreefoldRepetition_query);
   RUN_TEST(test_position_isThreefoldRepetition_false);
 
-  // reverseMove cache restoration
+  // reverseMove restoration
   RUN_TEST(test_position_reverse_move_restores_fen);
   RUN_TEST(test_position_reverse_move_restores_eval);
 

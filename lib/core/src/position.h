@@ -27,7 +27,6 @@
 #include "bitboard.h"
 #include "iterator.h"
 #include "utils.h"
-#include "evaluation.h"
 #include "move.h"
 #include "movegen.h"
 #include "rules.h"
@@ -104,7 +103,6 @@ class Position {
   const PositionState& positionState() const { return state_; }
 
   std::string getFen() const;
-  int getEvaluation() const;
 
   // Expose bitboard and mailbox for core-internal callers (notation::, etc.)
   const BitboardSet& bitboards() const { return bb_; }
@@ -204,12 +202,6 @@ class Position {
   Square kingSquare_[2];
   uint64_t hash_;
   HashHistory hashHistory_;
-
-  mutable std::string cachedFen_;
-  mutable int cachedEval_;
-  mutable bool fenDirty_;
-  mutable bool evalDirty_;
-  void invalidateCache();
 
   void recordPosition();
   void applyMoveToBoard(int fromRow, int fromCol, int toRow, int toCol, char promotion, MoveResult& result);
