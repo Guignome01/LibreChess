@@ -654,6 +654,128 @@ static void test_pawn_hash_integration(void) {
 }
 
 // ===========================================================================
+// Trapped pieces
+// ===========================================================================
+
+static void test_eval_trapped_bishop_a7(void) {
+  // White bishop on a7 with black pawn on b6 — bishop is trapped.
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "a7");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_PAWN, "b6");
+  int trapped = eval::evaluatePosition(bb);
+
+  // Same bishop on c5 (not trapped), same black pawn.
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "c5");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_PAWN, "b6");
+  int free = eval::evaluatePosition(bb);
+
+  // The trapped bishop should score worse for white.
+  TEST_ASSERT_TRUE(free > trapped);
+}
+
+static void test_eval_trapped_bishop_h7(void) {
+  // White bishop on h7 with black pawn on g6 — bishop is trapped.
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "h7");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_PAWN, "g6");
+  int trapped = eval::evaluatePosition(bb);
+
+  // Bishop on f5 (not trapped).
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "f5");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_PAWN, "g6");
+  int free = eval::evaluatePosition(bb);
+
+  TEST_ASSERT_TRUE(free > trapped);
+}
+
+static void test_eval_trapped_rook_by_king(void) {
+  // White rook on h1 with king on g1 — rook is trapped before castling.
+  // Add material so MG weight matters.
+  placePiece(bb, mailbox, Piece::W_KING, "g1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "h1");
+  placePiece(bb, mailbox, Piece::W_QUEEN, "d1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_QUEEN, "d8");
+  placePiece(bb, mailbox, Piece::B_ROOK, "a8");
+  int trapped = eval::evaluatePosition(bb);
+
+  // Same material with rook on e1 (not trapped) and king on g1.
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "g1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "e1");
+  placePiece(bb, mailbox, Piece::W_QUEEN, "d1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_QUEEN, "d8");
+  placePiece(bb, mailbox, Piece::B_ROOK, "a8");
+  int free = eval::evaluatePosition(bb);
+
+  TEST_ASSERT_TRUE(free > trapped);
+}
+
+static void test_eval_trapped_bishop_symmetric(void) {
+  // Both sides have trapped bishops — penalty cancels.
+  // White bishop on a7 (trapped by b6), black bishop on a2 (trapped by b3).
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "a7");
+  placePiece(bb, mailbox, Piece::B_PAWN, "b6");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_BISHOP, "a2");
+  placePiece(bb, mailbox, Piece::W_PAWN, "b3");
+  int eval = eval::evaluatePosition(bb);
+  // Symmetric trapped bishops → score should be near zero.
+  // Allow small PST asymmetry but the trapped penalties must cancel.
+  TEST_ASSERT_TRUE(eval > -30 && eval < 30);
+}
+
+// ===========================================================================
+// Connectivity
+// ===========================================================================
+
+static void test_eval_connectivity_defended_pieces(void) {
+  // White pieces defended by each other vs isolated black pieces.
+  // White: Ke1 (defends d2), Nd2 (defended by king), Bc4 (defended by Nd2).
+  // Black: Ke8, Na8 (corner, alone), Bh5 (undefended).
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_KNIGHT, "d2");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "c4");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_KNIGHT, "a8");
+  placePiece(bb, mailbox, Piece::B_BISHOP, "h5");
+  int connected = eval::evaluatePosition(bb);
+
+  // Now move white pieces apart so they don't defend each other.
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::W_KNIGHT, "h4");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "a7");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_KNIGHT, "a8");
+  placePiece(bb, mailbox, Piece::B_BISHOP, "h5");
+  int scattered = eval::evaluatePosition(bb);
+
+  // Connected pieces should score higher.
+  TEST_ASSERT_TRUE(connected > scattered);
+}
+
+static void test_eval_connectivity_symmetric(void) {
+  // Symmetric positions — connectivity should cancel.
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_KNIGHT, "f3");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_KNIGHT, "f6");
+  int eval = eval::evaluatePosition(bb);
+  TEST_ASSERT_EQUAL_INT(0, eval);
+}
+
+// ===========================================================================
 // Eval Hash Table — probe / store / clear cycle
 // ===========================================================================
 
@@ -773,6 +895,16 @@ void register_evaluation_tests() {
 
   // Space
   RUN_TEST(test_eval_space_more_territory);
+
+  // Trapped pieces
+  RUN_TEST(test_eval_trapped_bishop_a7);
+  RUN_TEST(test_eval_trapped_bishop_h7);
+  RUN_TEST(test_eval_trapped_rook_by_king);
+  RUN_TEST(test_eval_trapped_bishop_symmetric);
+
+  // Connectivity
+  RUN_TEST(test_eval_connectivity_defended_pieces);
+  RUN_TEST(test_eval_connectivity_symmetric);
 
   // Pawn hash table
   RUN_TEST(test_pawn_hash_probe_miss);

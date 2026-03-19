@@ -877,6 +877,136 @@ static void evalKnightOutposts(const BitboardSet& bb,
   }
 }
 
+// ---------------------------------------------------------------------------
+// Trapped pieces — penalty for pieces stuck in corners/edges where pawns
+// block their retreat.
+//
+// Detects common trapped piece patterns:
+//   • Bishop on a7/b8 (or mirrored h7/g8) with enemy pawn blocking escape
+//   • Bishop on a2/b1 (or mirrored h2/g1) with enemy pawn blocking escape
+//   • Rook trapped by own uncastled king on the same side
+//
+// Values: −50cp per trapped bishop, −40cp per trapped rook (MG only, since
+// in endgames piece mobility increases and trapping is less permanent).
+//
+// Reference: https://www.chessprogramming.org/Trapped_Pieces
+// ---------------------------------------------------------------------------
+
+static constexpr int TRAPPED_BISHOP_PENALTY = -50;
+static constexpr int TRAPPED_ROOK_PENALTY   = -40;
+
+static void evalTrappedPieces(const BitboardSet& bb,
+                              int& mgScore, int& /* egScore */) {
+  Bitboard whiteBishops = bb.byPiece[2];   // W_BISHOP
+  Bitboard blackBishops = bb.byPiece[8];   // B_BISHOP
+  Bitboard whitePawns   = bb.byPiece[0];   // W_PAWN
+  Bitboard blackPawns   = bb.byPiece[6];   // B_PAWN
+  Bitboard whiteRooks   = bb.byPiece[3];   // W_ROOK
+  Bitboard blackRooks   = bb.byPiece[9];   // B_ROOK
+  Bitboard whiteKing    = bb.byPiece[5];   // W_KING
+  Bitboard blackKing    = bb.byPiece[11];  // B_KING
+
+  // LERF squares for the trapped bishop patterns.
+  constexpr Square A7 = 48, B6 = 41, B8 = 57;
+  constexpr Square H7 = 55, G6 = 46, G8 = 62;
+  constexpr Square A2 = 8,  B3 = 17, B1 = 1;
+  constexpr Square H2 = 15, G3 = 22, G1 = 6;
+
+  // White bishop trapped on a7 by black pawn on b6.
+  if ((whiteBishops & squareBB(A7)) && (blackPawns & squareBB(B6)))
+    mgScore += TRAPPED_BISHOP_PENALTY;
+  // White bishop trapped on b8 by black pawn on b6 (deeper trap).
+  if ((whiteBishops & squareBB(B8)) && (blackPawns & squareBB(B6)))
+    mgScore += TRAPPED_BISHOP_PENALTY;
+  // White bishop trapped on h7 by black pawn on g6.
+  if ((whiteBishops & squareBB(H7)) && (blackPawns & squareBB(G6)))
+    mgScore += TRAPPED_BISHOP_PENALTY;
+  // White bishop trapped on g8 by black pawn on g6 (deeper trap).
+  if ((whiteBishops & squareBB(G8)) && (blackPawns & squareBB(G6)))
+    mgScore += TRAPPED_BISHOP_PENALTY;
+
+  // Black bishop trapped on a2 by white pawn on b3.
+  if ((blackBishops & squareBB(A2)) && (whitePawns & squareBB(B3)))
+    mgScore -= TRAPPED_BISHOP_PENALTY;
+  // Black bishop trapped on b1 by white pawn on b3 (deeper trap).
+  if ((blackBishops & squareBB(B1)) && (whitePawns & squareBB(B3)))
+    mgScore -= TRAPPED_BISHOP_PENALTY;
+  // Black bishop trapped on h2 by white pawn on g3.
+  if ((blackBishops & squareBB(H2)) && (whitePawns & squareBB(G3)))
+    mgScore -= TRAPPED_BISHOP_PENALTY;
+  // Black bishop trapped on g1 by white pawn on g3 (deeper trap).
+  if ((blackBishops & squareBB(G1)) && (whitePawns & squareBB(G3)))
+    mgScore -= TRAPPED_BISHOP_PENALTY;
+
+  // Rook trapped by own uncastled king — king on f1/g1 traps rook on h1,
+  // king on b1/c1 traps rook on a1 (and mirrored for black).
+  constexpr Square A1 = 0, H1 = 7;
+  constexpr Square F1 = 5;
+  constexpr Square C1 = 2;
+  constexpr Square A8 = 56, H8 = 63;
+  constexpr Square F8 = 61;
+  constexpr Square C8 = 58;
+
+  // White rook trapped on h1 by king on f1 or g1.
+  if ((whiteRooks & squareBB(H1)) &&
+      (whiteKing & (squareBB(F1) | squareBB(G1))))
+    mgScore += TRAPPED_ROOK_PENALTY;
+  // White rook trapped on a1 by king on b1 or c1.
+  if ((whiteRooks & squareBB(A1)) &&
+      (whiteKing & (squareBB(B1) | squareBB(C1))))
+    mgScore += TRAPPED_ROOK_PENALTY;
+
+  // Black rook trapped on h8 by king on f8 or g8.
+  if ((blackRooks & squareBB(H8)) &&
+      (blackKing & (squareBB(F8) | squareBB(G8))))
+    mgScore -= TRAPPED_ROOK_PENALTY;
+  // Black rook trapped on a8 by king on b8 or c8.
+  if ((blackRooks & squareBB(A8)) &&
+      (blackKing & (squareBB(B8) | squareBB(C8))))
+    mgScore -= TRAPPED_ROOK_PENALTY;
+}
+
+// ---------------------------------------------------------------------------
+// Connectivity — bonus for pieces defended by friendly pieces.
+//
+// A piece that is defended (attacked by at least one friendly piece) is
+// more resilient in exchanges.  This is a simple measure of piece
+// coordination: count the number of non-pawn friendly pieces that are
+// defended by any friendly piece (including pawns).
+//
+// Pawns are excluded as targets because their structure is already
+// evaluated separately.  Kings are excluded because they are never
+// captured.
+//
+// Value: +3cp per defended non-pawn piece (MG+EG).
+//
+// Reference: https://www.chessprogramming.org/Connectivity
+// ---------------------------------------------------------------------------
+
+static constexpr int CONNECTIVITY_BONUS = 3;
+
+static void evalConnectivity(const BitboardSet& bb,
+                             const attacks::AttackInfo& info,
+                             int& mgScore, int& egScore) {
+  for (int c = 0; c < 2; ++c) {
+    int sign = (c == 0) ? 1 : -1;
+    Bitboard friendly = bb.byColor[c];
+    Bitboard friendlyAttacks = info.byColor[c];
+
+    // Non-pawn, non-king friendly pieces.
+    int pawnIdx  = c * 6;      // W_PAWN=0, B_PAWN=6
+    int kingIdx  = c * 6 + 5;  // W_KING=5, B_KING=11
+    Bitboard targets = friendly & ~bb.byPiece[pawnIdx] & ~bb.byPiece[kingIdx];
+
+    // Count how many of those pieces are defended by any friendly piece.
+    int defended = popcount(targets & friendlyAttacks);
+
+    int bonus = defended * CONNECTIVITY_BONUS;
+    mgScore += sign * bonus;
+    egScore += sign * bonus;
+  }
+}
+
 // ===========================================================================
 // Hash table implementations
 // ===========================================================================
@@ -1011,11 +1141,13 @@ int evaluatePosition(const BitboardSet& bb,
   evalCenterControl(bb, mgScore, egScore);
   evalKingTropism(bb, mgScore);
   evalSpace(bb, mgScore, egScore);
+  evalTrappedPieces(bb, mgScore, egScore);
 
-  // Mobility requires full attack computation — one call per evaluation.
+  // Mobility and connectivity require full attack computation — one call.
   attacks::init();
   attacks::AttackInfo info = attacks::computeAll(bb);
   evalMobility(bb, info, mgScore, egScore);
+  evalConnectivity(bb, info, mgScore, egScore);
 
   int phase = popcount(bb.byPiece[1] | bb.byPiece[7])  * PHASE_KNIGHT
             + popcount(bb.byPiece[2] | bb.byPiece[8])  * PHASE_BISHOP

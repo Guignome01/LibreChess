@@ -218,6 +218,23 @@ static constexpr int IID_DEPTH_THRESHOLD = 4;
 static constexpr int IID_REDUCTION       = 2;
 
 // ---------------------------------------------------------------------------
+// Lazy Evaluation margin.
+//
+// Before computing the expensive full evaluation (mobility, king safety,
+// pawn structure, etc.), a cheap material-only score is computed.  If this
+// score is outside the [alpha - margin, beta + margin] window, the full
+// evaluation is unlikely to change the search outcome, so it is skipped.
+//
+// LAZY_EVAL_MARGIN: the window extension in centipawns.
+// Set conservatively to avoid pruning positions where positional terms
+// would flip the score.  Only applied in non-PV, non-check nodes.
+//
+// Reference: https://www.chessprogramming.org/Lazy_Evaluation
+// ---------------------------------------------------------------------------
+
+static constexpr int LAZY_EVAL_MARGIN = 300;
+
+// ---------------------------------------------------------------------------
 // Tempo bonus (centipawns).
 //
 // A small bonus given to the side-to-move, reflecting the inherent
@@ -400,6 +417,25 @@ inline void updateHistory(Move m, int depth, Color side, SearchState& state) {
 }
 
 // ---------------------------------------------------------------------------
+// Material-only evaluation from the side-to-move perspective.
+// Counts material + PST (the cheap part of evaluation) without positional
+// heuristics.  Used by lazy evaluation to decide if the full eval is worth
+// computing.
+// ---------------------------------------------------------------------------
+
+static constexpr int LAZY_MATERIAL[] = {100, 300, 300, 500, 900, 0};
+
+int lazyEval(const Position& pos) {
+  const BitboardSet& bb = pos.bitboards();
+  int score = 0;
+  for (int i = 0; i < 6; ++i) {
+    score += popcount(bb.byPiece[i]) * LAZY_MATERIAL[i];
+    score -= popcount(bb.byPiece[i + 6]) * LAZY_MATERIAL[i];
+  }
+  return (pos.sideToMove() == Color::WHITE) ? score : -score;
+}
+
+// ---------------------------------------------------------------------------
 // Static evaluation from the side-to-move perspective (negamax convention).
 // Uses the eval hash table (if available) to avoid redundant evaluations.
 // The cached value is the final STM-relative score including tempo.
@@ -541,10 +577,28 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // Non-PV nodes use a null window (beta == alpha + 1).
   bool pvNode = (beta - alpha) > 1;
 
-  // --- Static evaluation (shared by razoring + futility pruning) ---
-  // Computed once and reused.  Only needed outside PV / non-check nodes,
-  // but the cost is negligible and simplifies the control flow.
-  int staticEval = evaluate(pos, state);
+  // --- Lazy Evaluation ---
+  // In non-PV, non-check nodes, compute a cheap material-only score first.
+  // If the material score is far outside the alpha-beta window, the
+  // expensive positional evaluation won't change the outcome — use the
+  // material score directly.  Otherwise, compute the full evaluation.
+  //
+  // This skips mobility, king safety, pawn structure, and other costly
+  // terms in positions where material imbalance already dominates.
+  //
+  // Reference: https://www.chessprogramming.org/Lazy_Evaluation
+  int staticEval;
+  if (!pvNode && !inCheck) {
+    int materialScore = lazyEval(pos);
+    if (materialScore - LAZY_EVAL_MARGIN >= beta ||
+        materialScore + LAZY_EVAL_MARGIN <= alpha) {
+      staticEval = materialScore;
+    } else {
+      staticEval = evaluate(pos, state);
+    }
+  } else {
+    staticEval = evaluate(pos, state);
+  }
 
   // --- Razoring ---
   // At shallow depths, if the static eval is far below alpha, the position

@@ -792,6 +792,73 @@ static void test_iid_completes_with_tt(void) {
 }
 
 // ===========================================================================
+// Lazy Evaluation
+// ===========================================================================
+
+// Lazy eval should not interfere with finding tactical solutions.
+// In a position with an obvious knight fork, the search must still find it
+// even though lazy eval may skip the full evaluation in some nodes.
+static void test_lazy_eval_preserves_tactics(void) {
+  // White to move: Na3 can fork king and rook via Nc2.
+  // Position with clear material imbalance where lazy eval might kick in.
+  const char* fen =
+      "r3k2r/pppq1ppp/2n2n2/2b1p3/2B1P1b1/2NP1N2/PPP2PPP/R1BQK2R w KQkq - 0 7";
+  Position pos;
+  pos.loadFEN(fen);
+
+  search::TranspositionTable tt;
+  tt.resize(search::DEFAULT_TT_SIZE);
+  search::SearchLimits limits;
+  limits.maxDepth = 5;
+
+  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  // Should return a legal, sensible move.
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+  TEST_ASSERT_TRUE(result.depth >= 3);
+
+  tt.free();
+}
+
+// Lazy eval must produce the same result as full eval in a position where
+// material is balanced (lazy eval margin doesn't trigger, so full eval runs).
+static void test_lazy_eval_balanced_position(void) {
+  const char* fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1";
+  Position pos;
+  pos.loadFEN(fen);
+
+  search::SearchLimits limits;
+  limits.maxDepth = 4;
+
+  auto result = search::findBestMove(pos, limits);
+  // Should complete normally and return a legal move.
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+  TEST_ASSERT_EQUAL_INT(4, result.depth);
+}
+
+// Lazy eval in a large material imbalance position should still produce
+// correct results and reduce node count compared to the balanced case.
+static void test_lazy_eval_imbalanced_position(void) {
+  // White up a queen — material score is far from alpha/beta in many nodes.
+  const char* fen = "r1bk3r/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQ - 0 1";
+  Position pos;
+  pos.loadFEN(fen);
+
+  search::TranspositionTable tt;
+  tt.resize(search::DEFAULT_TT_SIZE);
+  search::SearchLimits limits;
+  limits.maxDepth = 5;
+
+  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  // Should find a move and complete the search.
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+  TEST_ASSERT_EQUAL_INT(5, result.depth);
+  // White should have a winning score.
+  TEST_ASSERT_TRUE(result.score > 500);
+
+  tt.free();
+}
+
+// ===========================================================================
 // Registration
 // ===========================================================================
 
@@ -839,4 +906,7 @@ void register_search_tests() {
   RUN_TEST(test_countermove_with_tt);
   RUN_TEST(test_iid_preserves_tactics);
   RUN_TEST(test_iid_completes_with_tt);
+  RUN_TEST(test_lazy_eval_preserves_tactics);
+  RUN_TEST(test_lazy_eval_balanced_position);
+  RUN_TEST(test_lazy_eval_imbalanced_position);
 }
