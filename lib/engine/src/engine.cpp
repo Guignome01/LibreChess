@@ -50,7 +50,8 @@ search::SearchResult Engine::calculateMove(const std::string& fen,
   // Build internal limits with our stop flag wired in
   search::SearchLimits internalLimits;
   internalLimits.maxDepth = limits.maxDepth;
-  internalLimits.maxTimeMs = limits.maxTimeMs;
+  internalLimits.softTimeMs = limits.softTimeMs;
+  internalLimits.hardTimeMs = limits.hardTimeMs;
 
   stop_.store(false, std::memory_order_relaxed);
   internalLimits.stop = externalStop_ ? externalStop_ : &stop_;

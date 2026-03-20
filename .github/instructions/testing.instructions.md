@@ -20,6 +20,7 @@ The chess libraries (`lib/core/`, `lib/game/`, `lib/engine/`) have zero Arduino 
 | Run game suite | `pio test -e native -f test_game` |
 | Run engine suite | `pio test -e native -f test_engine` |
 | Run perft suite | `pio test -e native -f test_perft` |
+| Run tactics suite | `pio test -e native -f test_tactics` |
 
 ## File Structure
 
@@ -29,11 +30,15 @@ Tests are split into three suites mirroring the library structure (`lib/core/`, 
 test/
 ├── test_helpers.h                       Shared utilities (setupInitialBoard, clearBoard, placePiece, etc.)
 ├── test_shared.cpp                      Shared globals (bb, mailbox, needsDefaultKings)
+├── epd.h                                EPD parser header: EPDOperation, EPDRecord, parseEPDLine, validateEPDLine
+├── epd.cpp                              EPD parser implementation (auto-linked into all test suites)
 ├── test_core/                           Core library tests (lib/core/)
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
 │   ├── test_attacks.cpp                 attacks: leaper tables, slider rays, x-ray attacks, geometry rays (between, line), computeAll, SEE
 │   ├── test_bitboard.cpp                LibreChess: square mapping, bit ops, square-color masks, BitboardSet mutations
-│   ├── test_evaluation.cpp              eval: material scoring, pawn structure, tapered evaluation, pawn/eval hash tables, trapped pieces, connectivity
+│   ├── test_epd.cpp                     EPD parser: parseEPDLine (bm/am/id/c0, quoted/comma-separated), validateEPDLine, accessors
+│   ├── test_evaluation.cpp              eval: material scoring, pawn structure, tapered evaluation, pawn/eval hash tables, trapped pieces, connectivity, bad bishop, rook behind passer, protected/candidate passer, OCB scaling
+│   ├── test_eval_regression.cpp        eval regression: 17 fixed-position score assertions (symmetry, material, pawn structure, threats, phase tapering, bad bishop, rook behind passer, protected passer, candidate passer, OCB scaling)
 │   ├── test_fen.cpp                     FEN round-trip, boardToFEN/fenToBoard, validateFEN
 │   ├── test_iterator.cpp                Board iteration: forEachSquare, forEachPiece, somePiece, findPiece
 │   ├── test_movegen.cpp                 Move generation per piece type, captures, bulk generation, move flags, legal move queries
@@ -50,8 +55,16 @@ test/
 │   └── test_history_persistence.cpp     Recording: persistence, header flush, replay, branch-truncation, encode/decode
 ├── test_engine/                         Engine library tests (lib/engine/)
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
-│   ├── test_search.cpp                  search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, IID, time/stop, TT, move ordering, delta pruning, futility pruning, SEE ordering, lazy eval
+│   ├── test_search.cpp                  search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, IID, time/stop, TT, move ordering, delta pruning, futility pruning, SEE ordering, lazy eval, PV table, MDP, capture history, staged MovePicker, TT replacement, soft time, easy move
 │   └── test_engine.cpp                  Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range
+├── test_tactics/                        Tactical test suites (standalone, heavyweight)
+│   ├── test_tactics.cpp                 Suite runner: loads .epd files via EPD parser, SAN→coordinate comparison, informational pass rates
+│   ├── wac.epd                          Win At Chess — 300 positions (Reinfeld/Wilson, CPW verbatim)
+│   ├── bk.epd                           Bratko-Kopec — 24 positions (Bratko/Kopec, CPW verbatim)
+│   └── eret.epd                         Eigenmann Rapid Engine Test — 111 positions (Eigenmann, CPW verbatim)
+├── test_benchmarks/                     Performance benchmarks (standalone)
+│   ├── test_all.cpp                    Main entry: register calls for benchmark tests
+│   └── test_nps.cpp                    NPS benchmark: 6 standard positions, 1s/pos, informational throughput measurement
 └── test_perft/                          Perft suite (standalone, heavyweight)
     └── test_perft.cpp                   Perft move-tree enumeration with detailed counters (captures, EP, castles, promotions, checks, checkmates)
 ```
@@ -77,6 +90,7 @@ Each library source file has a corresponding test file in the matching test suit
 | `lib/game/src/history.cpp` | `test_game/` | `test_history.cpp` + `test_history_persistence.cpp` |
 | `lib/engine/src/search.h/cpp` | `test_engine/` | `test_search.cpp` |
 | `lib/engine/src/engine.h/cpp` | `test_engine/` | `test_engine.cpp` |
+| `test/epd.h/cpp` | `test_core/` | `test_epd.cpp` |
 
 Place tests in the suite that mirrors the owning library. When creating a new source file in any of the three libraries, create a matching test file in the corresponding `test_<lib>/` directory and register its test functions in that suite's main file.
 
@@ -121,10 +135,10 @@ Persistence lifecycle with MockGameStorage. Header flush timing. Game replay fro
 50-move rule counter. Castling rights string formatting and parsing (`castlingCharToBit`, `hasCastlingRight`). Coordinate helpers (`squareName`, `fileChar`, `rankChar`, `fileIndex`, `rankIndex`, `isValidSquare`). Special-move analysis (`checkEnPassant`, `checkCastling`, `updateCastlingRights`). `applyBoardTransform`. `boardToText`. `positionState`. `gameResultName`. `isValidPromotionChar`.
 
 ### Evaluation (`test_evaluation.cpp`)
-Material evaluation scoring. Pawn structure evaluation (symmetry, passed pawn bonus, doubled/isolated penalties). Tapered evaluation (opening symmetry, endgame king centralization, phase-dependent king PST blend). Pawn-structure analysis functions: `isPassed`, `isIsolated`, `isDoubled`, `isBackward`. Positional terms: bishop pair bonus (single side / both sides), rook on open file, rook on semi-open file, rook on 7th rank, mobility (centralized vs edge pieces), king safety (intact pawn shield), knight outpost, center control (pawn occupation and attack), king tropism (close attackers score higher), space (territory behind pawn chain). Trapped pieces: bishop trapped on a7/h7 by enemy pawn, rook trapped by own uncastled king, symmetry. Connectivity: defended non-pawn non-king pieces score higher, symmetry. Pawn hash table: probe miss, store/probe round-trip, clear invalidation, integration with evaluatePosition. Eval hash table: probe miss, store/probe round-trip, clear invalidation, overwrite.
+Material evaluation scoring. Pawn structure evaluation (symmetry, passed pawn bonus, doubled/isolated penalties). Tapered evaluation (opening symmetry, endgame king centralization, phase-dependent king PST blend). Pawn-structure analysis functions: `isPassed`, `isIsolated`, `isDoubled`, `isBackward`. Positional terms: bishop pair bonus (single side / both sides), rook on open file, rook on semi-open file, rook on 7th rank, mobility (centralized vs edge pieces, MG/EG split weights), king safety (intact pawn shield), king danger (close piece scores higher, multiple zone attackers vs no attackers), knight outpost, center control (pawn occupation and attack), space (territory behind pawn chain). Passed pawn rank scaling (advanced passer scores higher). Passed pawn king distance (own king close vs far from passer). Trapped pieces: bishop trapped on a7/h7 by enemy pawn, rook trapped by own uncastled king, symmetry. Connectivity: defended non-pawn non-king pieces score higher, symmetry. Pawn hash table: probe miss, store/probe round-trip, clear invalidation, integration with evaluatePosition. Eval hash table: probe miss, store/probe round-trip, clear invalidation, overwrite. Bad bishop (penalty per own pawn on same color complex). Rook behind passer (Tarrasch Rule, EG-only bonus for rook behind own passer vs rook in front). Protected passer (defended by a friendly pawn scores higher). Candidate passer (one enemy blocker vs two). Opposite-color bishop scaling (×0.75 reduction in endgame vs same-color bishops).
 
 ### Search (`test_search.cpp`)
-Mate-in-1 (white, black). Captures hanging piece. Quiescence avoids blunder. Stalemate avoidance. Symmetric position. Knight fork tactics. Legal move from random position. Checkmate no legal moves. Iterative deepening (deeper depth finds mate, info callback reports iterations). IID preserves tactics, completes with TT. Lazy evaluation preserves tactics, balanced position correctness, imbalanced position scoring. Time limit control. Stop flag. Mate stops early. TT store/probe exact, probe miss, clear, pack/unpack move, reduces nodes, mate score round-trip. Check extension finds mate. NMP quiet position, K+P endgame no blunder. PVS+LMR middlegame efficiency. Pruning preserves tactics. Aspiration windows correctness, depth continuity. Root move reordering consistency. Move ordering reduces nodes and finds tactics. Delta pruning quiet position. Futility pruning preserves winning capture and discovered attack. SEE ordering preserves tactics. SEE qsearch skips losing capture. LMP preserves winning capture, completes without blunder. Razoring preserves winning capture, completes correctly. Countermove heuristic preserves tactics, integrates with TT.
+Mate-in-1 (white, black). Captures hanging piece. Quiescence avoids blunder. Stalemate avoidance. Symmetric position. Knight fork tactics. Legal move from random position. Checkmate no legal moves. Iterative deepening (deeper depth finds mate, info callback reports iterations). IID preserves tactics, completes with TT. Lazy evaluation preserves tactics, balanced position correctness, imbalanced position scoring. Time limit control. Stop flag. Mate stops early. TT store/probe exact, probe miss, clear, pack/unpack move, reduces nodes, mate score round-trip. Check extension finds mate. NMP quiet position, K+P endgame no blunder. PVS+LMR middlegame efficiency. Pruning preserves tactics. Aspiration windows correctness, depth continuity. Root move reordering consistency. Move ordering reduces nodes and finds tactics. Delta pruning quiet position. Futility pruning preserves winning capture and discovered attack. SEE ordering preserves tactics. SEE qsearch skips losing capture. LMP preserves winning capture, completes without blunder. Razoring preserves winning capture, completes correctly. Countermove heuristic preserves tactics, integrates with TT. History gravity produces negative scores for non-cutoff quiets. Recapture extension finds exchange sequence. Adaptive NMP correctness (deeper search doesn't blunder). Singular extension preserves tactics, completes with captures. PV table accuracy (mate-in-2 PV length and consistency). Mate distance pruning (mate score > winning material). Capture history ordering (tactical position node efficiency). Staged MovePicker (mate via capture found without quiet generation). TT depth-preferred replacement (deep entry survives shallow collision). Soft time stops search (between iterations with timer). Easy move early exit (mate-in-1 terminates quickly).
 
 ### Engine (`test_engine.cpp`)
 Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range.
@@ -152,3 +166,9 @@ Square mapping roundtrip (`squareOf(rowOf(sq), colOf(sq)) == sq` for all 64). LE
 
 ### Attacks (`test_attacks.cpp`)
 Leaper attack tables (knight on e4, king on a1, pawn attacks per color). Slider attack functions (rook/bishop/queen on empty board and with blockers). Bulk slider correctness (all 64 squares × 5 occupancy patterns cross-checked against reference ray implementation for both rook and bishop). X-ray attack functions (`xrayRook`, `xrayBishop`). `between` geometry (file/rank/diagonal/anti-diagonal/adjacent/non-colinear). `line` geometry (rank/file/diagonal/non-colinear/endpoints). `computeAll` validation (initial knight attacks, pawn bulk attacks, color unions, kings-only board). SEE: pawn takes undefended knight, pawn takes defended rook, knight takes defended pawn (losing), queen takes defended pawn (losing), rook takes undefended bishop, en passant.
+
+### EPD Parser (`test_epd.cpp`)
+`parseEPDLine`: basic FEN + bm opcode, multiple opcodes (bm + am + id + c0), quoted id strings, avoid move variations, comma-separated operands. `validateEPDLine`: valid/invalid FEN, missing fields. Accessors: `findOperation()` lookup, `id()` convenience, non-existent opcode returns nullptr yet `id()` returns empty.
+
+### Tactical Suites (`test_tactics/test_tactics.cpp`)
+Engine accuracy benchmarks using standard `.epd` files loaded at runtime via the EPD parser. Each suite reads its `.epd` file, parses each line into an `EPDRecord`, runs `search::findBestMove` at depth 6, converts both expected (SAN) and engine (Move) results to coordinate notation, and compares. Suites: **WAC** (Win At Chess, 300 positions), **BK** (Bratko-Kopec, 24 positions), **ERET** (Eigenmann Rapid Engine Test, 111 positions). Tests are informational — they assert only that at least one position is solved, printing individual mismatches and overall pass rate. Runtime ~3.5 minutes total.

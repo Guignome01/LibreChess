@@ -63,7 +63,10 @@ using InfoCallback = void (*)(const SearchResult&);
 
 struct SearchLimits {
   int maxDepth           = MAX_PLY;   // Depth limit (1-based)
-  uint32_t maxTimeMs     = 0;         // Time limit in ms (0 = no limit)
+  uint32_t softTimeMs    = 0;         // Soft time limit: stop after current
+                                      //   iteration completes (0 = no limit)
+  uint32_t hardTimeMs    = 0;         // Hard time limit: abort mid-search
+                                      //   (0 = no limit)
   std::atomic<bool>* stop = nullptr;  // External cancellation flag (nullable)
 };
 
@@ -76,6 +79,13 @@ struct SearchResult {
   int score    = 0;     // Score in centipawns (side-to-move relative)
   int depth    = 0;     // Deepest completed iteration
   uint32_t nodes = 0;   // Total nodes searched
+
+  // Principal variation — the best line of play from the last completed
+  // iteration.  pv[0] == bestMove.  Populated by the triangular PV table
+  // inside negamax.
+  // Reference: https://www.chessprogramming.org/Triangular_PV-Table
+  Move pv[MAX_PLY];
+  int pvLength = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -88,11 +98,13 @@ struct SearchResult {
 // ---------------------------------------------------------------------------
 // Transposition Table types.
 //
-// Each TTEntry is 16 bytes.  Default 8192 entries = 128 KiB — fits ESP32
-// comfortably.  Always-replace scheme (simple, good enough with ID rewriting
-// entries each iteration).
+// Each TTEntry is 12 bytes.  Default 8192 entries = 96 KiB — fits ESP32
+// comfortably.  Depth-preferred replacement with generation counter:
+// stale entries from previous searches are cheaply replaced; within the
+// same search, deeper entries survive over shallower ones.
 //
 // Reference: https://www.chessprogramming.org/Transposition_Table
+//            https://www.chessprogramming.org/Replacement_Strategy
 // ---------------------------------------------------------------------------
 
 // TT node type — determines how the stored score relates to alpha/beta.
@@ -120,7 +132,7 @@ inline Move unpackMove(PackedMove pm) {
   return m;
 }
 
-// A single transposition table entry — 16 bytes.
+// A single transposition table entry — 12 bytes (4+2+2+1+1+1 = 11, padded).
 // Truncated key (upper 32 bits) avoids full 64-bit comparison.
 struct TTEntry {
   uint32_t   key32;       // Upper 32 bits of Zobrist hash (collision guard)
@@ -128,11 +140,12 @@ struct TTEntry {
   PackedMove bestMove;    // Best move from this position
   int8_t     depth;       // Search depth that produced this entry
   TTFlag     flag;        // EXACT / LOWER_BOUND / UPPER_BOUND
+  uint8_t    generation;  // Search generation — stale entries replaced cheaply
 };
 
 static_assert(sizeof(TTEntry) <= 16, "TTEntry should fit in 16 bytes");
 
-// Default TT size: 8192 entries × 16 bytes = 128 KiB.
+// Default TT size: 8192 entries × 12 bytes = 96 KiB.
 static constexpr int DEFAULT_TT_SIZE = 8192;
 
 // The transposition table — a power-of-2 array with index = key & mask.
@@ -140,6 +153,7 @@ struct TranspositionTable {
   TTEntry* entries = nullptr;
   int size  = 0;  // Number of entries (power of 2)
   int mask  = 0;  // size - 1
+  uint8_t generation = 0;  // Current search generation
 
   // Allocate entries.  `numEntries` is rounded down to the nearest power of 2.
   void resize(int numEntries);
@@ -150,10 +164,18 @@ struct TranspositionTable {
   // Clear all entries (zero-fill).
   void clear();
 
+  // Advance the generation counter.  Called at the start of each search.
+  // Stale entries (from previous generations) are replaced cheaply.
+  void newGeneration() { generation = static_cast<uint8_t>(generation + 1); }
+
   // Probe the table for a matching entry.  Returns nullptr on miss.
   const TTEntry* probe(uint64_t hash) const;
 
-  // Store an entry (always-replace).
+  // Store an entry with depth-preferred replacement.
+  // Replaces existing entries when: slot is empty, same position (update),
+  // entry is from a stale generation, new entry is exact, or new depth
+  // is >= existing depth.
+  // Reference: https://www.chessprogramming.org/Replacement_Strategy
   void store(uint64_t hash, int score, Move bestMove, int depth, TTFlag flag);
 };
 
@@ -164,7 +186,7 @@ struct SearchState {
   // Time control
   TimeFunc timeFunc = nullptr;
   uint32_t startTime = 0;
-  uint32_t maxTimeMs = 0;
+  uint32_t hardTimeMs = 0;
   std::atomic<bool>* externalStop = nullptr;
 
   // Transposition table (externally owned, nullable).
@@ -187,12 +209,32 @@ struct SearchState {
   // Reference: https://www.chessprogramming.org/History_Heuristic
   int16_t history[2][64][64];
 
+  // Capture history: [pieceZobristIndex][toSquare] — accumulated scores
+  // for captures.  Complements MVV-LVA + SEE ordering.
+  // Reference: https://www.chessprogramming.org/History_Heuristic#Capture_History
+  int16_t captureHistory[12][64];
+
   // Countermove heuristic: for each (piece, toSquare) of the previous move,
   // stores the quiet move that caused a beta cutoff in response.  Used as a
   // 3rd-tier ordering hint (between killers and history).
   // Indexed by [pieceZobristIndex(0..11)][toSquare(0..63)].  ~1.5 KiB.
   // Reference: https://www.chessprogramming.org/Countermove_Heuristic
   PackedMove countermoves[12][64];
+
+  // Static eval at each ply — used to compute the "improving" flag.
+  // A position is improving if its static eval exceeds the eval from 2
+  // plies ago, informing RFP, LMP, and LMR decisions.
+  // Reference: https://www.chessprogramming.org/Improving
+  int16_t staticEvals[MAX_PLY];
+
+  // Triangular PV table — collects the principal variation during search.
+  // pv[ply] holds the PV line starting at that ply; pvLength[ply] holds
+  // the number of moves in that line.  Updated in negamax when alpha
+  // improves; copied to SearchResult after each completed iteration.
+  // Memory: MAX_PLY × MAX_PLY × sizeof(Move) ≈ 48 KiB (heap-allocated).
+  // Reference: https://www.chessprogramming.org/Triangular_PV-Table
+  Move pv[MAX_PLY][MAX_PLY];
+  int pvLength[MAX_PLY];
 
   // Initialize killer and history tables to zero.
   void clearHeuristics();
@@ -205,9 +247,9 @@ struct SearchState {
       stopped = true;
       return;
     }
-    if (maxTimeMs > 0 && timeFunc) {
+    if (hardTimeMs > 0 && timeFunc) {
       uint32_t elapsed = timeFunc() - startTime;
-      if (elapsed >= maxTimeMs) stopped = true;
+      if (elapsed >= hardTimeMs) stopped = true;
     }
   }
 };

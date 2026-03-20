@@ -134,10 +134,12 @@ static void test_eval_tapered_opening_vs_endgame_king(void) {
 static void test_eval_tapered_endgame_king_centralization(void) {
   // Pure K+P endgame (phase = 0) — king in center should score better than
   // king on the edge (EG table: d4 = +30 vs a1 = -20).
+  // Symmetric, non-passed pawns (e4 vs e5 block each other) avoid
+  // interference from the exponential passed-pawn rank bonuses.
   placePiece(bb, mailbox, Piece::W_KING, "d4");
-  placePiece(bb, mailbox, Piece::W_PAWN, "e5");
+  placePiece(bb, mailbox, Piece::W_PAWN, "e4");
   placePiece(bb, mailbox, Piece::B_KING, "a1");
-  placePiece(bb, mailbox, Piece::B_PAWN, "e2");
+  placePiece(bb, mailbox, Piece::B_PAWN, "e5");
   int eval = eval::evaluatePosition(bb);
   // White king center (d4 EG=+30) vs black king corner (a1 → mirrored to a8 EG=-20).
   // Net king EG bonus: +30 - (-20) = +50 advantage for white.
@@ -152,7 +154,7 @@ static void test_eval_tapered_phase_affects_king(void) {
   int endgameEval = eval::evaluatePosition(bb);
 
   // Add symmetric queen pair → large phase swing (phase 8 vs 0).
-  // Queens produce enough MG/EG blending difference (including king tropism
+  // Queens produce enough MG/EG blending difference (including king danger
   // asymmetry) to avoid accidental coincidence with the endgame score.
   placePiece(bb, mailbox, Piece::W_QUEEN, "a1");
   placePiece(bb, mailbox, Piece::B_QUEEN, "a8");
@@ -533,11 +535,12 @@ static void test_eval_center_pawn_attack(void) {
 }
 
 // ===========================================================================
-// King tropism
+// King danger (unified zone attack + proximity)
 // ===========================================================================
 
-static void test_eval_king_tropism_close_piece(void) {
+static void test_eval_king_danger_close_piece(void) {
   // White queen close to black king vs far from black king.
+  // Close queen attacks king zone AND is nearby (proximity amplifier).
   placePiece(bb, mailbox, Piece::W_KING, "a1");
   placePiece(bb, mailbox, Piece::W_QUEEN, "f7");  // 1 square from e8
   placePiece(bb, mailbox, Piece::B_KING, "e8");
@@ -832,6 +835,266 @@ static void test_eval_hash_overwrite(void) {
 }
 
 // ===========================================================================
+// Rank-based passed pawn scoring
+// ===========================================================================
+
+// A passer on the 6th rank (LERF rank 5, close to promotion for white)
+// should score higher than a passer on the 3rd rank.
+static void test_eval_passed_pawn_rank_scaling(void) {
+  // Position A: white passed pawn on e6 (LERF rank 5).
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "e6");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  int evalHigh = eval::evaluatePosition(bb);
+
+  // Position B: white passed pawn on e3 (LERF rank 2).
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "e3");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  int evalLow = eval::evaluatePosition(bb);
+
+  // The advanced passer should be worth more (exponential rank scaling).
+  TEST_ASSERT_TRUE(evalHigh > evalLow);
+}
+
+// Own king near a passed pawn should improve endgame eval vs king far away.
+static void test_eval_passed_pawn_king_distance(void) {
+  // Position A: white king near the white passed pawn.
+  placePiece(bb, mailbox, Piece::W_KING, "d5");
+  placePiece(bb, mailbox, Piece::W_PAWN, "e5");
+  placePiece(bb, mailbox, Piece::B_KING, "a1");
+  int evalNear = eval::evaluatePosition(bb);
+
+  // Position B: white king far from the white passed pawn.
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "e5");
+  placePiece(bb, mailbox, Piece::B_KING, "h8");
+  int evalFar = eval::evaluatePosition(bb);
+
+  // King near the passer should be better for white.
+  TEST_ASSERT_TRUE(evalNear > evalFar);
+}
+
+// ===========================================================================
+// King danger — zone attacks (continued)
+// ===========================================================================
+
+// Multiple enemy pieces attacking the king zone should lower eval.
+static void test_eval_king_danger_multiple_attackers(void) {
+  // Position A: black pieces far from white king.
+  placePiece(bb, mailbox, Piece::W_KING, "g1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "f2");
+  placePiece(bb, mailbox, Piece::W_PAWN, "g2");
+  placePiece(bb, mailbox, Piece::W_PAWN, "h2");
+  placePiece(bb, mailbox, Piece::B_KING, "g8");
+  placePiece(bb, mailbox, Piece::B_QUEEN, "a4");
+  placePiece(bb, mailbox, Piece::B_ROOK, "a5");
+  placePiece(bb, mailbox, Piece::B_BISHOP, "a6");
+  int evalSafe = eval::evaluatePosition(bb);
+
+  // Position B: black pieces attacking white king zone.
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "g1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "f2");
+  placePiece(bb, mailbox, Piece::W_PAWN, "g2");
+  placePiece(bb, mailbox, Piece::W_PAWN, "h2");
+  placePiece(bb, mailbox, Piece::B_KING, "g8");
+  placePiece(bb, mailbox, Piece::B_QUEEN, "d4");
+  placePiece(bb, mailbox, Piece::B_ROOK, "f8");
+  placePiece(bb, mailbox, Piece::B_BISHOP, "h3");
+  int evalDanger = eval::evaluatePosition(bb);
+
+  // White should be worse when pieces attack the king zone.
+  TEST_ASSERT_TRUE(evalSafe > evalDanger);
+}
+
+// No attackers near king should produce no attack penalty.
+static void test_eval_king_danger_no_attackers(void) {
+  // Symmetric position — both kings castled, no pieces near enemy kings.
+  placePiece(bb, mailbox, Piece::W_KING, "g1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "f2");
+  placePiece(bb, mailbox, Piece::W_PAWN, "g2");
+  placePiece(bb, mailbox, Piece::W_PAWN, "h2");
+  placePiece(bb, mailbox, Piece::W_KNIGHT, "c3");
+  placePiece(bb, mailbox, Piece::B_KING, "g8");
+  placePiece(bb, mailbox, Piece::B_PAWN, "f7");
+  placePiece(bb, mailbox, Piece::B_PAWN, "g7");
+  placePiece(bb, mailbox, Piece::B_PAWN, "h7");
+  placePiece(bb, mailbox, Piece::B_KNIGHT, "c6");
+  int eval = eval::evaluatePosition(bb);
+  // Symmetric (except mirrored pawns) — eval should be near zero.
+  TEST_ASSERT_TRUE(eval > -50 && eval < 50);
+}
+
+// ===========================================================================
+// Mobility MG/EG split
+// ===========================================================================
+
+// Rook mobility should matter more in endgames (EG weight 3) than in
+// midgames (MG weight 1).  A centralized rook with higher mobility should
+// produce a positive eval advantage in a K+R endgame.
+static void test_eval_mobility_mg_eg_split(void) {
+  // White rook centralized (d4), black rook restricted behind own pawn.
+  // K+R endgame (phase = 4, heavily EG-weighted).
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "d4");
+  placePiece(bb, mailbox, Piece::W_PAWN, "h2");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_ROOK, "a8");
+  placePiece(bb, mailbox, Piece::B_PAWN, "a7");
+  int eval = eval::evaluatePosition(bb);
+  // White's centralized rook has more mobility than the restricted black
+  // rook.  With EG rook mobility weight 3, this should produce a positive
+  // eval for white.
+  TEST_ASSERT_TRUE(eval > 0);
+}
+
+// ===========================================================================
+// Bad bishop — penalty per own pawn on same color complex
+// ===========================================================================
+
+// A bishop with own pawns blocking its diagonals (same color complex)
+// should score worse than the same material without pawns on that color.
+static void test_eval_bad_bishop(void) {
+  // Bad bishop: White bishop on c1 (dark), 3 white pawns on dark squares.
+  // Black king only.  The c1-bishop is heavily obstructed.
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "c1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "d2");   // dark square
+  placePiece(bb, mailbox, Piece::W_PAWN, "b2");   // dark square
+  placePiece(bb, mailbox, Piece::W_PAWN, "f2");   // dark square
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  int badBishop = eval::evaluatePosition(bb);
+
+  // Good bishop: same setup but pawns on light squares — bishop unobstructed.
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "c1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "c2");   // light square
+  placePiece(bb, mailbox, Piece::W_PAWN, "e2");   // light square
+  placePiece(bb, mailbox, Piece::W_PAWN, "g2");   // light square
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  int goodBishop = eval::evaluatePosition(bb);
+
+  // 3 pawns on same color → 3 × BAD_BISHOP penalty → bad position scores lower.
+  TEST_ASSERT_TRUE(goodBishop > badBishop);
+}
+
+// ===========================================================================
+// Rook behind passer (Tarrasch Rule) — EG only
+// ===========================================================================
+
+// A rook placed behind its own passed pawn should score higher than
+// a rook in front of the passer on the same file.
+static void test_eval_rook_behind_passer(void) {
+  // Endgame position (K+R+P vs K — phase ≤ 6).
+  // Rook behind own passed pawn: Rd2 behind passer on d5 (same file).
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "d2");
+  placePiece(bb, mailbox, Piece::W_PAWN, "d5");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  int behind = eval::evaluatePosition(bb);
+
+  // Same material, rook in FRONT of the passer on d6 (same file, no bonus).
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "d6");
+  placePiece(bb, mailbox, Piece::W_PAWN, "d5");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  int inFront = eval::evaluatePosition(bb);
+
+  // Rook behind passer should get EG bonus → score higher.
+  TEST_ASSERT_TRUE(behind > inFront);
+}
+
+// ===========================================================================
+// Protected passer — passed pawn defended by another pawn
+// ===========================================================================
+
+// A passed pawn defended by a friendly pawn should score higher than
+// an undefended passed pawn.
+static void test_eval_protected_passer(void) {
+  // Protected: passer on d5, defender on c4.
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "d5");
+  placePiece(bb, mailbox, Piece::W_PAWN, "c4");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  int protectedScore = eval::evaluatePosition(bb);
+
+  // Unprotected: passer on d5, second pawn far away (a2).
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "d5");
+  placePiece(bb, mailbox, Piece::W_PAWN, "a2");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  int unprotectedScore = eval::evaluatePosition(bb);
+
+  // Protected passer should score higher.
+  TEST_ASSERT_TRUE(protectedScore > unprotectedScore);
+}
+
+// ===========================================================================
+// Candidate passer — one enemy blocker in the passed mask
+// ===========================================================================
+
+// A pawn with exactly one enemy blocker (candidate passer) should score
+// higher than a pawn with two enemy blockers (non-candidate).
+static void test_eval_candidate_passer(void) {
+  // Candidate: white pawn d4, one black blocker on e5.
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "d4");
+  placePiece(bb, mailbox, Piece::B_PAWN, "e5");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  int candidateScore = eval::evaluatePosition(bb);
+
+  // Non-candidate: white pawn d4, two black blockers on d5 and e5.
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_PAWN, "d4");
+  placePiece(bb, mailbox, Piece::B_PAWN, "d5");
+  placePiece(bb, mailbox, Piece::B_PAWN, "e5");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  int nonCandidateScore = eval::evaluatePosition(bb);
+
+  // Candidate passer gets bonus → should score higher.
+  TEST_ASSERT_TRUE(candidateScore > nonCandidateScore);
+}
+
+// ===========================================================================
+// Opposite-color bishop scaling — 25% reduction in endgame
+// ===========================================================================
+
+// In an endgame with opposite-color bishops, the leading side's advantage
+// should be reduced compared to the same position with same-color bishops.
+static void test_eval_opposite_color_bishops_scaling(void) {
+  // OCB endgame: White B on c1 (dark), Black B on c8 (light), white +1P.
+  // Phase = B(3) + B(3) = 6, so phase <= 6 triggers OCB scaling.
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "c1");  // dark square
+  placePiece(bb, mailbox, Piece::W_PAWN, "d4");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_BISHOP, "c8");  // light square
+  int ocbScore = eval::evaluatePosition(bb);
+
+  // Same-color bishops: White B c1 (dark), Black B a3 (dark).
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "c1");  // dark square
+  placePiece(bb, mailbox, Piece::W_PAWN, "d4");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_BISHOP, "a3");  // dark square
+  int sameCBScore = eval::evaluatePosition(bb);
+
+  // Both should be positive (white has material advantage), but OCB
+  // should be scaled down (×0.75) so has a smaller advantage.
+  TEST_ASSERT_TRUE(ocbScore > 0);
+  TEST_ASSERT_TRUE(sameCBScore > 0);
+  TEST_ASSERT_TRUE(ocbScore < sameCBScore);
+}
+
+// ===========================================================================
 // Registration
 // ===========================================================================
 
@@ -890,8 +1153,8 @@ void register_evaluation_tests() {
   RUN_TEST(test_eval_center_pawn_occupation);
   RUN_TEST(test_eval_center_pawn_attack);
 
-  // King tropism
-  RUN_TEST(test_eval_king_tropism_close_piece);
+  // King danger
+  RUN_TEST(test_eval_king_danger_close_piece);
 
   // Space
   RUN_TEST(test_eval_space_more_territory);
@@ -917,4 +1180,28 @@ void register_evaluation_tests() {
   RUN_TEST(test_eval_hash_store_and_probe);
   RUN_TEST(test_eval_hash_clear_invalidates);
   RUN_TEST(test_eval_hash_overwrite);
+
+  // Rank-based passed pawn scoring
+  RUN_TEST(test_eval_passed_pawn_rank_scaling);
+  RUN_TEST(test_eval_passed_pawn_king_distance);
+
+  // King danger (continued)
+  RUN_TEST(test_eval_king_danger_multiple_attackers);
+  RUN_TEST(test_eval_king_danger_no_attackers);
+
+  // Mobility MG/EG split
+  RUN_TEST(test_eval_mobility_mg_eg_split);
+
+  // Bad bishop
+  RUN_TEST(test_eval_bad_bishop);
+
+  // Rook behind passer (Tarrasch Rule)
+  RUN_TEST(test_eval_rook_behind_passer);
+
+  // Protected / candidate passer
+  RUN_TEST(test_eval_protected_passer);
+  RUN_TEST(test_eval_candidate_passer);
+
+  // Opposite-color bishop scaling
+  RUN_TEST(test_eval_opposite_color_bishops_scaling);
 }

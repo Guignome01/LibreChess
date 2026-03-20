@@ -142,28 +142,26 @@ Features from the [Chess Programming Wiki](https://www.chessprogramming.org/Main
 | Feature | Status | Description | Reference |
 |---------|--------|-------------|-----------|
 | Singular Extensions | Not implemented | Extend search for moves that are significantly better than all alternatives at a node. Requires a verification re-search per node, making it the most compute-intensive search enhancement. | [CPW — Singular Extensions](https://www.chessprogramming.org/Singular_Extensions) |
-| Reverse Futility Pruning | Not implemented | Static pruning: if the static eval minus a margin already exceeds beta, prune the node. Complementary to razoring (which handles the alpha side). | [CPW — Reverse Futility Pruning](https://www.chessprogramming.org/Reverse_Futility_Pruning) |
+| Reverse Futility Pruning | Implemented | Static pruning: if staticEval - RFP_MARGIN*depth/(1+improving) >= beta at depth ≤ 6, prune the node. Margin halved when position is improving. | [CPW — Reverse Futility Pruning](https://www.chessprogramming.org/Reverse_Futility_Pruning) |
 | ProbCut | Not implemented | Uses a shallow search with reduced bounds to predict whether a deeper search would cause a beta cutoff. | [CPW — ProbCut](https://www.chessprogramming.org/ProbCut) |
 | Staged Move Generation | Not implemented | Generate moves lazily (TT move first, then captures, then quiets) instead of generating all moves upfront. Saves move generation work when early moves cause cutoffs. | [CPW — Move Generation](https://www.chessprogramming.org/Move_Generation#Staged_Move_Generation) |
-| History-Informed LMR | Partial | LMR currently uses fixed reduction values. More aggressive reductions could be applied to moves with poor history scores. | [CPW — Late Move Reductions](https://www.chessprogramming.org/Late_Move_Reductions) |
+| History-Informed LMR | Implemented | Logarithmic LMR table (`LMR_TABLE[depth][moveIndex]` via `0.75 + ln(d)*ln(m)/2.5`) with history adjustments (hist < -500 → +1, hist > 1500 → -1) and improving flag (+1 when not improving). | [CPW — Late Move Reductions](https://www.chessprogramming.org/Late_Move_Reductions) |
 | Continuation History | Not implemented | Two-ply history heuristic (previous move + current move) for better quiet move ordering. | [CPW — Continuation History](https://www.chessprogramming.org/History_Heuristic#Continuation_History) |
 
 ### Evaluation
 
 | Feature | Status | Description | Reference |
 |---------|--------|-------------|-----------|
-| King Danger / Attack Units | Not implemented | Accumulate attack units from pieces attacking the king zone, index into a safety table for a non-linear penalty. Much stronger than the current pawn-shield-only king safety. | [CPW — King Safety](https://www.chessprogramming.org/King_Safety#Attack_Units) |
-| Passed Pawn King Distance | Not implemented | Bonus/penalty based on king proximity to passed pawns in the endgame. Critical for accurate endgame evaluation. | [CPW — Passed Pawn](https://www.chessprogramming.org/Passed_Pawn#King_Distance) |
-| Endgame PSTs for All Pieces | Partial | Only king and pawn have separate MG/EG piece-square tables. Other pieces use shared PSTs across all game phases. | [CPW — Piece-Square Tables](https://www.chessprogramming.org/Piece-Square_Tables) |
-| Threats | Not implemented | Bonus for attacking higher-value enemy pieces with lower-value friendly pieces (e.g., pawn attacking a knight). | [CPW — Threats](https://www.chessprogramming.org/Evaluation#Threats) |
+| Endgame PSTs for All Pieces | Implemented | All six piece types have separate MG and EG piece-square tables. Knight EG favors support squares, bishop EG favors long diagonals, rook EG has heavy 7th rank bonus, queen EG favors central activity. | [CPW — Piece-Square Tables](https://www.chessprogramming.org/Piece-Square_Tables) |
+| Threats | Implemented | MG/EG bonus for attacking higher-value enemy pieces with lower-value friendly pieces — pawn→minor, pawn→rook, pawn→queen, minor→rook, minor→queen, rook→queen. Uses `AttackInfo.byPiece` intersection with enemy piece bitboards. | [CPW — Threats](https://www.chessprogramming.org/Evaluation#Threats) |
 
 ### Testing
 
 | Feature | Status | Description | Reference |
 |---------|--------|-------------|-----------|
-| Tactical Test Suites | Not implemented | Standard benchmark suites (Win At Chess, Eigenmann, ECM) to validate tactical strength and catch regressions. | [CPW — Test Positions](https://www.chessprogramming.org/Test-Positions) |
-| NPS Benchmarks | Not implemented | Nodes-per-second measurement under standardized conditions to track search performance over time. | [CPW — Nodes per Second](https://www.chessprogramming.org/Nodes_per_Second) |
-| Evaluation Regression Tests | Not implemented | Fixed-position score comparisons to detect unintended eval changes across code modifications. | — |
+| Tactical Test Suites | Implemented | WAC, BK, ERET benchmark suites with EPD parser. Time-only mode (500ms/position). | [CPW — Test Positions](https://www.chessprogramming.org/Test-Positions) |
+| NPS Benchmarks | Implemented | Nodes-per-second measurement across 6 standard positions (opening, middlegame, endgame, tactical). 1 second per position. Informational — no hard thresholds. `test/test_benchmarks/test_nps.cpp`. | [CPW — Nodes per Second](https://www.chessprogramming.org/Nodes_per_Second) |
+| Evaluation Regression Tests | Implemented | 12 fixed-position score assertions covering symmetry, material advantage, pawn structure, bishop pair, king safety, threats, phase tapering. `test/test_core/test_eval_regression.cpp`. | — |
 
 ## References
 

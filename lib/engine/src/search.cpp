@@ -1,5 +1,7 @@
 #include "search.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <memory>
 
@@ -72,18 +74,33 @@ void TranspositionTable::store(uint64_t hash, int score, Move bestMove,
                                int depth, TTFlag flag) {
   if (!entries) return;
   int index = static_cast<int>(hash & mask);
+  uint32_t key32 = static_cast<uint32_t>(hash >> 32);
   TTEntry& e = entries[index];
-  e.key32    = static_cast<uint32_t>(hash >> 32);
-  e.score    = static_cast<int16_t>(score);
-  e.bestMove = packMove(bestMove);
-  e.depth    = static_cast<int8_t>(depth);
-  e.flag     = flag;
+
+  // Depth-preferred replacement with generation awareness.
+  // Reference: https://www.chessprogramming.org/Replacement_Strategy
+  bool replace = (e.key32 == 0 && e.depth == 0)    // empty slot
+              || (e.key32 == key32)                 // same position (update)
+              || (e.generation != generation)       // stale entry from old search
+              || (flag == TTFlag::EXACT)             // exact scores always preferred
+              || (depth >= e.depth);                 // deeper search preferred
+  if (!replace) return;
+
+  e.key32      = key32;
+  e.score      = static_cast<int16_t>(score);
+  e.bestMove   = packMove(bestMove);
+  e.depth      = static_cast<int8_t>(depth);
+  e.flag       = flag;
+  e.generation = generation;
 }
 
 void SearchState::clearHeuristics() {
   std::memset(killers, 0, sizeof(killers));
   std::memset(history, 0, sizeof(history));
+  std::memset(captureHistory, 0, sizeof(captureHistory));
   std::memset(countermoves, 0, sizeof(countermoves));
+  std::memset(staticEvals, 0, sizeof(staticEvals));
+  std::memset(pvLength, 0, sizeof(pvLength));
 }
 
 namespace {
@@ -109,18 +126,42 @@ static constexpr int NMP_DEPTH_THRESHOLD = 3;
 static constexpr int NMP_REDUCTION       = 3;
 
 // ---------------------------------------------------------------------------
-// Late Move Reduction constants.
+// Late Move Reduction constants and logarithmic reduction table.
 //
 // LMR_FULL_DEPTH_MOVES: number of moves searched at full depth before
 // applying reductions.  The first few moves (TT, captures, killers) are
 // searched at full depth; later quiet moves get reduced.
 // LMR_DEPTH_THRESHOLD: minimum remaining depth to apply LMR.
 //
-// Reference: https://www.chessprogramming.org/Late_Move_Reductions
+// LMR_TABLE: precomputed base reduction indexed by [depth][moveIndex].
+// Formula: max(1, int(0.75 + ln(depth) * ln(moveIndex) / 2.5)).
+// History, improving, and clamp adjustments are applied on top.
+//
+// Reference:
+//   https://www.chessprogramming.org/Late_Move_Reductions
+//   https://www.chessprogramming.org/Late_Move_Reductions#Base_Reduction
 // ---------------------------------------------------------------------------
 
 static constexpr int LMR_FULL_DEPTH_MOVES = 4;
 static constexpr int LMR_DEPTH_THRESHOLD  = 3;
+static constexpr int LMR_MAX_MOVES        = 64;
+
+static int LMR_TABLE[MAX_PLY][LMR_MAX_MOVES];
+static bool lmrInitialized = false;
+
+static void initLMR() {
+  if (lmrInitialized) return;
+  for (int d = 0; d < MAX_PLY; ++d) {
+    for (int m = 0; m < LMR_MAX_MOVES; ++m) {
+      if (d == 0 || m == 0)
+        LMR_TABLE[d][m] = 0;
+      else
+        LMR_TABLE[d][m] = std::max(
+            1, static_cast<int>(0.75 + std::log(d) * std::log(m) / 2.5));
+    }
+  }
+  lmrInitialized = true;
+}
 
 // ---------------------------------------------------------------------------
 // Aspiration window constants.
@@ -200,6 +241,20 @@ static constexpr int LMP_THRESHOLD[] = {0, 5, 12, 20};  // indexed by depth
 static constexpr int RAZOR_MARGIN[] = {0, 300, 500};  // indexed by depth
 
 // ---------------------------------------------------------------------------
+// Reverse Futility Pruning (Static Null Move Pruning) margin.
+//
+// At shallow depths in non-PV, non-check nodes, if the static eval minus
+// a depth-dependent margin still exceeds beta, the position is so strong
+// that searching moves is unnecessary — prune the entire subtree.
+//
+// RFP_MARGIN: centipawns per depth.  E.g. at depth 3: need eval >= beta+360.
+//
+// Reference: https://www.chessprogramming.org/Reverse_Futility_Pruning
+// ---------------------------------------------------------------------------
+
+static constexpr int RFP_MARGIN = 120;  // per depth
+
+// ---------------------------------------------------------------------------
 // Internal Iterative Deepening (IID) constants.
 //
 // At PV nodes without a TT move, move ordering is essentially blind —
@@ -216,6 +271,26 @@ static constexpr int RAZOR_MARGIN[] = {0, 300, 500};  // indexed by depth
 
 static constexpr int IID_DEPTH_THRESHOLD = 4;
 static constexpr int IID_REDUCTION       = 2;
+
+// ---------------------------------------------------------------------------
+// Singular Extensions constants.
+//
+// At nodes where the TT move appears significantly better than all
+// alternatives, extend its search by one ply.  Detects "singular" moves
+// via a reduced-depth exclusion search: search all moves except the TT
+// move at reduced depth with a narrow window around ttScore - margin.
+// If nothing beats that threshold, the TT move is singular and extended.
+//
+// SE_DEPTH_THRESHOLD: minimum remaining depth to trigger SE (shallow
+// nodes don't need the overhead of an extra search).
+// SE_MARGIN_SCALE: margin = SE_MARGIN_SCALE * depth (scales with depth).
+// SE_REDUCTION: depth reduction for the exclusion search (depth / 2).
+//
+// Reference: https://www.chessprogramming.org/Singular_Extensions
+// ---------------------------------------------------------------------------
+
+static constexpr int SE_DEPTH_THRESHOLD = 6;
+static constexpr int SE_MARGIN_SCALE    = 2;  // singularBeta = ttScore - 2*depth
 
 // ---------------------------------------------------------------------------
 // Lazy Evaluation margin.
@@ -272,130 +347,387 @@ inline int scoreFromTT(int score, int ply) {
 }
 
 // ---------------------------------------------------------------------------
-// Move ordering — MVV-LVA, TT move, killers, history.
+// Move ordering — staged move generation via MovePicker.
 //
-// Score priority bands (highest first):
-//   TT move:        30000
-//   Good captures:  10000 + MVV-LVA (victim*16 - attacker)   [SEE >= 0]
-//   Killer 1:        9000
-//   Killer 2:        8000
+// Instead of generating all legal moves upfront and scoring them, moves are
+// produced in priority stages.  If an early stage (TT move, good capture)
+// causes a beta cutoff, later stages (killers, quiets, bad captures) are
+// skipped entirely — saving the cost of generating and scoring them.
+//
+// Stage pipeline:
+//   TT_MOVE → INIT_CAPTURES → GOOD_CAPTURES → KILLERS → COUNTERMOVE →
+//   INIT_QUIETS → QUIETS → BAD_CAPTURES → DONE
+//
+// Score priority bands (within stages):
+//   Good captures:  MVV-LVA (victim*16 - attacker) + captureHistory  [SEE≥0]
 //   Quiets:         history[color][from][to]  (0 .. ~7000)
-//   Bad captures:   SEE value (negative)                      [SEE < 0]
-//
-// Losing captures (negative SEE) are demoted below quiet moves so the
-// search tries better alternatives first, improving cutoff rates.
+//   Bad captures:   SEE value (negative)                              [SEE<0]
 //
 // References:
 //   https://www.chessprogramming.org/Move_Ordering
+//   https://www.chessprogramming.org/Move_Ordering#Staged_Move_Generation
 //   https://www.chessprogramming.org/MVV-LVA
 //   https://www.chessprogramming.org/Killer_Move
 //   https://www.chessprogramming.org/History_Heuristic
 //   https://www.chessprogramming.org/Static_Exchange_Evaluation
 // ---------------------------------------------------------------------------
 
-static constexpr int SCORE_TT_MOVE  = 30000;
-static constexpr int SCORE_CAPTURE  = 10000;
-static constexpr int SCORE_KILLER_1 = 9000;
-static constexpr int SCORE_KILLER_2 = 8000;
-
-// Countermove: quiet move that previously caused a beta cutoff in response
-// to the opponent's last (piece, toSquare).  Ranked between killers and
-// history for move ordering.
-// Reference: https://www.chessprogramming.org/Countermove_Heuristic
-static constexpr int SCORE_COUNTERMOVE = 7500;
-
 // Simple piece value for MVV-LVA (indexed by PieceType).
 // PieceType: NONE=0, PAWN=1, KNIGHT=2, BISHOP=3, ROOK=4, QUEEN=5, KING=6.
 static constexpr int MVV_LVA_VALUE[] = {0, 1, 3, 3, 5, 9, 0};
 
-// Assign ordering scores to all moves in the list.
-// Uses a parallel `scores[]` array (caller must provide MAX_MOVES capacity).
-// `prevPiece` and `prevTo` describe the opponent's last move (for countermove
-// lookup).  Pass prevPiece=Piece::NONE at the root (no previous move).
-void assignScores(const MoveList& moves, int scores[],
-                  const BitboardSet& bb, const Piece mailbox[], Move ttMove,
-                  int ply, Color side, const SearchState& state,
-                  Piece prevPiece, int prevTo) {
-  uint8_t c = raw(side);
+// Sentinel SEE value — move has no precomputed SEE.
+static constexpr int SEE_NOT_COMPUTED = -32000;
 
-  // Look up the countermove for the opponent's last (piece, toSquare).
-  // A countermove of 0 (default) means no countermove recorded.
-  PackedMove counterPM = 0;
-  if (!isEmpty(prevPiece)) {
-    int idx = pieceZobristIndex(prevPiece);
-    if (idx >= 0) counterPM = state.countermoves[idx][prevTo];
-  }
-  Move counterMove = unpackMove(counterPM);
-
-  for (int i = 0; i < moves.count; ++i) {
-    const Move& m = moves.moves[i];
-
-    // TT move — highest priority
-    if (m.from == ttMove.from && m.to == ttMove.to &&
-        m.flags == ttMove.flags) {
-      scores[i] = SCORE_TT_MOVE;
-      continue;
-    }
-
-    // Captures — MVV-LVA with SEE demotion for losing captures.
-    // Good captures (SEE >= 0) are scored in the SCORE_CAPTURE band.
-    // Bad captures (SEE < 0) are scored negative, below all quiet moves.
-    if (m.isCapture()) {
-      int seeScore = attacks::see(bb, mailbox, m);
-      if (seeScore >= 0) {
-        PieceType victim   = pieceType(mailbox[m.to]);
-        PieceType attacker = pieceType(mailbox[m.from]);
-        if (m.isEP()) victim = PieceType::PAWN;
-        scores[i] = SCORE_CAPTURE +
-                    MVV_LVA_VALUE[raw(victim)] * 16 -
-                    MVV_LVA_VALUE[raw(attacker)];
-      } else {
-        // Losing capture — sort below quiets (negative score).
-        scores[i] = seeScore;
-      }
-      continue;
-    }
-
-    // Killer moves
-    if (m == state.killers[ply][0]) {
-      scores[i] = SCORE_KILLER_1;
-      continue;
-    }
-    if (m == state.killers[ply][1]) {
-      scores[i] = SCORE_KILLER_2;
-      continue;
-    }
-
-    // Countermove — the quiet move that previously refuted the opponent's
-    // last move.  Ranked between killers and history.
-    if (counterPM != 0 &&
-        m.from == counterMove.from && m.to == counterMove.to &&
-        m.flags == counterMove.flags) {
-      scores[i] = SCORE_COUNTERMOVE;
-      continue;
-    }
-
-    // Quiets — history heuristic
-    scores[i] = state.history[c][m.from][m.to];
-  }
+// Validate that a Move struct represents a legal move in the given position.
+// Used by MovePicker to validate TT, killer, and countermove candidates.
+static bool isMoveValid(const BitboardSet& bb, const Piece mailbox[],
+                        const Move& m, const PositionState& state) {
+  return movegen::isValidMove(bb, mailbox,
+      rowOf(m.from), colOf(m.from), rowOf(m.to), colOf(m.to), state);
 }
 
-// Partial selection sort: find the best-scored move in [start, count) and
-// swap it to position `start`.
-inline void pickBest(MoveList& moves, int scores[], int start) {
+// Partial selection sort: find the best-scored move in [start, end) and
+// swap it to position `start`.  If `seeCache` is non-null, its entries are
+// swapped in parallel (keeps SEE values aligned with their moves).
+inline void pickBestInRange(Move moves[], int scores[], int start, int end,
+                            int seeCache[] = nullptr) {
   int bestIdx = start;
-  for (int i = start + 1; i < moves.count; ++i) {
+  for (int i = start + 1; i < end; ++i) {
     if (scores[i] > scores[bestIdx]) bestIdx = i;
   }
   if (bestIdx != start) {
-    Move tmpM = moves.moves[start];
-    moves.moves[start] = moves.moves[bestIdx];
-    moves.moves[bestIdx] = tmpM;
+    Move tmpM = moves[start];
+    moves[start] = moves[bestIdx];
+    moves[bestIdx] = tmpM;
     int tmpS = scores[start];
     scores[start] = scores[bestIdx];
     scores[bestIdx] = tmpS;
+    if (seeCache) {
+      int tmpSee = seeCache[start];
+      seeCache[start] = seeCache[bestIdx];
+      seeCache[bestIdx] = tmpSee;
+    }
   }
 }
+
+// Convenience: pick best in [start, moves.count).
+inline void pickBest(MoveList& moves, int scores[], int start,
+                    int seeCache[] = nullptr) {
+  pickBestInRange(moves.moves, scores, start, moves.count, seeCache);
+}
+
+// ---------------------------------------------------------------------------
+// MovePicker — staged move generation for the negamax search.
+//
+// Lazily generates moves in priority order so that a beta cutoff from a
+// high-priority move (TT, good capture) avoids the cost of generating
+// lower-priority moves (quiets).  Captures and quiets share a single
+// MoveList to minimise per-frame stack usage:
+//
+//   moves[0, totalCaps)       — captures (good in front, bad in back)
+//   moves[totalCaps, count)   — quiet moves (appended in INIT_QUIETS)
+//
+// Reference: https://www.chessprogramming.org/Move_Ordering#Staged_Move_Generation
+// ---------------------------------------------------------------------------
+
+struct MovePicker {
+  // Pipeline stages — processed in declaration order.
+  enum Stage : uint8_t {
+    STAGE_TT,             // Yield the TT move (validated for legality)
+    STAGE_INIT_CAPTURES,  // Generate + score + partition captures
+    STAGE_GOOD_CAPTURES,  // Yield good captures (SEE >= 0) via pickBest
+    STAGE_KILLERS,        // Yield killer[0], killer[1] if valid quiet
+    STAGE_COUNTERMOVE,    // Yield countermove if valid quiet + not duplicate
+    STAGE_INIT_QUIETS,    // Generate all moves, filter, score with history
+    STAGE_QUIETS,         // Yield quiet moves via pickBest
+    STAGE_BAD_CAPTURES,   // Yield losing captures (SEE < 0)
+    STAGE_DONE            // All stages exhausted
+  };
+
+  Stage stage;
+
+  // Position data (non-owning references, valid for the picker's lifetime).
+  const BitboardSet* bb;
+  const Piece* mailbox;
+  Color side;
+  const PositionState* posState;
+
+  // Search heuristics (non-owning).
+  const SearchState* ss;
+  int ply;
+
+  // Special moves — validated and yielded individually.
+  Move ttMove;
+  Move killer0, killer1, counterMove;
+  bool hasTT, hasCounter;
+
+  // Track which special moves were actually yielded (for duplicate skip).
+  bool ttYielded, killer0Yielded, killer1Yielded, counterYielded;
+  int killerPhase;  // 0 = try killer0, 1 = try killer1
+
+  // Shared move storage:
+  //   [0, goodCapCount)           — good captures (SEE >= 0)
+  //   [goodCapCount, totalCaps)   — bad captures  (SEE < 0)
+  //   [totalCaps, moves.count)    — quiet moves
+  MoveList moves;
+  int scores[MAX_MOVES];
+  int seeValues[MAX_MOVES];
+  int totalCaps;     // total captures generated
+  int goodCapCount;  // good captures in [0, goodCapCount)
+  int capIdx;        // next good capture index
+  int badCapIdx;     // next bad capture index
+  int quietIdx;      // next quiet move index
+
+  // SEE of the last move returned (SEE_NOT_COMPUTED for non-captures).
+  int lastSee;
+
+  // -----------------------------------------------------------------------
+  // Initialise the picker for a position.
+  // -----------------------------------------------------------------------
+
+  void init(const BitboardSet& bbRef, const Piece mail[], Color s,
+            const PositionState& ps, const SearchState& ssRef,
+            int p, Move tt, Piece prevPiece, int prevTo) {
+    bb       = &bbRef;
+    mailbox  = mail;
+    side     = s;
+    posState = &ps;
+    ss       = &ssRef;
+    ply      = p;
+
+    ttMove = tt;
+    hasTT  = (tt.from != 0 || tt.to != 0);
+
+    killer0 = ssRef.killers[p][0];
+    killer1 = ssRef.killers[p][1];
+
+    hasCounter = false;
+    if (!isEmpty(prevPiece)) {
+      int idx = pieceZobristIndex(prevPiece);
+      if (idx >= 0) {
+        PackedMove cpm = ssRef.countermoves[idx][prevTo];
+        if (cpm != 0) {
+          counterMove = unpackMove(cpm);
+          hasCounter  = true;
+        }
+      }
+    }
+
+    stage        = STAGE_TT;
+    killerPhase  = 0;
+    capIdx       = 0;
+    badCapIdx    = 0;
+    goodCapCount = 0;
+    totalCaps    = 0;
+    quietIdx     = 0;
+    moves.count  = 0;
+    lastSee      = SEE_NOT_COMPUTED;
+    ttYielded    = false;
+    killer0Yielded  = false;
+    killer1Yielded  = false;
+    counterYielded  = false;
+  }
+
+  // -----------------------------------------------------------------------
+  // Return the next move in priority order.
+  // Returns Move() (from=to=flags=0) when all stages are exhausted.
+  // Sets `lastSee` to the SEE value for captures, SEE_NOT_COMPUTED otherwise.
+  // -----------------------------------------------------------------------
+
+  Move next() {
+    while (stage != STAGE_DONE) {
+      switch (stage) {
+
+        // --- TT move: highest priority, validated for legality ----------
+        case STAGE_TT:
+          stage = STAGE_INIT_CAPTURES;
+          if (hasTT && isMoveValid(*bb, mailbox, ttMove, *posState)) {
+            lastSee = SEE_NOT_COMPUTED;
+            ttYielded = true;
+            return ttMove;
+          }
+          continue;
+
+        // --- Generate + score + partition captures ----------------------
+        case STAGE_INIT_CAPTURES:
+          initCaptures();
+          capIdx = 0;
+          stage = STAGE_GOOD_CAPTURES;
+          continue;
+
+        // --- Good captures (SEE >= 0) via pickBest ----------------------
+        case STAGE_GOOD_CAPTURES:
+          while (capIdx < goodCapCount) {
+            pickBestInRange(moves.moves, scores, capIdx, goodCapCount,
+                            seeValues);
+            Move m   = moves.moves[capIdx];
+            int  see = seeValues[capIdx];
+            ++capIdx;
+            if (ttYielded && m == ttMove) continue;
+            lastSee = see;
+            return m;
+          }
+          killerPhase = 0;
+          stage = STAGE_KILLERS;
+          continue;
+
+        // --- Killer moves (quiet, not duplicate) ------------------------
+        case STAGE_KILLERS:
+          while (killerPhase < 2) {
+            Move km = (killerPhase == 0) ? killer0 : killer1;
+            ++killerPhase;
+            // Skip null/empty killers
+            if (km.from == 0 && km.to == 0) continue;
+            // Skip if same as TT move
+            if (ttYielded && km == ttMove) continue;
+            // Skip if this is a capture in the current position
+            if (mailbox[km.to] != Piece::NONE) continue;
+            // Validate legality
+            if (!isMoveValid(*bb, mailbox, km, *posState)) continue;
+            lastSee = SEE_NOT_COMPUTED;
+            if (killerPhase == 1)
+              killer0Yielded = true;
+            else
+              killer1Yielded = true;
+            return km;
+          }
+          stage = STAGE_COUNTERMOVE;
+          continue;
+
+        // --- Countermove (quiet, not duplicate) -------------------------
+        case STAGE_COUNTERMOVE:
+          stage = STAGE_INIT_QUIETS;
+          if (hasCounter) {
+            const Move& cm = counterMove;
+            if (!(ttYielded && cm == ttMove) &&
+                !(killer0Yielded && cm == killer0) &&
+                !(killer1Yielded && cm == killer1) &&
+                cm.from != 0 && // not null
+                mailbox[cm.to] == Piece::NONE &&
+                isMoveValid(*bb, mailbox, cm, *posState)) {
+              lastSee = SEE_NOT_COMPUTED;
+              counterYielded = true;
+              return cm;
+            }
+          }
+          continue;
+
+        // --- Generate quiet moves: all moves minus captures/specials ----
+        case STAGE_INIT_QUIETS:
+          initQuiets();
+          stage = STAGE_QUIETS;
+          continue;
+
+        // --- Quiet moves via pickBest -----------------------------------
+        case STAGE_QUIETS:
+          while (quietIdx < moves.count) {
+            pickBestInRange(moves.moves, scores, quietIdx, moves.count);
+            Move m = moves.moves[quietIdx];
+            ++quietIdx;
+            // Skip duplicates of earlier stages
+            if (ttYielded && m == ttMove) continue;
+            if (killer0Yielded && m == killer0) continue;
+            if (killer1Yielded && m == killer1) continue;
+            if (counterYielded && m == counterMove) continue;
+            lastSee = SEE_NOT_COMPUTED;
+            return m;
+          }
+          badCapIdx = goodCapCount;
+          stage = STAGE_BAD_CAPTURES;
+          continue;
+
+        // --- Bad captures (SEE < 0) ------------------------------------
+        case STAGE_BAD_CAPTURES:
+          while (badCapIdx < totalCaps) {
+            pickBestInRange(moves.moves, scores, badCapIdx, totalCaps,
+                            seeValues);
+            Move m   = moves.moves[badCapIdx];
+            int  see = seeValues[badCapIdx];
+            ++badCapIdx;
+            if (ttYielded && m == ttMove) continue;
+            lastSee = see;
+            return m;
+          }
+          stage = STAGE_DONE;
+          continue;
+
+        case STAGE_DONE:
+          break;
+      }
+    }
+    lastSee = SEE_NOT_COMPUTED;
+    return Move();
+  }
+
+private:
+  // -----------------------------------------------------------------------
+  // Generate captures, score with MVV-LVA + SEE + captureHistory, and
+  // partition into good (front) and bad (back).
+  // -----------------------------------------------------------------------
+
+  void initCaptures() {
+    movegen::generateCaptures(*bb, mailbox, side, *posState, moves);
+    totalCaps = moves.count;
+
+    for (int i = 0; i < totalCaps; ++i) {
+      const Move& m = moves.moves[i];
+      int seeVal = attacks::see(*bb, mailbox, m);
+      seeValues[i] = seeVal;
+
+      if (seeVal >= 0) {
+        PieceType victim   = m.isEP() ? PieceType::PAWN
+                                      : pieceType(mailbox[m.to]);
+        PieceType attacker = pieceType(mailbox[m.from]);
+        int mvvlva = MVV_LVA_VALUE[raw(victim)] * 16 -
+                     MVV_LVA_VALUE[raw(attacker)];
+        int capHistIdx = pieceZobristIndex(mailbox[m.from]);
+        int capHist = (capHistIdx >= 0)
+                          ? ss->captureHistory[capHistIdx][m.to]
+                          : 0;
+        scores[i] = mvvlva + capHist / 16;
+      } else {
+        scores[i] = seeVal;  // negative — sorted below all other moves
+      }
+    }
+
+    // Partition: good captures to [0, goodCapCount), bad to the rest.
+    goodCapCount = 0;
+    for (int i = 0; i < totalCaps; ++i) {
+      if (seeValues[i] >= 0) {
+        if (i != goodCapCount) {
+          std::swap(moves.moves[i], moves.moves[goodCapCount]);
+          std::swap(scores[i], scores[goodCapCount]);
+          std::swap(seeValues[i], seeValues[goodCapCount]);
+        }
+        ++goodCapCount;
+      }
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Generate all legal moves, filter out captures (already handled) and
+  // append the remaining quiet moves after the captures section.
+  // Score quiets with the history heuristic.
+  // -----------------------------------------------------------------------
+
+  void initQuiets() {
+    MoveList allMoves;
+    movegen::generateAllMoves(*bb, mailbox, side, *posState, allMoves);
+
+    uint8_t c = raw(side);
+    for (int i = 0; i < allMoves.count; ++i) {
+      const Move& m = allMoves.moves[i];
+      if (m.isCapture()) continue;  // already in capture stages
+      int idx = moves.count;
+      moves.moves[idx] = m;
+      scores[idx] = ss->history[c][m.from][m.to];
+      seeValues[idx] = SEE_NOT_COMPUTED;
+      ++moves.count;
+    }
+    quietIdx = totalCaps;
+  }
+};
 
 // Update killer moves: slot the new killer into position 0, shifting the
 // old one to position 1.  Avoids duplicates.
@@ -406,14 +738,19 @@ inline void updateKillers(Move m, int ply, SearchState& state) {
   }
 }
 
-// History heuristic depth bonus — deeper cutoffs get more weight.
+// History heuristic with gravity — deeper cutoffs get more weight,
+// but scores decay toward zero as they approach the cap.  The gravity
+// formula prevents bias: multiple small penalties don't permanently
+// push scores to -MAX.
+//
+// Unified for both bonus (beta cutoff, positive) and penalty (non-cutoff
+// quiet moves, negative).  Formula: h += bonus − h × |bonus| / MAX.
+//
+// Reference: https://www.chessprogramming.org/History_Heuristic#History_Gravity
 static constexpr int HISTORY_MAX = 7000;
 
-inline void updateHistory(Move m, int depth, Color side, SearchState& state) {
-  int bonus = depth * depth;
-  int16_t& h = state.history[raw(side)][m.from][m.to];
-  h += bonus;
-  if (h > HISTORY_MAX) h = HISTORY_MAX;
+inline void updateHistory(int16_t& h, int bonus) {
+  h += bonus - h * (bonus < 0 ? -bonus : bonus) / HISTORY_MAX;
 }
 
 // ---------------------------------------------------------------------------
@@ -496,8 +833,11 @@ int quiescence(Position& pos, int alpha, int beta, SearchState& state) {
   if (state.stopped) return 0;
 
   // Standing pat — assume we can do at least as well as the static eval.
+  // Fail-soft: track bestScore separately from alpha so TT gets accurate
+  // scores.  Reference: https://www.chessprogramming.org/Fail-Soft
   int standPat = evaluate(pos, state);
-  if (standPat >= beta) return beta;
+  if (standPat >= beta) return standPat;
+  int bestScore = standPat;
   if (standPat > alpha) alpha = standPat;
 
   // Generate capture moves only
@@ -505,7 +845,22 @@ int quiescence(Position& pos, int alpha, int beta, SearchState& state) {
   movegen::generateCaptures(pos.bitboards(), pos.mailbox(),
                             pos.sideToMove(), pos.positionState(), captures);
 
+  // --- MVV-LVA ordering for captures ---
+  // Score captures by Most Valuable Victim − Least Valuable Aggressor so
+  // the best trades are tried first, improving beta-cutoff rates.
+  // Reference: https://www.chessprogramming.org/MVV-LVA
+  int capScores[MAX_MOVES];
+  for (int j = 0; j < captures.count; ++j) {
+    const Move& cm = captures.moves[j];
+    PieceType victim   = cm.isEP() ? PieceType::PAWN
+                                   : pieceType(pos.mailbox()[cm.to]);
+    PieceType attacker = pieceType(pos.mailbox()[cm.from]);
+    capScores[j] = MVV_LVA_VALUE[raw(victim)] * 16 -
+                   MVV_LVA_VALUE[raw(attacker)];
+  }
+
   for (int i = 0; i < captures.count; ++i) {
+    pickBest(captures, capScores, i);
     Move m = captures.moves[i];
 
     // --- Delta Pruning ---
@@ -530,11 +885,12 @@ int quiescence(Position& pos, int alpha, int beta, SearchState& state) {
 
     if (state.stopped) return 0;
 
-    if (score >= beta) return beta;
+    if (score > bestScore) bestScore = score;
+    if (score >= beta) return score;
     if (score > alpha) alpha = score;
   }
 
-  return alpha;
+  return bestScore;
 }
 
 // ---------------------------------------------------------------------------
@@ -552,8 +908,10 @@ int quiescence(Position& pos, int alpha, int beta, SearchState& state) {
 // ---------------------------------------------------------------------------
 
 int negamax(Position& pos, int depth, int alpha, int beta,
-            int ply, SearchState& state, Piece prevPiece, int prevTo) {
+            int ply, SearchState& state, Piece prevPiece, int prevTo,
+            Move excludedMove = Move()) {
   state.nodes++;
+  state.pvLength[ply] = 0;  // no PV line yet at this ply
 
   // Periodic time / cancellation check
   if ((state.nodes & (CHECK_INTERVAL - 1)) == 0) state.checkTime();
@@ -562,6 +920,23 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // --- Draw detection ---
   if (ply > 0 && (pos.isRepetition() || pos.isFiftyMoves()))
     return DRAW_SCORE;
+
+  // --- Mate Distance Pruning ---
+  // Tighten the window to the best possible mate from this ply.
+  // If a shorter mate is already guaranteed in another branch, prune.
+  // Reference: https://www.chessprogramming.org/Mate_Distance_Pruning
+  if (ply > 0) {
+    int matingScore = MATE_SCORE - ply;
+    if (matingScore < beta) {
+      beta = matingScore;
+      if (alpha >= beta) return beta;
+    }
+    int matedScore = -MATE_SCORE + ply;
+    if (matedScore > alpha) {
+      alpha = matedScore;
+      if (alpha >= beta) return alpha;
+    }
+  }
 
   // --- Check extension ---
   // When the side to move is in check, extend search by one ply to avoid
@@ -600,6 +975,27 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     staticEval = evaluate(pos, state);
   }
 
+  // Store static eval for the improving heuristic.
+  // In check, store a sentinel so children know this ply had no eval.
+  state.staticEvals[ply] = inCheck ? static_cast<int16_t>(-INF_SCORE)
+                                   : static_cast<int16_t>(staticEval);
+
+  // --- Improving heuristic ---
+  // A position is "improving" if its static eval is higher than the eval
+  // 2 plies ago (our previous move).  Falling back to 4 plies if 2 plies
+  // ago was in check (no eval available).
+  //
+  // Used to adjust aggressiveness of RFP, LMP, and LMR.
+  //
+  // Reference: https://www.chessprogramming.org/Improving
+  bool improving = false;
+  if (!inCheck) {
+    if (ply >= 2 && state.staticEvals[ply - 2] > -INF_SCORE)
+      improving = staticEval > state.staticEvals[ply - 2];
+    else if (ply >= 4 && state.staticEvals[ply - 4] > -INF_SCORE)
+      improving = staticEval > state.staticEvals[ply - 4];
+  }
+
   // --- Razoring ---
   // At shallow depths, if the static eval is far below alpha, the position
   // is unlikely to be rescued by quiet moves.  Fall back to quiescence
@@ -613,16 +1009,36 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     return quiescence(pos, alpha, beta, state);
   }
 
+  // --- Reverse Futility Pruning (Static Null Move Pruning) ---
+  // If the static eval minus a safety margin still exceeds beta, the
+  // position is overwhelmingly good — no move search needed.
+  //
+  // Guards: not PV, not in check, shallow depth (avoids bad pruning deep
+  // in the tree where eval reliability drops).
+  //
+  // Reference: https://www.chessprogramming.org/Reverse_Futility_Pruning
+  if (!pvNode && !inCheck && depth <= 6 &&
+      staticEval - RFP_MARGIN * depth / (1 + improving) >= beta) {
+    return staticEval;
+  }
+
   // --- TT probe ---
   const int origAlpha = alpha;
   Move ttMove;
   ttMove.from = 0;
   ttMove.to = 0;
   ttMove.flags = 0;
+  bool hasExcluded = (excludedMove.from != 0 || excludedMove.to != 0);
+
+  // TT entry pointer retained for singular extension check below.
+  const TTEntry* ttEntry = nullptr;
 
   if (state.tt) {
     const TTEntry* entry = state.tt->probe(pos.hash());
-    if (entry && entry->depth >= depth) {
+    ttEntry = entry;  // save for SE probe
+    // Skip TT cutoffs when inside an exclusion search — we need to
+    // search all non-excluded moves regardless of TT score.
+    if (entry && entry->depth >= depth && !hasExcluded) {
       int ttScore = scoreFromTT(entry->score, ply);
       if (entry->flag == TTFlag::EXACT)
         return ttScore;
@@ -656,6 +1072,38 @@ int negamax(Position& pos, int depth, int alpha, int beta,
       ttMove = unpackMove(iidEntry->bestMove);
   }
 
+  // --- Singular Extensions ---
+  // At non-root, non-check nodes with a reliable TT entry, test whether
+  // the TT move is "singular" — significantly better than all alternatives.
+  // Performs a reduced-depth exclusion search (all moves except the TT
+  // move) with a narrow window.  If nothing reaches singularBeta, the TT
+  // move is singular and gets a one-ply extension.
+  //
+  // Guards:
+  //   - Not at root (ply > 0)
+  //   - Not in check (check extension already applied)
+  //   - Sufficient depth (avoids overhead at shallow nodes)
+  //   - TT available with a reliable entry (depth >= current - 3)
+  //   - TT score is EXACT or LOWER_BOUND (not an upper bound)
+  //   - Not already inside an exclusion search (prevents recursion)
+  //
+  // Reference: https://www.chessprogramming.org/Singular_Extensions
+  int singularExtension = 0;
+  if (ply > 0 && !inCheck && depth >= SE_DEPTH_THRESHOLD && state.tt &&
+      !hasExcluded && ttEntry &&
+      ttEntry->depth >= depth - 3 &&
+      (ttEntry->flag == TTFlag::EXACT ||
+       ttEntry->flag == TTFlag::LOWER_BOUND)) {
+    int ttScore = scoreFromTT(ttEntry->score, ply);
+    int singularBeta = ttScore - SE_MARGIN_SCALE * depth;
+    int halfDepth = depth / 2;
+    int seScore = negamax(pos, halfDepth, singularBeta - 1, singularBeta,
+                          ply, state, prevPiece, prevTo, ttMove);
+    if (seScore < singularBeta) {
+      singularExtension = 1;  // TT move is singular — extend it
+    }
+  }
+
   // --- Null Move Pruning (NMP) ---
   // If the position is so strong that even "passing" (null move) beats
   // beta, we can prune the entire subtree.
@@ -670,9 +1118,18 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // Reference: https://www.chessprogramming.org/Null_Move_Pruning
   if (ply > 0 && depth >= NMP_DEPTH_THRESHOLD && !inCheck &&
       !pvNode && hasNonPawnMaterial(pos)) {
+    // Adaptive reduction: deeper positions get more aggressive pruning,
+    // and a large eval surplus over beta adds further reduction.
+    // Reference: https://www.chessprogramming.org/Null_Move_Pruning#Adaptive
+    int evalSurplus = (staticEval > beta) ? (staticEval - beta) : 0;
+    int evalBonus = evalSurplus / 200;
+    if (evalBonus > 3) evalBonus = 3;
+    int R = NMP_REDUCTION + depth / 4 + evalBonus;
+    if (R > depth - 1) R = depth - 1;
+
     UndoInfo nullUndo = pos.makeNullMove();
     // Zero-window search at reduced depth: just testing if score >= beta.
-    int nullScore = -negamax(pos, depth - 1 - NMP_REDUCTION,
+    int nullScore = -negamax(pos, depth - 1 - R,
                              -beta, -beta + 1, ply + 1, state,
                              Piece::NONE, 0);
     pos.unmakeNullMove(nullUndo);
@@ -685,18 +1142,6 @@ int negamax(Position& pos, int depth, int alpha, int beta,
       // they can be unreliable.  Clamp to beta instead.
       return (nullScore >= MATE_SCORE - MAX_PLY) ? beta : nullScore;
     }
-  }
-
-  // --- Generate all legal moves ---
-  MoveList moves;
-  movegen::generateAllMoves(pos.bitboards(), pos.mailbox(),
-                            pos.sideToMove(), pos.positionState(), moves);
-
-  // No legal moves: checkmate or stalemate
-  if (moves.count == 0) {
-    if (inCheck)
-      return -MATE_SCORE + ply;  // Checkmate — worse the further from root
-    return DRAW_SCORE;            // Stalemate
   }
 
   // --- Futility Pruning setup ---
@@ -713,17 +1158,34 @@ int negamax(Position& pos, int depth, int alpha, int beta,
       futilityPruning = true;
   }
 
-  // --- Move ordering: score and pick-best during iteration ---
-  int scores[MAX_MOVES];
-  assignScores(moves, scores, pos.bitboards(), pos.mailbox(), ttMove,
-               ply, pos.sideToMove(), state, prevPiece, prevTo);
+  // --- Staged move generation via MovePicker ---
+  // Moves are generated lazily in priority order: TT move → good captures
+  // → killers → countermove → quiets → bad captures.  A beta cutoff in an
+  // early stage skips the cost of generating later stages.
+  //
+  // Reference: https://www.chessprogramming.org/Move_Ordering#Staged_Move_Generation
+  MovePicker picker;
+  picker.init(pos.bitboards(), pos.mailbox(), pos.sideToMove(),
+              pos.positionState(), state, ply, ttMove, prevPiece, prevTo);
 
-  Move bestMove = moves.moves[0];
+  Move bestMove;
+  int bestScore = -INF_SCORE;
   int movesSearched = 0;
 
-  for (int i = 0; i < moves.count; ++i) {
-    pickBest(moves, scores, i);
-    Move m = moves.moves[i];
+  // Track quiet moves searched for history gravity (penalize on cutoff).
+  Move quietsSearched[64];
+  int quietCount = 0;
+
+  // Track captures searched for capture history gravity (penalize on cutoff).
+  Move capturesSearched[64];
+  int captureCount = 0;
+
+  while (true) {
+    Move m = picker.next();
+    if (!m.from && !m.to) break;  // all stages exhausted
+
+    // Skip the excluded move during a singular extension exclusion search.
+    if (hasExcluded && m == excludedMove) continue;
 
     // --- Futility Pruning: skip hopeless quiet moves at shallow depth ---
     // Never prune the first move (we need at least one legal move searched)
@@ -739,7 +1201,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     // Guards: not PV, not in check, shallow depth, not the first move,
     //         not a capture or promotion (those are always searched).
     if (!pvNode && !inCheck && depth <= 3 && movesSearched > 0 &&
-        movesSearched >= LMP_THRESHOLD[depth] &&
+        movesSearched >= LMP_THRESHOLD[depth] + (improving ? 2 : 0) &&
         !m.isCapture() && !m.isPromotion()) {
       continue;
     }
@@ -748,7 +1210,33 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     // Used to index the countermove table in child nodes.
     Piece movingPiece = pos.mailbox()[m.from];
 
+    // --- Extensions ---
+    // Singular extension: extend the TT move by 1 ply when the exclusion
+    // search confirmed it is singular (significantly better than
+    // alternatives).  Only applied to the TT move itself.
+    // Recapture extension: extend captures on the same square as the
+    // previous move to avoid cutting off mid-exchange.
+    //
+    // At most one extension is applied per move to avoid search explosion.
+    //
+    // References:
+    //   https://www.chessprogramming.org/Singular_Extensions
+    //   https://www.chessprogramming.org/Recapture_Extensions
+    int extension = 0;
+    if (singularExtension && m == ttMove) {
+      extension = 1;  // Singular: TT move is clearly best
+    } else if (!inCheck && depth >= 2 && m.isCapture() &&
+        m.to == prevTo && ply < MAX_PLY - 10) {
+      // Use the picker's cached SEE if available; otherwise compute.
+      int seVal = picker.lastSee != SEE_NOT_COMPUTED
+                     ? picker.lastSee
+                     : attacks::see(pos.bitboards(), pos.mailbox(), m);
+      if (seVal >= 0) extension = 1;
+    }
+
     UndoInfo undo = pos.make(m);
+
+    int newDepth = depth - 1 + extension;
 
     int score;
 
@@ -774,7 +1262,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
 
     if (movesSearched == 0) {
       // First move: always search with full window and full depth.
-      score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, state,
+      score = -negamax(pos, newDepth, -beta, -alpha, ply + 1, state,
                        movingPiece, m.to);
     } else {
       // --- LMR: determine if this move should be reduced ---
@@ -790,12 +1278,28 @@ int negamax(Position& pos, int depth, int alpha, int beta,
 
       if (doLMR) {
         // Reduced-depth zero-window scout search.
-        // Reduction: 1 ply, or 2 for very late moves at high depth.
-        int reduction = 1;
-        if (movesSearched >= LMR_FULL_DEPTH_MOVES * 2 && depth >= 6)
-          reduction = 2;
+        // Base reduction from logarithmic table, with history and
+        // improving adjustments on top.
+        int mi = movesSearched < LMR_MAX_MOVES ? movesSearched
+                                               : LMR_MAX_MOVES - 1;
+        int reduction = LMR_TABLE[depth][mi];
 
-        score = -negamax(pos, depth - 1 - reduction,
+        // History-based LMR: adjust reduction by history score.
+        // With gravity-based history, scores are more centered — use
+        // tighter thresholds than traditional linear history.
+        // pos is in post-make state; toggle side to get the move maker.
+        uint8_t mc = raw(pos.sideToMove()) ^ 1;
+        int16_t hist = state.history[mc][m.from][m.to];
+        if (hist < -500)
+          ++reduction;           // Bad history → reduce more
+        else if (hist > 1500)
+          --reduction;           // Good history → reduce less
+        if (!improving)
+          ++reduction;           // Not improving → reduce more
+        if (reduction < 1) reduction = 1;
+        if (reduction > newDepth - 1) reduction = newDepth - 1;
+
+        score = -negamax(pos, newDepth - reduction,
                          -alpha - 1, -alpha, ply + 1, state,
                          movingPiece, m.to);
       } else {
@@ -806,14 +1310,14 @@ int negamax(Position& pos, int depth, int alpha, int beta,
       // If the LMR search (or skip) suggests this move might be good,
       // re-search at full depth with a zero-window.
       if (score > alpha) {
-        score = -negamax(pos, depth - 1, -alpha - 1, -alpha, ply + 1, state,
+        score = -negamax(pos, newDepth, -alpha - 1, -alpha, ply + 1, state,
                          movingPiece, m.to);
       }
 
       // PVS re-search: if the zero-window scout failed high within the
       // PV window, we need an exact score — re-search with full window.
       if (score > alpha && score < beta) {
-        score = -negamax(pos, depth - 1, -beta, -alpha, ply + 1, state,
+        score = -negamax(pos, newDepth, -beta, -alpha, ply + 1, state,
                          movingPiece, m.to);
       }
     }
@@ -822,44 +1326,99 @@ int negamax(Position& pos, int depth, int alpha, int beta,
 
     if (state.stopped) return 0;
 
+    // Track quiet moves for history gravity.
+    if (!m.isCapture() && !m.isPromotion() && quietCount < 64)
+      quietsSearched[quietCount++] = m;
+
+    // Track captures for capture history gravity.
+    if (m.isCapture() && captureCount < 64)
+      capturesSearched[captureCount++] = m;
+
     ++movesSearched;
 
-    if (score > alpha) {
-      alpha = score;
+    if (score > bestScore) {
+      bestScore = score;
       bestMove = m;
-      if (alpha >= beta) {
-        // Beta cutoff — update move ordering heuristics for quiet moves
-        if (!m.isCapture()) {
-          updateKillers(m, ply, state);
-          updateHistory(m, depth, pos.sideToMove(), state);
+      if (score > alpha) {
+        alpha = score;
 
-          // Store as countermove for the opponent's previous (piece, toSq).
-          // On future visits, this move will be tried earlier when the same
-          // previous move is encountered.
-          if (!isEmpty(prevPiece)) {
-            int idx = pieceZobristIndex(prevPiece);
-            if (idx >= 0)
-              state.countermoves[idx][prevTo] = packMove(m);
+        // Collect principal variation: this move + the child's PV line.
+        state.pv[ply][0] = m;
+        int childLen = (ply + 1 < MAX_PLY) ? state.pvLength[ply + 1] : 0;
+        std::memcpy(&state.pv[ply][1], &state.pv[ply + 1][0],
+                    childLen * sizeof(Move));
+        state.pvLength[ply] = childLen + 1;
+
+        if (alpha >= beta) {
+          int bonus = depth * depth;
+          // Beta cutoff — update move ordering heuristics
+          if (m.isCapture()) {
+            // Capture history: reward the cutoff capture, penalize prior captures.
+            int chIdx = pieceZobristIndex(pos.mailbox()[m.from]);
+            if (chIdx >= 0)
+              updateHistory(state.captureHistory[chIdx][m.to], bonus);
+            for (int ci = 0; ci < captureCount - 1; ++ci) {
+              int prevIdx = pieceZobristIndex(pos.mailbox()[capturesSearched[ci].from]);
+              if (prevIdx >= 0)
+                updateHistory(state.captureHistory[prevIdx][capturesSearched[ci].to], -bonus);
+            }
+          } else {
+            // Quiet cutoff — update killers, history, countermoves.
+            updateKillers(m, ply, state);
+            updateHistory(state.history[raw(pos.sideToMove())][m.from][m.to],
+                          bonus);
+
+            // History gravity: penalize previously searched quiet moves
+            // that failed to cause a cutoff.  The cutoff move itself (last
+            // entry in quietsSearched) is excluded — it received the bonus.
+            Color side = pos.sideToMove();
+            for (int q = 0; q < quietCount - 1; ++q)
+              updateHistory(
+                  state.history[raw(side)][quietsSearched[q].from]
+                               [quietsSearched[q].to],
+                  -bonus);
+
+            // Store as countermove for the opponent's previous (piece, toSq).
+            // On future visits, this move will be tried earlier when the same
+            // previous move is encountered.
+            if (!isEmpty(prevPiece)) {
+              int idx = pieceZobristIndex(prevPiece);
+              if (idx >= 0)
+                state.countermoves[idx][prevTo] = packMove(m);
+            }
           }
+          break;
         }
-        break;
       }
     }
   }
 
+  // No moves searched: checkmate or stalemate.  During exclusion searches
+  // (singular extensions), the only legal move may have been excluded —
+  // return alpha so the caller correctly identifies it as singular.
+  if (movesSearched == 0) {
+    if (hasExcluded) return alpha;
+    if (inCheck) return -MATE_SCORE + ply;
+    return DRAW_SCORE;
+  }
+
   // --- TT store ---
-  if (state.tt) {
+  // Fail-soft: store bestScore (the actual score found), not alpha.
+  // Skip TT store during exclusion searches — the result is partial
+  // (one move was excluded) and would pollute the TT.
+  // Reference: https://www.chessprogramming.org/Fail-Soft
+  if (state.tt && !hasExcluded) {
     TTFlag flag;
-    if (alpha <= origAlpha)
+    if (bestScore <= origAlpha)
       flag = TTFlag::UPPER_BOUND;
-    else if (alpha >= beta)
+    else if (bestScore >= beta)
       flag = TTFlag::LOWER_BOUND;
     else
       flag = TTFlag::EXACT;
-    state.tt->store(pos.hash(), scoreToTT(alpha, ply), bestMove, depth, flag);
+    state.tt->store(pos.hash(), scoreToTT(bestScore, ply), bestMove, depth, flag);
   }
 
-  return alpha;
+  return bestScore;
 }
 
 // ---------------------------------------------------------------------------
@@ -896,14 +1455,21 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
                           TranspositionTable* tt,
                           eval::PawnHashTable* pawnHash,
                           eval::EvalHashTable* evalHash) {
-  // Heap-allocate SearchState (~19 KiB) to avoid overflowing the 16 KiB
+  // One-time initialization of the logarithmic LMR reduction table.
+  initLMR();
+
+  // Advance TT generation so stale entries from previous searches are
+  // replaced cheaply by the depth-preferred replacement policy.
+  if (tt) tt->newGeneration();
+
+  // Heap-allocate SearchState (~67 KiB) to avoid overflowing the 16 KiB
   // FreeRTOS task stack.  Contains history[2][64][64] (16 KiB), killers
-  // (1 KiB), and countermoves (1.5 KiB).
+  // (1 KiB), countermoves (1.5 KiB), and triangular PV table (~48 KiB).
   auto statePtr = std::make_unique<SearchState>();
   SearchState& state = *statePtr;
   state.timeFunc     = timeFunc;
   state.startTime    = timeFunc ? timeFunc() : 0;
-  state.maxTimeMs    = limits.maxTimeMs;
+  state.hardTimeMs   = limits.hardTimeMs;
   state.externalStop = limits.stop;
   state.tt           = tt;
   state.pawnHash     = pawnHash;
@@ -946,21 +1512,35 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
 
   int prevScore = 0;  // score from the last completed iteration
 
+  // --- Time management state ---
+  // Tracks best move stability and second-best score for easy move
+  // detection and move instability time extensions.
+  // References:
+  //   https://www.chessprogramming.org/Time_Management#Easy_Move
+  //   https://www.chessprogramming.org/Time_Management
+  Move prevIterBest = {};
+  int stableCount = 0;
+  uint32_t effectiveSoftTime = limits.softTimeMs;
+
   for (int depth = 1; depth <= maxDepth; ++depth) {
     // --- Aspiration window setup ---
     int alpha, beta;
+    int delta = ASPIRATION_DELTA;
     if (depth == 1) {
       alpha = -INF_SCORE;
       beta  =  INF_SCORE;
     } else {
-      alpha = prevScore - ASPIRATION_DELTA;
-      beta  = prevScore + ASPIRATION_DELTA;
+      alpha = prevScore - delta;
+      beta  = prevScore + delta;
     }
 
     Move iterBestMove = rootMoves.moves[0];
     int iterBestScore = -INF_SCORE;
+    int secondBestScore = -INF_SCORE;
 
-    // Aspiration re-search loop: widen the window on fail-low / fail-high.
+    // Aspiration re-search loop: widen the window progressively on
+    // fail-low / fail-high, doubling `delta` each time until the score
+    // falls within bounds (or overflows to full width).
     //
     // IMPORTANT: the root move loop updates `alpha` as better moves are
     // found (standard alpha-beta).  We must compare the final score against
@@ -971,6 +1551,7 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
       int aspBeta  = beta;
       iterBestMove  = rootMoves.moves[0];
       iterBestScore = -INF_SCORE;
+      secondBestScore = -INF_SCORE;
 
       for (int i = 0; i < rootMoves.count; ++i) {
         int score = searchRootMove(pos, rootMoves.moves[i], depth,
@@ -978,24 +1559,39 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
         if (state.stopped) break;
 
         if (score > iterBestScore) {
+          secondBestScore = iterBestScore;
           iterBestScore = score;
           iterBestMove = rootMoves.moves[i];
+
+          // Build root PV: this root move + child PV from ply 1.
+          state.pv[0][0] = rootMoves.moves[i];
+          int childLen = state.pvLength[1];
+          std::memcpy(&state.pv[0][1], &state.pv[1][0],
+                      childLen * sizeof(Move));
+          state.pvLength[0] = childLen + 1;
+
           if (score > alpha) alpha = score;
+        } else if (score > secondBestScore) {
+          secondBestScore = score;
         }
       }
 
       if (state.stopped) break;
 
       // Fail-low: every root move scored at or below the aspiration lower
-      // bound.  Widen the lower bound to -INF and re-search.
+      // bound.  Widen the lower bound and re-search.
       if (iterBestScore <= aspAlpha) {
-        alpha = -INF_SCORE;
+        delta *= 2;
+        alpha = prevScore - delta;
+        if (alpha < -INF_SCORE) alpha = -INF_SCORE;
         continue;
       }
       // Fail-high: the best score met or exceeded the upper bound.
-      // Widen the upper bound to +INF and re-search.
+      // Widen the upper bound and re-search.
       if (iterBestScore >= aspBeta) {
-        beta = INF_SCORE;
+        delta *= 2;
+        beta = prevScore + delta;
+        if (beta > INF_SCORE) beta = INF_SCORE;
         continue;
       }
       // Score falls within the window — iteration is complete.
@@ -1011,6 +1607,10 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
     result.depth    = depth;
     result.nodes    = state.nodes;
     prevScore       = iterBestScore;
+
+    // Copy principal variation from this iteration's PV table.
+    result.pvLength = state.pvLength[0];
+    std::memcpy(result.pv, state.pv[0], result.pvLength * sizeof(Move));
 
     // --- Root move reordering ---
     // Move the best move to index 0 so it is searched first at the next
@@ -1031,6 +1631,40 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
 
     // Early exit: found a forced mate — no need to search deeper
     if (iterBestScore >= MATE_SCORE - MAX_PLY) break;
+
+    // --- Time management: stability tracking + instability extension ---
+    // Track how many consecutive iterations had the same best move.
+    if (iterBestMove.from == prevIterBest.from &&
+        iterBestMove.to   == prevIterBest.to   &&
+        iterBestMove.flags == prevIterBest.flags) {
+      ++stableCount;
+    } else {
+      // Move instability: when the best move changes at depth >= 4,
+      // extend the effective soft time to allow more search.
+      if (depth >= 4 && effectiveSoftTime > 0) {
+        effectiveSoftTime = effectiveSoftTime * 3 / 2;
+        if (limits.hardTimeMs > 0 && effectiveSoftTime > limits.hardTimeMs)
+          effectiveSoftTime = limits.hardTimeMs;
+      }
+      stableCount = 1;
+    }
+    prevIterBest = iterBestMove;
+
+    // --- Easy move detection ---
+    // If the best move has been stable for >= 5 iterations, leads the
+    // second-best by >= 100cp, and we're deep enough, stop early.
+    if (effectiveSoftTime > 0 && stableCount >= 5 && depth >= 6 &&
+        secondBestScore > -INF_SCORE &&
+        iterBestScore - secondBestScore >= 100) {
+      break;
+    }
+
+    // --- Soft time check ---
+    // If the soft time limit has elapsed, don't start the next iteration.
+    if (effectiveSoftTime > 0 && state.timeFunc) {
+      uint32_t elapsed = state.timeFunc() - state.startTime;
+      if (elapsed >= effectiveSoftTime) break;
+    }
   }
 
   result.nodes = state.nodes;

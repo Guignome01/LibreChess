@@ -45,12 +45,12 @@ void LibreChessProvider::requestMove(const std::string& fen) {
   // Stack budget for lcTask (16 KiB = 16384 bytes):
   //   Engine (Position w/ HashHistory 256) ............. ~2,350 B
   //   MoveList rootMoves (findBestMove local) .......... ~  876 B
-  //   Per-ply recursion (MoveList + scores + UndoInfo) . ~1,844 B × depth
-  //   At depth 6: ..................................... ~11,064 B
+  //   Per-ply recursion (MovePicker + locals + UndoInfo) ~2,050 B × depth
+  //   At depth 6: ..................................... ~12,300 B
   //   SearchState (history + killers + countermoves) ... heap (std::unique_ptr)
   //   Transposition table .............................. heap (new[])
-  //   Estimated total at depth 6: ..................... ~14,290 B
-  //   Headroom: ....................................... ~ 2,094 B
+  //   Estimated total at depth 6: ..................... ~15,526 B
+  //   Headroom: ....................................... ~   858 B
   spawnTask(ctx, "lcTask", taskFunction, 16384);
 }
 
@@ -102,7 +102,7 @@ void LibreChessProvider::taskFunction(void* param) {
   // Build search limits
   LibreChess::search::SearchLimits limits;
   if (ctx->depth > 0) limits.maxDepth = ctx->depth;
-  if (ctx->moveTimeMs > 0) limits.maxTimeMs = ctx->moveTimeMs;
+  if (ctx->moveTimeMs > 0) limits.hardTimeMs = ctx->moveTimeMs;
   if (ctx->depth <= 0 && ctx->moveTimeMs <= 0) limits.maxDepth = 6;
 
   // Run the search — returns structured result, no string parsing needed

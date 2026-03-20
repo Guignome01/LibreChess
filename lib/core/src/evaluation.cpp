@@ -108,6 +108,55 @@ constexpr int8_t PST_PAWN_EG[64] = {
    0,  0,  0,  0,  0,  0,  0,  0    // rank 8 (never occupied)
 };
 
+// Knight EG: centralization still important but less aggressive than MG.
+// Short-range piece — edge/corner penalised, center rewarded moderately.
+constexpr int8_t PST_KNIGHT_EG[64] = {
+ -40,-20,-15,-15,-15,-15,-20,-40,
+ -20, -5,  5,  5,  5,  5, -5,-20,
+ -15,  5, 15, 15, 15, 15,  5,-15,
+ -15,  5, 15, 20, 20, 15,  5,-15,
+ -15,  5, 15, 20, 20, 15,  5,-15,
+ -15,  5, 15, 15, 15, 15,  5,-15,
+ -20, -5,  5,  5,  5,  5, -5,-20,
+ -40,-20,-15,-15,-15,-15,-20,-40
+};
+
+// Bishop EG: long diagonals gain value, edges less harsh than MG.
+constexpr int8_t PST_BISHOP_EG[64] = {
+ -15, -5, -5, -5, -5, -5, -5,-15,
+  -5,  5,  5,  5,  5,  5,  5, -5,
+  -5,  5, 10, 10, 10, 10,  5, -5,
+  -5,  5, 10, 15, 15, 10,  5, -5,
+  -5,  5, 10, 15, 15, 10,  5, -5,
+  -5,  5, 10, 10, 10, 10,  5, -5,
+  -5,  5,  5,  5,  5,  5,  5, -5,
+ -15, -5, -5, -5, -5, -5, -5,-15
+};
+
+// Rook EG: 7th rank bonus (promote/cut off king), central files encouraged.
+constexpr int8_t PST_ROOK_EG[64] = {
+   5,  5,  5,  5,  5,  5,  5,  5,
+  15, 15, 15, 15, 15, 15, 15, 15,   // 7th rank — dominant in endgame
+   0,  0,  5,  5,  5,  5,  0,  0,
+   0,  0,  5,  5,  5,  5,  0,  0,
+   0,  0,  5,  5,  5,  5,  0,  0,
+   0,  0,  5,  5,  5,  5,  0,  0,
+   0,  0,  5,  5,  5,  5,  0,  0,
+   5,  5,  5, 10, 10,  5,  5,  5
+};
+
+// Queen EG: central activity rewarded, moderate bonus throughout.
+constexpr int8_t PST_QUEEN_EG[64] = {
+ -15,-10, -5, -5, -5, -5,-10,-15,
+ -10,  0,  5,  5,  5,  5,  0,-10,
+  -5,  5, 10, 10, 10, 10,  5, -5,
+  -5,  5, 10, 15, 15, 10,  5, -5,
+  -5,  5, 10, 15, 15, 10,  5, -5,
+  -5,  5, 10, 10, 10, 10,  5, -5,
+ -10,  0,  5,  5,  5,  5,  0,-10,
+ -15,-10, -5, -5, -5, -5,-10,-15
+};
+
 // King EG: wants to be active and central (opposite of MG).
 constexpr int8_t PST_KING_EG[64] = {
  -20,-10,-10,-10,-10,-10,-10,-20,
@@ -127,10 +176,10 @@ constexpr const int8_t* PST_MG[6] = {
     PST_PAWN_MG, PST_KNIGHT_MG, PST_BISHOP_MG,
     PST_ROOK_MG, PST_QUEEN_MG,  PST_KING_MG};
 
-// EG tables — non-king/pawn pieces reuse MG tables.
+// EG tables — per-piece endgame placement values.
 constexpr const int8_t* PST_EG[6] = {
-    PST_PAWN_EG, PST_KNIGHT_MG, PST_BISHOP_MG,
-    PST_ROOK_MG, PST_QUEEN_MG,  PST_KING_EG};
+    PST_PAWN_EG, PST_KNIGHT_EG, PST_BISHOP_EG,
+    PST_ROOK_EG, PST_QUEEN_EG,  PST_KING_EG};
 
 // ---------------------------------------------------------------------------
 // Game phase — non-pawn material determines how much the position resembles
@@ -257,15 +306,32 @@ bool isBackward(Square sq, Color color, Bitboard friendlyPawns, Bitboard enemyPa
 
 // ---------------------------------------------------------------------------
 // Pawn structure constants — centipawns.
+//
+// Passed pawn bonuses use exponential rank-based scaling: advanced passers
+// are worth dramatically more than newly created ones.  Indexed by LERF
+// rank (0=rank1, 7=rank8).  Indices 0 and 7 are unused (pawns can't
+// occupy rank 1 or rank 8).
+//
+// Reference: https://www.chessprogramming.org/Passed_Pawn
 // ---------------------------------------------------------------------------
 
-static constexpr int PASSED_PAWN_BASE    =  20;
-static constexpr int PASSED_PAWN_BASE_EG =  30;
-static constexpr int PASSED_PAWN_RANK    =   5;
+static constexpr int PASSED_RANK_BONUS_MG[] = {0, 10, 15, 25, 45, 80, 130, 0};
+static constexpr int PASSED_RANK_BONUS_EG[] = {0, 15, 25, 45, 80, 130, 200, 0};
 static constexpr int CONNECTED_PASSED    =  10;
 static constexpr int ISOLATED_PENALTY    = -15;
 static constexpr int DOUBLED_PENALTY     = -10;
 static constexpr int BACKWARD_PENALTY    = -10;
+
+// Protected passed pawn — extra bonus when a passer is defended by a pawn.
+// Reference: https://www.chessprogramming.org/Passed_Pawn#Protected
+static constexpr int PROTECTED_PASSER_MG = 10;
+static constexpr int PROTECTED_PASSER_EG = 15;
+
+// Candidate passed pawn — bonus for a pawn that could become passed with
+// one favorable exchange (only one blocking enemy pawn).
+// Reference: https://www.chessprogramming.org/Candidate_Passed_Pawn
+static constexpr int CANDIDATE_PASSER_MG =  5;
+static constexpr int CANDIDATE_PASSER_EG = 10;
 
 // ---------------------------------------------------------------------------
 // Pawn structure scoring — centipawns, white-relative.
@@ -305,10 +371,21 @@ static void evalPawnStructure(const BitboardSet& bb,
     int rank = sq / 8;
 
     if (isPassed(sq, Color::WHITE, blackPawns)) {
-      int rankBonus = rank > 3 ? (rank - 3) * PASSED_PAWN_RANK : 0;
-      mg += PASSED_PAWN_BASE + rankBonus;
-      eg += PASSED_PAWN_BASE_EG + rankBonus * 2;
+      mg += PASSED_RANK_BONUS_MG[rank];
+      eg += PASSED_RANK_BONUS_EG[rank];
       whitePassedFiles |= 1 << (sq & 7);
+      // Protected passer — defended by another pawn
+      if (squareBB(sq) & whitePawnAttacks) {
+        mg += PROTECTED_PASSER_MG;
+        eg += PROTECTED_PASSER_EG;
+      }
+    } else {
+      // Candidate passer — only one enemy pawn blocks it
+      Bitboard blockers = blackPawns & pawnPassedMask[raw(Color::WHITE)][sq];
+      if (popcount(blockers) == 1) {
+        mg += CANDIDATE_PASSER_MG;
+        eg += CANDIDATE_PASSER_EG;
+      }
     }
     if (isIsolated(sq, whitePawns)) {
       mg += ISOLATED_PENALTY;
@@ -331,10 +408,21 @@ static void evalPawnStructure(const BitboardSet& bb,
     int rank = sq / 8;
 
     if (isPassed(sq, Color::BLACK, whitePawns)) {
-      int rankBonus = rank < 4 ? (4 - rank) * PASSED_PAWN_RANK : 0;
-      mg -= PASSED_PAWN_BASE + rankBonus;
-      eg -= PASSED_PAWN_BASE_EG + rankBonus * 2;
+      mg -= PASSED_RANK_BONUS_MG[7 - rank];
+      eg -= PASSED_RANK_BONUS_EG[7 - rank];
       blackPassedFiles |= 1 << (sq & 7);
+      // Protected passer — defended by another pawn
+      if (squareBB(sq) & blackPawnAttacks) {
+        mg -= PROTECTED_PASSER_MG;
+        eg -= PROTECTED_PASSER_EG;
+      }
+    } else {
+      // Candidate passer — only one enemy pawn blocks it
+      Bitboard blockers = whitePawns & pawnPassedMask[raw(Color::BLACK)][sq];
+      if (popcount(blockers) == 1) {
+        mg -= CANDIDATE_PASSER_MG;
+        eg -= CANDIDATE_PASSER_EG;
+      }
     }
     if (isIsolated(sq, blackPawns)) {
       mg -= ISOLATED_PENALTY;
@@ -500,10 +588,14 @@ static void evalRookOnSeventh(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Mobility
 // ---------------------------------------------------------------------------
 
-static constexpr int MOBILITY_KNIGHT = 4;
-static constexpr int MOBILITY_BISHOP = 4;
-static constexpr int MOBILITY_ROOK   = 2;
-static constexpr int MOBILITY_QUEEN  = 1;
+static constexpr int MOBILITY_KNIGHT_MG = 4;
+static constexpr int MOBILITY_KNIGHT_EG = 4;
+static constexpr int MOBILITY_BISHOP_MG = 3;
+static constexpr int MOBILITY_BISHOP_EG = 5;
+static constexpr int MOBILITY_ROOK_MG   = 1;
+static constexpr int MOBILITY_ROOK_EG   = 3;
+static constexpr int MOBILITY_QUEEN_MG  = 1;
+static constexpr int MOBILITY_QUEEN_EG  = 2;
 
 static void evalMobility(const BitboardSet& bb,
                          const attacks::AttackInfo& info,
@@ -512,22 +604,23 @@ static void evalMobility(const BitboardSet& bb,
     int sign = (c == 0) ? 1 : -1;
     Bitboard friendly = bb.byColor[c];
 
-    // Knight mobility (index 2 = PieceType::KNIGHT)
     int knightMob = popcount(info.byPiece[c][2] & ~friendly);
-    // Bishop mobility (index 3 = PieceType::BISHOP)
     int bishopMob = popcount(info.byPiece[c][3] & ~friendly);
-    // Rook mobility (index 4 = PieceType::ROOK)
     int rookMob   = popcount(info.byPiece[c][4] & ~friendly);
-    // Queen mobility (index 5 = PieceType::QUEEN)
     int queenMob  = popcount(info.byPiece[c][5] & ~friendly);
 
-    int bonus = knightMob * MOBILITY_KNIGHT
-              + bishopMob * MOBILITY_BISHOP
-              + rookMob   * MOBILITY_ROOK
-              + queenMob  * MOBILITY_QUEEN;
+    int mgBonus = knightMob * MOBILITY_KNIGHT_MG
+                + bishopMob * MOBILITY_BISHOP_MG
+                + rookMob   * MOBILITY_ROOK_MG
+                + queenMob  * MOBILITY_QUEEN_MG;
 
-    mgScore += sign * bonus;
-    egScore += sign * bonus;
+    int egBonus = knightMob * MOBILITY_KNIGHT_EG
+                + bishopMob * MOBILITY_BISHOP_EG
+                + rookMob   * MOBILITY_ROOK_EG
+                + queenMob  * MOBILITY_QUEEN_EG;
+
+    mgScore += sign * mgBonus;
+    egScore += sign * egBonus;
   }
 }
 
@@ -680,22 +773,9 @@ static void evalCenterControl(const BitboardSet& bb,
 }
 
 // ---------------------------------------------------------------------------
-// King Tropism — penalty when enemy pieces are close to the king.
-//
-// Each enemy minor/major piece receives a bonus proportional to its
-// proximity (Chebyshev distance) to the defending king.  Closer pieces are
-// more threatening.  Weight varies by piece type — queens and rooks carry
-// more weight than minor pieces.
-//
-// Formula per piece: weight[type] × (7 − distance).
-// Only applied to the MG score — in endgames, king activity is encouraged
-// and tropism is irrelevant.
-//
-// Reference: https://www.chessprogramming.org/King_Safety#King_Tropism
+// Distance helper — Chebyshev distance between two LERF squares.
+// Used by evalPassedPawnKingDist (endgame) and evalKingDanger (midgame).
 // ---------------------------------------------------------------------------
-
-// Per-piece-type weights for king tropism (N=0, B=1, R=2, Q=3).
-static constexpr int TROPISM_WEIGHT[] = {2, 1, 2, 4};
 
 // Chebyshev distance between two LERF squares.
 static int chebyshevDist(Square a, Square b) {
@@ -706,30 +786,57 @@ static int chebyshevDist(Square a, Square b) {
   return dr > df ? dr : df;
 }
 
-static void evalKingTropism(const BitboardSet& bb, int& mgScore) {
-  // Locate both kings.
+// ---------------------------------------------------------------------------
+// Passed pawn king distance — endgame bonus/penalty based on both kings'
+// proximity to passed pawns.
+//
+// In endgames, a passed pawn's value depends heavily on whether its own
+// king can escort it to promotion and whether the enemy king can intercept.
+// Each passer receives:
+//   - Bonus for own king proximity:   PASSER_OWN_KING × (7 − distance)
+//   - Bonus for enemy king distance:  PASSER_ENEMY_KING × distance
+//
+// Applied to the EG score only (in the midgame, king safety and PSTs
+// already govern king placement).  Not cached in the pawn hash because
+// it depends on king positions, which change independently of pawn
+// structure.
+//
+// Reference: https://www.chessprogramming.org/King_Distance#Passed_Pawn
+// ---------------------------------------------------------------------------
+
+static constexpr int PASSER_OWN_KING   = 5;
+static constexpr int PASSER_ENEMY_KING = 10;
+
+static void evalPassedPawnKingDist(const BitboardSet& bb, int& egScore) {
+  Bitboard whitePawns = bb.byPiece[0];
+  Bitboard blackPawns = bb.byPiece[6];
+
   Bitboard wkBB = bb.byPiece[5];
   Bitboard bkBB = bb.byPiece[11];
   if (!wkBB || !bkBB) return;
   Square wkSq = lsb(wkBB);
   Square bkSq = lsb(bkBB);
 
-  // Black pieces threatening the white king.
-  for (int pt = 0; pt < 4; ++pt) {
-    Bitboard pieces = bb.byPiece[pt + 7];  // B_KNIGHT..B_QUEEN (7-10)
-    while (pieces) {
-      Square sq = popLsb(pieces);
-      mgScore -= TROPISM_WEIGHT[pt] * (7 - chebyshevDist(sq, wkSq));
-    }
+  // White passed pawns — bonus for white.
+  Bitboard wp = whitePawns;
+  while (wp) {
+    Square sq = popLsb(wp);
+    if (!isPassed(sq, Color::WHITE, blackPawns)) continue;
+    int ownDist   = chebyshevDist(sq, wkSq);
+    int enemyDist = chebyshevDist(sq, bkSq);
+    egScore += PASSER_OWN_KING   * (7 - ownDist);
+    egScore += PASSER_ENEMY_KING * enemyDist;
   }
 
-  // White pieces threatening the black king.
-  for (int pt = 0; pt < 4; ++pt) {
-    Bitboard pieces = bb.byPiece[pt + 1];  // W_KNIGHT..W_QUEEN (1-4)
-    while (pieces) {
-      Square sq = popLsb(pieces);
-      mgScore += TROPISM_WEIGHT[pt] * (7 - chebyshevDist(sq, bkSq));
-    }
+  // Black passed pawns — bonus for black (subtract in white-relative score).
+  Bitboard bp = blackPawns;
+  while (bp) {
+    Square sq = popLsb(bp);
+    if (!isPassed(sq, Color::BLACK, whitePawns)) continue;
+    int ownDist   = chebyshevDist(sq, bkSq);
+    int enemyDist = chebyshevDist(sq, wkSq);
+    egScore -= PASSER_OWN_KING   * (7 - ownDist);
+    egScore -= PASSER_ENEMY_KING * enemyDist;
   }
 }
 
@@ -803,40 +910,22 @@ static void evalKnightOutposts(const BitboardSet& bb,
   while (wn) {
     Square sq = popLsb(wn);
 
-    // Must be protected by a friendly pawn
+    // Must be protected by a friendly pawn.
     if (!(squareBB(sq) & whitePawnAttacks)) continue;
 
-    // Must not be attackable by enemy pawns on adjacent files ahead.
-    // Use pawnPassedMask for the opposite color to check if any enemy pawn
-    // can ever reach this square's adjacent files.
+    // Must not be attackable by enemy pawns on adjacent files that can
+    // advance to reach this square.  Black pawns move downward in LERF
+    // (decreasing rank), so only black pawns on ranks ABOVE the knight
+    // (rank+1 .. 7) can advance down to attack it.
     int file = colOf(sq);
-    Bitboard enemyCanAttack = 0;
-    // Enemy pawns that could advance to attack this square are on adjacent
-    // files, below this square's rank (for black pawns advancing upward, they
-    // are actually on higher LERF ranks going down — tricky).
-    // Simpler: check if there are any black pawns in the pawnPassedMask for
-    // this square from black's perspective on adjacent files.
-    // Actually the simplest check: no enemy pawn on adjacent files at all
-    // (from the knight's rank forward).
-    if (file > 0) enemyCanAttack |= fileBB(file - 1);
-    if (file < 7) enemyCanAttack |= fileBB(file + 1);
+    Bitboard adjFiles = 0;
+    if (file > 0) adjFiles |= fileBB(file - 1);
+    if (file < 7) adjFiles |= fileBB(file + 1);
 
-    // Only consider enemy pawns that are "behind" the knight (can advance to
-    // attack it). For white knight: black pawns on higher LERF ranks (toward
-    // rank 1 in board terms).
     int rank = sq / 8;
-    Bitboard forwardMask = 0;
-    for (int r = rank; r < 8; ++r) forwardMask |= rankBB(r);
-    // Actually for a white knight on sq, enemy BLACK pawns that could attack
-    // it are those on ranks below (LERF ranks < sq's rank) since black pawns
-    // move downward in LERF. But pawnPassedMask already handles this.
-    // Simplify: just check if there's any enemy pawn on adjacent files from
-    // this rank upward (in LERF terms). Black pawns move down (decreasing rank),
-    // so a black pawn on rank > sq's rank cannot attack sq.
-    // Pawns below sq in LERF could advance to attack.
-    Bitboard belowMask = 0;
-    for (int r = 0; r <= rank; ++r) belowMask |= rankBB(r);
-    if (blackPawns & enemyCanAttack & belowMask) continue;
+    // Ranks strictly above: clear the lower (rank+1)*8 bits.
+    Bitboard aboveMask = ~((static_cast<Bitboard>(1) << (8 * (rank + 1))) - 1);
+    if (blackPawns & adjFiles & aboveMask) continue;
 
     int bonus = OUTPOST_BONUS;
     if (sq == SQ_D4 || sq == SQ_D5 || sq == SQ_E4 || sq == SQ_E5)
@@ -851,24 +940,25 @@ static void evalKnightOutposts(const BitboardSet& bb,
   while (bn) {
     Square sq = popLsb(bn);
 
-    // Must be protected by a friendly pawn
+    // Must be protected by a friendly pawn.
     if (!(squareBB(sq) & blackPawnAttacks)) continue;
 
-    // No enemy (white) pawns on adjacent files that can advance to attack
+    // White pawns move upward in LERF (increasing rank), so only white
+    // pawns on ranks BELOW the knight (0 .. rank-1) can advance up to
+    // attack it.
     int file = colOf(sq);
-    Bitboard enemyCanAttack = 0;
-    if (file > 0) enemyCanAttack |= fileBB(file - 1);
-    if (file < 7) enemyCanAttack |= fileBB(file + 1);
+    Bitboard adjFiles = 0;
+    if (file > 0) adjFiles |= fileBB(file - 1);
+    if (file < 7) adjFiles |= fileBB(file + 1);
 
     int rank = sq / 8;
-    // White pawns move up (increasing LERF rank), so a white pawn on rank <
-    // sq's rank could advance to attack. Pawns above sq cannot.
-    Bitboard aboveMask = 0;
-    for (int r = rank; r < 8; ++r) aboveMask |= rankBB(r);
-    if (whitePawns & enemyCanAttack & aboveMask) continue;
+    // Ranks strictly below: keep only the lower rank*8 bits.
+    Bitboard belowMask = (rank > 0)
+        ? (static_cast<Bitboard>(1) << (8 * rank)) - 1
+        : 0;
+    if (whitePawns & adjFiles & belowMask) continue;
 
     int bonus = OUTPOST_BONUS;
-    // Mirror central squares for black: d5/d4/e5/e4 are the same squares
     if (sq == SQ_D4 || sq == SQ_D5 || sq == SQ_E4 || sq == SQ_E5)
       bonus *= 2;
 
@@ -1007,6 +1097,155 @@ static void evalConnectivity(const BitboardSet& bb,
   }
 }
 
+// ---------------------------------------------------------------------------
+// Threats — bonus for lower-value pieces attacking higher-value enemy pieces.
+//
+// Uses the pre-computed AttackInfo to detect piece-level pressure: pawns
+// threatening minors/rooks/queens, minors threatening rooks/queens, and
+// rooks threatening queens.  Each attacker-victim pair has separate MG/EG
+// weights — threats are most valuable in the midgame when piece safety
+// dictates strategy.
+//
+// Reference: https://www.chessprogramming.org/Evaluation#Threats
+// ---------------------------------------------------------------------------
+
+static constexpr int THREAT_PAWN_VS_MINOR_MG  =  8;
+static constexpr int THREAT_PAWN_VS_MINOR_EG  =  6;
+static constexpr int THREAT_PAWN_VS_ROOK_MG   = 12;
+static constexpr int THREAT_PAWN_VS_ROOK_EG   =  8;
+static constexpr int THREAT_PAWN_VS_QUEEN_MG  = 15;
+static constexpr int THREAT_PAWN_VS_QUEEN_EG  = 10;
+static constexpr int THREAT_MINOR_VS_ROOK_MG  =  5;
+static constexpr int THREAT_MINOR_VS_ROOK_EG  =  5;
+static constexpr int THREAT_MINOR_VS_QUEEN_MG =  8;
+static constexpr int THREAT_MINOR_VS_QUEEN_EG =  6;
+static constexpr int THREAT_ROOK_VS_QUEEN_MG  =  4;
+static constexpr int THREAT_ROOK_VS_QUEEN_EG  =  4;
+
+static void evalThreats(const BitboardSet& bb,
+                        const attacks::AttackInfo& info,
+                        int& mgScore, int& egScore) {
+  for (int c = 0; c < 2; ++c) {
+    int sign = (c == 0) ? 1 : -1;
+    int enemy = 1 - c;
+
+    // Enemy piece bitboards (indexed by Zobrist offset: pawn=0..king=5).
+    int eo = enemy * 6;  // enemy offset into byPiece[]
+    Bitboard enemyMinors = bb.byPiece[eo + 1] | bb.byPiece[eo + 2];  // N + B
+    Bitboard enemyRooks  = bb.byPiece[eo + 3];
+    Bitboard enemyQueens = bb.byPiece[eo + 4];
+
+    // Friendly pawn attacks.
+    Bitboard pawnAtk = info.byPiece[c][0];
+    int mg = 0, eg = 0;
+
+    mg += popcount(pawnAtk & enemyMinors) * THREAT_PAWN_VS_MINOR_MG;
+    eg += popcount(pawnAtk & enemyMinors) * THREAT_PAWN_VS_MINOR_EG;
+    mg += popcount(pawnAtk & enemyRooks)  * THREAT_PAWN_VS_ROOK_MG;
+    eg += popcount(pawnAtk & enemyRooks)  * THREAT_PAWN_VS_ROOK_EG;
+    mg += popcount(pawnAtk & enemyQueens) * THREAT_PAWN_VS_QUEEN_MG;
+    eg += popcount(pawnAtk & enemyQueens) * THREAT_PAWN_VS_QUEEN_EG;
+
+    // Friendly minor attacks (N + B).
+    Bitboard minorAtk = info.byPiece[c][1] | info.byPiece[c][2];
+    mg += popcount(minorAtk & enemyRooks)  * THREAT_MINOR_VS_ROOK_MG;
+    eg += popcount(minorAtk & enemyRooks)  * THREAT_MINOR_VS_ROOK_EG;
+    mg += popcount(minorAtk & enemyQueens) * THREAT_MINOR_VS_QUEEN_MG;
+    eg += popcount(minorAtk & enemyQueens) * THREAT_MINOR_VS_QUEEN_EG;
+
+    // Friendly rook attacks.
+    Bitboard rookAtk = info.byPiece[c][3];
+    mg += popcount(rookAtk & enemyQueens) * THREAT_ROOK_VS_QUEEN_MG;
+    eg += popcount(rookAtk & enemyQueens) * THREAT_ROOK_VS_QUEEN_EG;
+
+    mgScore += sign * mg;
+    egScore += sign * eg;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// King danger — unified king safety evaluation combining zone attacks and
+// piece proximity.
+//
+// Counts enemy piece types attacking the king ring (king square + 8
+// surrounding squares) using the AttackInfo already computed for mobility.
+// When at least one piece attacks the zone, nearby enemy pieces (Chebyshev
+// distance ≤ 3) add proximity pressure to the attacker weight sum.  The
+// combined weight is looked up in a nonlinear danger table, reflecting
+// that multiple coordinated attackers create super-linear threat.
+//
+// Merges the concepts of "king tropism" (piece proximity) and "attacking
+// king zone" (piece influence on king ring) into a single coherent signal.
+// Proximity only matters when there's a genuine attack — distant pieces
+// that happen to be nearby don't contribute.
+//
+// MG-only — in endgames, king exposure is less relevant and king
+// centralization (via EG PSTs) takes over.
+//
+// Reference: https://www.chessprogramming.org/King_Safety#Attacking_King_Zone
+// Reference: https://www.chessprogramming.org/King_Safety#King_Tropism
+// ---------------------------------------------------------------------------
+
+// Per-piece-type zone attack weight: how dangerous each attacker type is.
+// Indexed by minor/major piece offset (N=0, B=1, R=2, Q=3).
+static constexpr int KING_DANGER_WEIGHT[] = {2, 2, 3, 5};
+
+// Nonlinear danger table — maps total attacker weight to MG penalty (cp).
+// Index = sum of attacker weights (0..max).  Clamped at the last entry.
+static constexpr int KING_DANGER_TABLE[] = {
+    0, 0, 5, 15, 35, 65, 100, 140, 180, 220, 265, 310, 360};
+static constexpr int KING_DANGER_TABLE_SIZE = 13;
+
+static void evalKingDanger(const BitboardSet& bb,
+                           const attacks::AttackInfo& info,
+                           int& mgScore) {
+  for (int c = 0; c < 2; ++c) {
+    // Penalty applies to the defending side: attacks on white king hurt
+    // white (mgScore -=), attacks on black king hurt black (mgScore +=).
+    int sign = (c == 0) ? -1 : 1;
+    int enemy = 1 - c;
+
+    // Locate king.
+    int kingIdx = c * 6 + 5;  // W_KING=5, B_KING=11
+    Bitboard kingBB = bb.byPiece[kingIdx];
+    if (!kingBB) continue;
+    Square kingSq = lsb(kingBB);
+
+    // King zone: king square + 8 surrounding squares.
+    Bitboard kingZone = attacks::KING[kingSq] | squareBB(kingSq);
+
+    // Sum attacker weights for enemy pieces attacking the king zone.
+    int totalWeight = 0;
+    for (int pt = 0; pt < 4; ++pt) {
+      // PieceType: KNIGHT=2, BISHOP=3, ROOK=4, QUEEN=5
+      int pieceType = pt + 2;
+      if (info.byPiece[enemy][pieceType] & kingZone)
+        totalWeight += KING_DANGER_WEIGHT[pt];
+    }
+
+    // Proximity bonus: close enemy pieces amplify the zone attack.
+    // Only applied when at least one piece attacks the zone — avoids
+    // noise from pieces that happen to be nearby but aren't threatening.
+    if (totalWeight > 0) {
+      for (int pt = 0; pt < 4; ++pt) {
+        int pieceIdx = enemy * 6 + pt + 1;  // N..Q index in byPiece
+        Bitboard pieces = bb.byPiece[pieceIdx];
+        while (pieces) {
+          Square sq = popLsb(pieces);
+          if (chebyshevDist(sq, kingSq) <= 3)
+            ++totalWeight;
+        }
+      }
+    }
+
+    // Look up nonlinear penalty.
+    int idx = totalWeight < KING_DANGER_TABLE_SIZE
+            ? totalWeight
+            : KING_DANGER_TABLE_SIZE - 1;
+    mgScore += sign * KING_DANGER_TABLE[idx];
+  }
+}
+
 // ===========================================================================
 // Hash table implementations
 // ===========================================================================
@@ -1105,6 +1344,106 @@ void EvalHashTable::store(uint64_t hash, int16_t s) {
 }
 
 // ---------------------------------------------------------------------------
+// Bad bishop — penalty for bishops blocked by own pawns on same color.
+//
+// A bishop loses effectiveness when many friendly pawns occupy squares
+// of the same color complex, restricting its mobility.
+//
+// Reference: https://www.chessprogramming.org/Bad_Bishop
+// ---------------------------------------------------------------------------
+
+static constexpr int BAD_BISHOP_MG = -3;
+static constexpr int BAD_BISHOP_EG = -5;
+
+static void evalBadBishop(const BitboardSet& bb,
+                          int& mgScore, int& egScore) {
+  // White bishops
+  Bitboard wb = bb.byPiece[2];   // W_BISHOP
+  Bitboard wp = bb.byPiece[0];   // W_PAWN
+  while (wb) {
+    Square sq = popLsb(wb);
+    Bitboard colorMask = (squareBB(sq) & DARK_SQUARES) ? DARK_SQUARES : LIGHT_SQUARES;
+    int blocked = popcount(wp & colorMask);
+    mgScore += blocked * BAD_BISHOP_MG;
+    egScore += blocked * BAD_BISHOP_EG;
+  }
+
+  // Black bishops
+  Bitboard bbishops = bb.byPiece[8];   // B_BISHOP
+  Bitboard bp = bb.byPiece[6];          // B_PAWN
+  while (bbishops) {
+    Square sq = popLsb(bbishops);
+    Bitboard colorMask = (squareBB(sq) & DARK_SQUARES) ? DARK_SQUARES : LIGHT_SQUARES;
+    int blocked = popcount(bp & colorMask);
+    mgScore -= blocked * BAD_BISHOP_MG;
+    egScore -= blocked * BAD_BISHOP_EG;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Rook behind passed pawn (Tarrasch Rule) — EG only.
+//
+// A rook behind a friendly passed pawn supports its advance; behind an
+// enemy passed pawn, it restricts the advance.
+//
+// Reference: https://www.chessprogramming.org/Tarrasch_Rule
+// ---------------------------------------------------------------------------
+
+static constexpr int ROOK_BEHIND_OWN_PASSER_EG   =  15;
+static constexpr int ROOK_BEHIND_ENEMY_PASSER_EG  = -10;
+
+static void evalRookBehindPasser(const BitboardSet& bb, int& egScore) {
+  Bitboard whitePawns = bb.byPiece[0];
+  Bitboard blackPawns = bb.byPiece[6];
+  Bitboard whiteRooks = bb.byPiece[3];   // W_ROOK
+  Bitboard blackRooks = bb.byPiece[9];   // B_ROOK
+
+  // Check white passers with rooks on the same file
+  Bitboard wp = whitePawns;
+  while (wp) {
+    Square sq = popLsb(wp);
+    if (!isPassed(sq, Color::WHITE, blackPawns)) continue;
+    int file = colOf(sq);
+    Bitboard fileMask = FILE_A << file;
+
+    // Own rook behind the passer (lower rank for white)
+    Bitboard ownRooksOnFile = whiteRooks & fileMask;
+    while (ownRooksOnFile) {
+      Square rsq = popLsb(ownRooksOnFile);
+      if (rsq < sq) egScore += ROOK_BEHIND_OWN_PASSER_EG;
+    }
+    // Enemy rook behind our passer (lower rank = behind from black's view)
+    Bitboard enemyRooksOnFile = blackRooks & fileMask;
+    while (enemyRooksOnFile) {
+      Square rsq = popLsb(enemyRooksOnFile);
+      if (rsq < sq) egScore += ROOK_BEHIND_ENEMY_PASSER_EG;
+    }
+  }
+
+  // Check black passers with rooks on the same file
+  Bitboard bpawns = blackPawns;
+  while (bpawns) {
+    Square sq = popLsb(bpawns);
+    if (!isPassed(sq, Color::BLACK, whitePawns)) continue;
+    int file = colOf(sq);
+    Bitboard fileMask = FILE_A << file;
+
+    // Own rook behind the passer (higher rank for black)
+    Bitboard ownRooksOnFile = blackRooks & fileMask;
+    while (ownRooksOnFile) {
+      Square rsq = popLsb(ownRooksOnFile);
+      if (rsq > sq) egScore -= ROOK_BEHIND_OWN_PASSER_EG;
+    }
+    // Enemy rook behind black's passer (higher rank = behind from white's view)
+    Bitboard enemyRooksOnFile = whiteRooks & fileMask;
+    while (enemyRooksOnFile) {
+      Square rsq = popLsb(enemyRooksOnFile);
+      if (rsq > sq) egScore -= ROOK_BEHIND_ENEMY_PASSER_EG;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Main evaluation entry point
 // ---------------------------------------------------------------------------
 
@@ -1133,21 +1472,26 @@ int evaluatePosition(const BitboardSet& bb,
   }
 
   evalPawnStructure(bb, mgScore, egScore, pawnHash);
+  evalPassedPawnKingDist(bb, egScore);
   evalBishopPair(bb, mgScore, egScore);
+  evalBadBishop(bb, mgScore, egScore);
   evalRookFiles(bb, mgScore, egScore);
   evalRookOnSeventh(bb, mgScore, egScore);
+  evalRookBehindPasser(bb, egScore);
   evalKnightOutposts(bb, mgScore, egScore);
   evalKingSafety(bb, mgScore, egScore);
   evalCenterControl(bb, mgScore, egScore);
-  evalKingTropism(bb, mgScore);
   evalSpace(bb, mgScore, egScore);
   evalTrappedPieces(bb, mgScore, egScore);
 
-  // Mobility and connectivity require full attack computation — one call.
-  attacks::init();
+  // Mobility, connectivity, threats, and king danger require full attack
+  // computation — one call.  Precondition: attacks::init() must have been
+  // called before first evaluation (guaranteed by Position constructor).
   attacks::AttackInfo info = attacks::computeAll(bb);
   evalMobility(bb, info, mgScore, egScore);
   evalConnectivity(bb, info, mgScore, egScore);
+  evalThreats(bb, info, mgScore, egScore);
+  evalKingDanger(bb, info, mgScore);
 
   int phase = popcount(bb.byPiece[1] | bb.byPiece[7])  * PHASE_KNIGHT
             + popcount(bb.byPiece[2] | bb.byPiece[8])  * PHASE_BISHOP
@@ -1156,7 +1500,26 @@ int evaluatePosition(const BitboardSet& bb,
 
   if (phase > MAX_PHASE) phase = MAX_PHASE;
 
-  return (mgScore * phase + egScore * (MAX_PHASE - phase)) / MAX_PHASE;
+  int score = (mgScore * phase + egScore * (MAX_PHASE - phase)) / MAX_PHASE;
+
+  // --- Opposite-color bishop scaling ---
+  // When each side has exactly one bishop and they are on opposite color
+  // complexes, the position has strong drawish tendencies.  Scale the
+  // score toward zero to reflect this.
+  // Reference: https://www.chessprogramming.org/Bishops_of_Opposite_Colors
+  if (phase <= 6) {  // endgame positions only
+    Bitboard wb = bb.byPiece[2];      // W_BISHOP (Zobrist index)
+    Bitboard bbish = bb.byPiece[8];  // B_BISHOP (Zobrist index)
+    if (popcount(wb) == 1 && popcount(bbish) == 1) {
+      bool whiteDark  = (wb & DARK_SQUARES) != 0;
+      bool blackDark  = (bbish & DARK_SQUARES) != 0;
+      if (whiteDark != blackDark) {
+        score = score * 3 / 4;
+      }
+    }
+  }
+
+  return score;
 }
 
 }  // namespace eval

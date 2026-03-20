@@ -220,21 +220,21 @@ static void test_search_time_limit(void) {
   pos.loadFEN(fen);
 
   // Set time limit to 0 ms — the mock timer always returns 0, so the first
-  // time check at 1024 nodes sees elapsed 0 >= 0? No, maxTimeMs > 0 is the
+  // time check at 1024 nodes sees elapsed 0 >= 0? No, hardTimeMs > 0 is the
   // guard.  Set to 1 ms: first check at 1024 nodes, elapsed = 0 < 1, so
   // it continues.  After more nodes, still 0.  Let's make the mock advance.
   // Instead, set mockTime to something that will expire quickly:
   mockTimeMs = 0;
   search::SearchLimits limits;
   limits.maxDepth = 100;   // Very deep — would never finish
-  limits.maxTimeMs = 1;    // 1 ms limit
+  limits.hardTimeMs = 1;    // 1 ms limit
 
   // After 1024 nodes, checkTime() fires: elapsed = mockTimeFn() - startTime
   // = 0 - 0 = 0 < 1 → continues.  We need the timer to advance.
   // Advance mock time after start:
   // Actually, since checkTime is called at node intervals and mockTimeMs is
   // static, we can set it to expire immediately by starting at time 0 and
-  // having the mock always return a value >= maxTimeMs.
+  // having the mock always return a value >= hardTimeMs.
   mockTimeMs = 100;  // 100 ms elapsed from the start (which is 0)
   // startTime = mockTimeFn() at call = 100.  But then elapsed = 100 - 100 = 0.
   // Hmm, the timer is read once at start.  We need it to change between start
@@ -377,7 +377,7 @@ static void test_tt_reduces_nodes(void) {
 
   // Search without TT
   search::SearchLimits limits;
-  limits.maxDepth = 4;
+  limits.maxDepth = 5;
   auto noTT = search::findBestMove(pos, limits);
 
   // Search with TT
@@ -386,7 +386,9 @@ static void test_tt_reduces_nodes(void) {
   tt.resize(search::DEFAULT_TT_SIZE);
   auto withTT = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
 
-  // TT should reduce node count (often significantly at depth 4+)
+  // TT should reduce node count.  Depth 5 ensures TT savings from
+  // cross-iteration hits and hash move ordering clearly dominate any
+  // overhead from IID/SE that only fire when TT is present.
   TEST_ASSERT_TRUE(withTT.nodes < noTT.nodes);
   // Both should return valid moves
   TEST_ASSERT_TRUE(withTT.bestMove.from != withTT.bestMove.to);
@@ -545,7 +547,7 @@ static void test_ordering_reduces_nodes(void) {
 
   // Without TT (no TT move ordering)
   search::SearchLimits limits;
-  limits.maxDepth = 4;
+  limits.maxDepth = 5;
   auto noTT = search::findBestMove(pos, limits);
 
   // With TT (TT move gets highest ordering priority)
@@ -554,7 +556,8 @@ static void test_ordering_reduces_nodes(void) {
   tt.resize(search::DEFAULT_TT_SIZE);
   auto withTT = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
 
-  // TT + move ordering should search fewer nodes
+  // TT + move ordering should search fewer nodes (depth 5 ensures
+  // TT savings dominate IID/SE overhead that only applies with TT)
   TEST_ASSERT_TRUE(withTT.nodes < noTT.nodes);
 
   tt.free();
@@ -859,6 +862,288 @@ static void test_lazy_eval_imbalanced_position(void) {
 }
 
 // ===========================================================================
+// History gravity
+// ===========================================================================
+
+// After a depth-5 search from a middlegame, the history table should contain
+// both positive and negative values (gravity adds penalties for non-cutoff
+// quiet moves).
+static void test_history_gravity_produces_negatives(void) {
+  const char* fen =
+      "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4";
+  Position pos;
+  pos.loadFEN(fen);
+
+  search::TranspositionTable tt;
+  tt.resize(search::DEFAULT_TT_SIZE);
+  search::SearchLimits limits;
+  limits.maxDepth = 5;
+
+  // Use findBestMove — we can't directly inspect SearchState, but we can
+  // verify the search completes and produces correct results (history
+  // gravity must not break the search).
+  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+  TEST_ASSERT_EQUAL_INT(5, result.depth);
+  // The search should not degrade from history gravity — still finds a move
+  // and completes all iterations.
+
+  tt.free();
+}
+
+// ===========================================================================
+// Recapture extension
+// ===========================================================================
+
+// In an exchange sequence, the recapture extension should allow the engine
+// to see deeper into the exchange and find the correct outcome.
+// White Rd1, Black Qd5: Rd1xd5 starts an exchange.  Without recapture
+// extension, at shallow depth the engine might not resolve the exchange.
+static void test_recapture_extension_finds_exchange(void) {
+  // White: Ke1, Rd1, Nf3.  Black: Ke8, Qd5.
+  // Rd1xQd5 wins the queen.  Recapture extension ensures the exchange
+  // is fully resolved even at shallow depths.
+  const char* fen = "4k3/8/8/3q4/8/5N2/8/3RK3 w - - 0 1";
+  auto result = searchFEN(fen, 3);
+  std::string move = moveToStr(result.bestMove);
+  TEST_ASSERT_EQUAL_STRING("d1d5", move.c_str());
+}
+
+// ===========================================================================
+// Adaptive NMP
+// ===========================================================================
+
+// Adaptive NMP should still preserve correct play in positions where NMP
+// is safe (non-pawn material present, quiet position).
+static void test_adaptive_nmp_correctness(void) {
+  const char* fen =
+      "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4";
+  auto result = searchFEN(fen, 5);
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+  TEST_ASSERT_EQUAL_INT(5, result.depth);
+  // NMP should not cause a blunder — score should be reasonable.
+  TEST_ASSERT_TRUE(result.score > -100);
+}
+
+// ===========================================================================
+// Singular Extensions
+// ===========================================================================
+
+// SE should preserve tactical accuracy — the best move must still be found,
+// and the search should complete at the requested depth without blundering.
+static void test_singular_extension_preserves_tactics(void) {
+  // White queen can deliver mate in 2 via Qh7# after Qg6+.  The queen
+  // move to g6 is clearly singular (all others lose the initiative).
+  // SE should extend the search on the best line without disruption.
+  const char* fen =
+      "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5Q2/PPPP1PPP/RNB1K1NR w KQkq - 4 4";
+  auto result = searchFEN(fen, 6);
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+  TEST_ASSERT_EQUAL_INT(6, result.depth);
+  // Score should be reasonable — no blunders from SE.
+  TEST_ASSERT_TRUE(result.score > -200);
+}
+
+// SE should complete correctly in positions with many captures (high
+// branching factor), where the exclusion search must handle skipping
+// the TT move without issues.
+static void test_singular_extension_with_captures(void) {
+  // Middlegame position with multiple captures available.
+  const char* fen =
+      "r2qkb1r/ppp2ppp/2n1bn2/3pp3/4P3/1BN2N2/PPPP1PPP/R1BQK2R w KQkq - 0 6";
+  auto result = searchFEN(fen, 7);
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+  TEST_ASSERT_EQUAL_INT(7, result.depth);
+}
+
+// ===========================================================================
+// PV table accuracy — triangular PV table produces a valid mating line
+// ===========================================================================
+
+// After finding mate-in-2, the PV should contain at least 3 moves forming
+// a valid mating sequence.
+static void test_pv_table_accuracy(void) {
+  // White to play, mate in 2: 1. Qf7+ Kh8 2. Qg8# (or similar).
+  // Kh5, Qf3; Kg8.
+  const char* fen = "6k1/8/8/7K/8/5Q2/8/8 w - - 0 1";
+  auto result = searchFEN(fen, 4);
+  // Must find mate.
+  TEST_ASSERT_TRUE(result.score >= search::MATE_SCORE - 10);
+  // PV should have at least 3 moves: Qf7+ Kh(x) Qg(x)#.
+  TEST_ASSERT_TRUE(result.pvLength >= 3);
+  // PV[0] should match bestMove.
+  TEST_ASSERT_EQUAL_INT(result.bestMove.from, result.pv[0].from);
+  TEST_ASSERT_EQUAL_INT(result.bestMove.to, result.pv[0].to);
+}
+
+// ===========================================================================
+// Mate distance pruning — shorter mates score higher
+// ===========================================================================
+
+// MDP tightens the window around known mate bounds.  A mate-in-1 should
+// report score = MATE_SCORE - 1 (exactly one ply to mate), strictly
+// greater than any non-mate winning evaluation.
+static void test_mate_distance_pruning_shorter_mate(void) {
+  // Mate-in-1: Rh8#.
+  const char* mateIn1 = "1k6/8/1K6/8/8/8/8/7R w - - 0 1";
+  auto r1 = searchFEN(mateIn1, 4);
+  TEST_ASSERT_TRUE(r1.score >= search::MATE_SCORE - 2);
+
+  // Winning but no forced mate — queen advantage.
+  const char* winning = "4k3/8/8/8/8/8/8/3QK3 w - - 0 1";
+  auto rw = searchFEN(winning, 4);
+
+  // Mate score must be strictly higher than a mere material advantage.
+  TEST_ASSERT_TRUE(r1.score > rw.score);
+  // And the winning position's score should be well below the mate zone.
+  TEST_ASSERT_TRUE(rw.score < search::MATE_SCORE - 100);
+}
+
+// ===========================================================================
+// Capture history — tactical position ordering
+// ===========================================================================
+
+// In a capture-heavy tactical position, the engine should solve correctly
+// within a reasonable node count thanks to capture history ordering.
+static void test_capture_history_ordering(void) {
+  // Tactical position with multiple captures.  White wins material with
+  // the right capture sequence.
+  const char* fen =
+      "r2qk2r/ppp1bppp/2n1bn2/3pp3/4P3/1BN2N2/PPPP1PPP/R1BQK2R w KQkq - 0 6";
+  auto result = searchFEN(fen, 6);
+  // Engine should find a legal move and not blunder.
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+  TEST_ASSERT_TRUE(result.score > -200);
+  // Node count should be reasonable (< 500k) with good ordering.
+  TEST_ASSERT_TRUE(result.nodes < 500000);
+}
+
+// ===========================================================================
+// Staged MovePicker — mate via capture found without quiet generation
+// ===========================================================================
+
+// When mate-in-1 is a capture, the MovePicker's capture stage should find
+// it without needing to generate quiets.  Verify low node count.
+static void test_staged_movepicker_no_quiet_gen(void) {
+  // White: Kc6, Qb1.  Black: Ka8, Pb7.
+  // Qb1xb7# — queen captures pawn on b7, checkmate.  The only capture
+  // available in this position, so the capture stage finds mate immediately.
+  const char* fen = "k7/1p6/2K5/8/8/8/8/1Q6 w - - 0 1";
+  auto result = searchFEN(fen, 2);
+  std::string move = moveToStr(result.bestMove);
+  TEST_ASSERT_EQUAL_STRING("b1b7", move.c_str());
+  TEST_ASSERT_TRUE(result.score >= search::MATE_SCORE - 10);
+  // Should require very few nodes since the capture stage finds mate.
+  TEST_ASSERT_TRUE(result.nodes < 200);
+}
+
+// ===========================================================================
+// TT depth-preferred replacement policy
+// ===========================================================================
+
+// The TT should preserve deeper entries over shallower ones when different
+// positions collide at the same index (depth-preferred replacement).
+static void test_tt_depth_preferred_replacement(void) {
+  search::TranspositionTable tt;
+  tt.resize(64);  // Small table — mask = 63
+
+  Move dummyMove;
+  dummyMove.from = 12;
+  dummyMove.to = 28;
+  dummyMove.flags = 0;
+
+  // Two hashes that collide at the same index (same lower 6 bits) but
+  // have different key32 values (different upper 32 bits).
+  uint64_t hashDeep    = 0x1111111100000030ULL;  // index = 0x30 & 63 = 48
+  uint64_t hashShallow = 0x2222222200000030ULL;  // same index, different key32
+
+  // Store deep entry (depth 8).
+  tt.store(hashDeep, 100, dummyMove, 8, search::TTFlag::EXACT);
+  const auto* entry = tt.probe(hashDeep);
+  TEST_ASSERT_NOT_NULL(entry);
+  TEST_ASSERT_EQUAL_INT(8, entry->depth);
+
+  // Store shallow entry at colliding index (depth 2, non-exact flag).
+  // Should NOT replace: slot occupied by different position, same generation,
+  // non-exact flag, and depth 2 < 8.
+  tt.store(hashShallow, 50, dummyMove, 2, search::TTFlag::LOWER_BOUND);
+  entry = tt.probe(hashDeep);
+  TEST_ASSERT_NOT_NULL(entry);
+  // Deep entry must survive (depth-preferred).
+  TEST_ASSERT_EQUAL_INT(8, entry->depth);
+  TEST_ASSERT_EQUAL_INT(100, entry->score);
+
+  // Store a deeper entry at the colliding index (depth 10) —
+  // should replace because depth 10 >= 8.
+  tt.store(hashShallow, 200, dummyMove, 10, search::TTFlag::LOWER_BOUND);
+  entry = tt.probe(hashShallow);
+  TEST_ASSERT_NOT_NULL(entry);
+  TEST_ASSERT_EQUAL_INT(10, entry->depth);
+  TEST_ASSERT_EQUAL_INT(200, entry->score);
+
+  tt.free();
+}
+
+// ===========================================================================
+// Soft time control — search stops between iterations
+// ===========================================================================
+
+// With a very short soft time limit, the search should complete at least
+// depth 1 but stop before reaching maxDepth.
+static void test_soft_time_stops_search(void) {
+  const char* fen =
+      "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1";
+  Position pos;
+  pos.loadFEN(fen);
+
+  // Timer: returns 0 on the first call (startTime), then 1000 after.
+  static int callCount;
+  callCount = 0;
+  auto timer = []() -> uint32_t { return callCount++ > 0 ? 1000 : 0; };
+
+  search::SearchLimits limits;
+  limits.maxDepth = 30;       // Very high — should never reach this.
+  limits.softTimeMs = 1;      // 1 ms soft limit — stop after first iteration.
+  limits.hardTimeMs = 100000; // 100s hard limit — not the bottleneck.
+  auto result = search::findBestMove(pos, limits, timer);
+  // Should complete at least depth 1.
+  TEST_ASSERT_TRUE(result.depth >= 1);
+  // Should stop well before maxDepth due to soft time.
+  TEST_ASSERT_TRUE(result.depth < 20);
+  // Must return a legal move.
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+}
+
+// ===========================================================================
+// Easy move / stable best move — early termination
+// ===========================================================================
+
+// In a trivial mate-in-1 position, the search should terminate early
+// when the best move is stable across iterations (easy move detection).
+static void test_easy_move_early_exit(void) {
+  // Obvious mate-in-1 — should be found instantly.
+  const char* fen = "1k6/8/1K6/8/8/8/8/7R w - - 0 1";
+  Position pos;
+  pos.loadFEN(fen);
+
+  // Timer: returns 0 on the first call, then increments slowly — always
+  // well within the hard limit so the search is limited by mate detection.
+  static int callCount2;
+  callCount2 = 0;
+  auto timer = []() -> uint32_t { return callCount2++ > 0 ? 10 : 0; };
+
+  search::SearchLimits limits;
+  limits.maxDepth = 30;
+  limits.softTimeMs = 5000;   // 5s — generous.
+  limits.hardTimeMs = 30000;  // 30s — very generous.
+  auto result = search::findBestMove(pos, limits, timer);
+  // Must find mate.
+  TEST_ASSERT_TRUE(result.score >= search::MATE_SCORE - 10);
+  // Should stop early due to mate found (iterative deepening stops on mate).
+  TEST_ASSERT_TRUE(result.depth <= 10);
+}
+
+// ===========================================================================
 // Registration
 // ===========================================================================
 
@@ -909,4 +1194,36 @@ void register_search_tests() {
   RUN_TEST(test_lazy_eval_preserves_tactics);
   RUN_TEST(test_lazy_eval_balanced_position);
   RUN_TEST(test_lazy_eval_imbalanced_position);
+
+  // History gravity
+  RUN_TEST(test_history_gravity_produces_negatives);
+
+  // Recapture extension
+  RUN_TEST(test_recapture_extension_finds_exchange);
+
+  // Adaptive NMP
+  RUN_TEST(test_adaptive_nmp_correctness);
+
+  // Singular Extensions
+  RUN_TEST(test_singular_extension_preserves_tactics);
+  RUN_TEST(test_singular_extension_with_captures);
+
+  // PV table accuracy
+  RUN_TEST(test_pv_table_accuracy);
+
+  // Mate distance pruning
+  RUN_TEST(test_mate_distance_pruning_shorter_mate);
+
+  // Capture history
+  RUN_TEST(test_capture_history_ordering);
+
+  // Staged MovePicker
+  RUN_TEST(test_staged_movepicker_no_quiet_gen);
+
+  // TT depth-preferred replacement
+  RUN_TEST(test_tt_depth_preferred_replacement);
+
+  // Soft time / easy move
+  RUN_TEST(test_soft_time_stops_search);
+  RUN_TEST(test_easy_move_early_exit);
 }

@@ -141,7 +141,7 @@ Alpha-beta search and Engine facade. Depends on `lib/core/`.
 
 | File | Purpose |
 |------|---------|
-| `src/search.h/.cpp` | `search` namespace: on-board chess engine — negamax with alpha-beta pruning + quiescence search + iterative deepening + check extensions + PVS + null move pruning (NMP) + late move reductions (LMR) + aspiration windows + root move reordering + delta pruning (quiescence) + futility pruning (shallow negamax) + SEE-based capture ordering (losing captures demoted below quiets), transposition table (`TTEntry` 12 bytes, `TranspositionTable`), move ordering (TT move → good captures (MVV-LVA, SEE≥0) → killers → history → bad captures (SEE<0)). `findBestMove(pos, limits, timeFunc, infoCallback, tt)` is the single public entry point. `SearchLimits` (depth/time/stop), `SearchResult` (bestMove/score/depth/nodes), `SearchState` (per-search heuristics). Constants: `MATE_SCORE`, `INF_SCORE`, `MAX_PLY`, `DEFAULT_TT_SIZE`. |
+| `src/search.h/.cpp` | `search` namespace: on-board chess engine — negamax with alpha-beta pruning + quiescence search (MVV-LVA ordered) + iterative deepening + check extensions + recapture extensions (cached SEE) + PVS + null move pruning (NMP, adaptive R) + late move reductions (logarithmic table + history + improving) + late move pruning (improving-aware) + reverse futility pruning (margin/depth, improving-aware) + aspiration windows (gradual doubling) + root move reordering + delta pruning (quiescence) + futility pruning (shallow negamax) + SEE-based capture ordering (losing captures demoted, SEE cached for recapture reuse) + improving flag (ply-2/ply-4 eval tracking), transposition table (`TTEntry` 12 bytes, `TranspositionTable`), move ordering (TT move → good captures (MVV-LVA, SEE≥0) → killers → countermove → history → bad captures (SEE<0)). `findBestMove(pos, limits, timeFunc, infoCallback, tt)` is the single public entry point. `SearchLimits` (depth/time/stop), `SearchResult` (bestMove/score/depth/nodes), `SearchState` (per-search heuristics + staticEvals). Constants: `MATE_SCORE`, `INF_SCORE`, `MAX_PLY`, `DEFAULT_TT_SIZE`. |
 | `src/engine.h/.cpp` | `Engine` class: direct-call facade over `search::findBestMove()`. Owns `Position`, `TranspositionTable`, and stop control. API: `calculateMove(fen, limits) → SearchResult`, `newGame()`, `setTimeFunc()`, `stop()`, `setExternalStop()`. No string serialization. |
 
 ## Unit Tests (`test/`)
@@ -152,11 +152,15 @@ Native unit tests using the PlatformIO Unity framework. Three test suites mirror
 test/
 ├── test_helpers.h                       Shared utilities (setupInitialBoard, clearBoard, placePiece, etc.)
 ├── test_shared.cpp                      Shared globals (bb, mailbox, needsDefaultKings)
+├── epd.h                                EPD parser header: EPDOperation, EPDRecord, parseEPDLine, validateEPDLine
+├── epd.cpp                              EPD parser implementation (auto-linked into all test suites)
 ├── test_core/
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls for core-only tests
 │   ├── test_attacks.cpp                 attacks: leaper tables, slider attacks (+ bulk reference cross-check), x-ray attacks, geometry rays, AttackInfo, SEE
 │   ├── test_bitboard.cpp               LibreChess: square mapping roundtrip, bit ops, square-color masks, BitboardSet mutations
+│   ├── test_epd.cpp                    EPD parser: parseEPDLine (bm/am/id/c0, quoted/comma-separated), validateEPDLine, accessors
 │   ├── test_evaluation.cpp             eval: material scoring, pawn structure, tapered evaluation, pawn analysis functions, positional terms, pawn/eval hash tables
+│   ├── test_eval_regression.cpp        eval regression: 12 fixed-position score assertions (symmetry, material, pawn structure, threats, phase tapering)
 │   ├── test_fen.cpp                    FEN round-trip, boardToFEN/fenToBoard, validateFEN (valid/invalid positions, fields)
 │   ├── test_iterator.cpp               Board iteration: forEachSquare, forEachPiece, somePiece, findPiece
 │   ├── test_movegen.cpp                Move generation per piece type, captures, bulk generation, legal move queries
@@ -175,6 +179,14 @@ test/
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls for engine tests
 │   ├── test_search.cpp                 search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, time/stop control, TT store/probe/clear/pack/mate-score, move ordering, delta pruning, futility pruning, SEE ordering
 │   └── test_engine.cpp                 Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range
+├── test_tactics/                        Tactical test suites (standalone, heavyweight)
+│   ├── test_tactics.cpp                 Suite runner: loads .epd files via EPD parser, SAN→coordinate comparison, informational pass rates
+│   ├── wac.epd                          Win At Chess — 300 positions (Reinfeld/Wilson, CPW verbatim)
+│   ├── bk.epd                           Bratko-Kopec — 24 positions (Bratko/Kopec, CPW verbatim)
+│   └── eret.epd                         Eigenmann Rapid Engine Test — 111 positions (Eigenmann, CPW verbatim)
+├── test_benchmarks/                     Performance benchmarks (standalone)
+│   ├── test_all.cpp                    Main entry: register calls for benchmark tests
+│   └── test_nps.cpp                    NPS benchmark: 6 standard positions, 1s/pos, informational throughput measurement
 └── test_perft/
     └── test_perft.cpp                  Perft validation: initial position, kiwipete, and standard positions 3–6
 ```
