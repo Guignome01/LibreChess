@@ -1,6 +1,8 @@
 #include <unity.h>
 
-#include "../epd.h"
+#include "epd.h"
+
+using namespace LibreChess;
 
 // ---------------------------------------------------------------------------
 // parseEPDLine — basic parsing
@@ -94,6 +96,38 @@ static void test_epd_parse_no_space_before_semicolon(void) {
   const EPDOperation* c0 = rec.findOperation("c0");
   TEST_ASSERT_NOT_NULL(c0);
   TEST_ASSERT_EQUAL_STRING("Mate in 7", c0->operands[0].c_str());
+}
+
+// ---------------------------------------------------------------------------
+// parseEPDLine — c9 game result (tuning corpus format)
+// ---------------------------------------------------------------------------
+
+// Tuning corpus line: FEN + c9 "1.0" (white win).
+static void test_epd_parse_c9_white_win(void) {
+  EPDRecord rec = epd::parseEPDLine(
+      "r1bqkbnr/pppppppp/2n5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - c9 \"1.0\";");
+  const EPDOperation* c9 = rec.findOperation("c9");
+  TEST_ASSERT_NOT_NULL(c9);
+  TEST_ASSERT_EQUAL_INT(1, c9->operandCount);
+  TEST_ASSERT_EQUAL_STRING("1.0", c9->operands[0].c_str());
+}
+
+// Tuning corpus: c9 "0.5" (draw).
+static void test_epd_parse_c9_draw(void) {
+  EPDRecord rec = epd::parseEPDLine(
+      "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - c9 \"0.5\";");
+  const EPDOperation* c9 = rec.findOperation("c9");
+  TEST_ASSERT_NOT_NULL(c9);
+  TEST_ASSERT_EQUAL_STRING("0.5", c9->operands[0].c_str());
+}
+
+// Tuning corpus: c9 "0.0" (black win).
+static void test_epd_parse_c9_black_win(void) {
+  EPDRecord rec = epd::parseEPDLine(
+      "8/8/8/8/8/8/8/8 w - - c9 \"0.0\";");
+  const EPDOperation* c9 = rec.findOperation("c9");
+  TEST_ASSERT_NOT_NULL(c9);
+  TEST_ASSERT_EQUAL_STRING("0.0", c9->operands[0].c_str());
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +257,9 @@ void register_epd_tests() {
   RUN_TEST(test_epd_parse_quoted_operands);
   RUN_TEST(test_epd_parse_comma_separated_operands);
   RUN_TEST(test_epd_parse_no_space_before_semicolon);
+  RUN_TEST(test_epd_parse_c9_white_win);
+  RUN_TEST(test_epd_parse_c9_draw);
+  RUN_TEST(test_epd_parse_c9_black_win);
   RUN_TEST(test_epd_parse_no_operations);
   RUN_TEST(test_epd_parse_empty_line);
   RUN_TEST(test_epd_parse_incomplete_fen);

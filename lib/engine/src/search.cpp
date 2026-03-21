@@ -755,19 +755,19 @@ inline void updateHistory(int16_t& h, int bonus) {
 
 // ---------------------------------------------------------------------------
 // Material-only evaluation from the side-to-move perspective.
-// Counts material + PST (the cheap part of evaluation) without positional
-// heuristics.  Used by lazy evaluation to decide if the full eval is worth
-// computing.
+// Counts material using eval::materialValue() — the single source of truth
+// for piece values.  No positional terms; used by lazy evaluation to decide
+// if the full eval is worth computing.
 // ---------------------------------------------------------------------------
-
-static constexpr int LAZY_MATERIAL[] = {100, 300, 300, 500, 900, 0};
 
 int lazyEval(const Position& pos) {
   const BitboardSet& bb = pos.bitboards();
   int score = 0;
+  // PieceType enum: PAWN=1 .. QUEEN=5, matching byPiece index + 1.
   for (int i = 0; i < 6; ++i) {
-    score += popcount(bb.byPiece[i]) * LAZY_MATERIAL[i];
-    score -= popcount(bb.byPiece[i + 6]) * LAZY_MATERIAL[i];
+    int val = eval::materialValue(static_cast<PieceType>(i + 1));
+    score += popcount(bb.byPiece[i]) * val;
+    score -= popcount(bb.byPiece[i + 6]) * val;
   }
   return (pos.sideToMove() == Color::WHITE) ? score : -score;
 }
@@ -866,11 +866,12 @@ int quiescence(Position& pos, int alpha, int beta, SearchState& state) {
     // --- Delta Pruning ---
     // If the captured piece's value plus a safety margin cannot raise the
     // score to alpha, this capture is hopeless — skip it.
-    // EP captures always take a pawn (100 cp).
+    // Uses eval::materialValue() for consistent piece values.
     {
-      int capturedValue = m.isEP()
-          ? 100
-          : MVV_LVA_VALUE[raw(pieceType(pos.mailbox()[m.to]))] * 100;
+      PieceType capType = m.isEP()
+          ? PieceType::PAWN
+          : pieceType(pos.mailbox()[m.to]);
+      int capturedValue = eval::materialValue(capType);
       if (standPat + capturedValue + DELTA_MARGIN < alpha) continue;
     }
 
@@ -911,6 +912,14 @@ int negamax(Position& pos, int depth, int alpha, int beta,
             int ply, SearchState& state, Piece prevPiece, int prevTo,
             Move excludedMove = Move()) {
   state.nodes++;
+
+  // --- Ply overflow guard ---
+  // Check extensions can push ply beyond MAX_PLY.  All per-ply arrays
+  // (pvLength, staticEvals, killers, pv) are sized MAX_PLY, so we must
+  // bail out before writing out of bounds.
+  // Reference: https://www.chessprogramming.org/Maximum_Search_Depth
+  if (ply >= MAX_PLY - 1) return evaluate(pos, state);
+
   state.pvLength[ply] = 0;  // no PV line yet at this ply
 
   // Periodic time / cancellation check

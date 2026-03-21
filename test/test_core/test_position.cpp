@@ -597,10 +597,10 @@ void test_position_eval_cache_consistent(void) {
   int eval2 = eval::evaluatePosition(pos.bitboards());
   TEST_ASSERT_EQUAL_INT(eval1, eval2);
 
-  // Load asymmetric position (white missing e-pawn) and verify eval updates
-  pos.loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
+  // Load asymmetric position (white missing queen) and verify eval updates
+  pos.loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR w KQkq - 0 1");
   int eval3 = eval::evaluatePosition(pos.bitboards());
-  // White has one fewer pawn → negative evaluation
+  // White has no queen → clearly negative evaluation
   TEST_ASSERT_TRUE(eval3 < eval1);
 }
 

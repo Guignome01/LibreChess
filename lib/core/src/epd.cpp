@@ -2,6 +2,8 @@
 
 #include <cctype>
 
+namespace LibreChess {
+
 // ---------------------------------------------------------------------------
 // EPDRecord convenience accessors
 // ---------------------------------------------------------------------------
@@ -169,3 +171,5 @@ bool validateEPDLine(const std::string& line) {
 }
 
 }  // namespace epd
+
+}  // namespace LibreChess

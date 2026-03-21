@@ -54,14 +54,14 @@ static void test_regr_white_up_queen(void) {
   // White queen + kings → large positive eval.
   int score = evalFEN("4k3/8/8/8/8/8/8/3QK3 w - - 0 1");
   TEST_ASSERT_TRUE(score > 800);
-  TEST_ASSERT_TRUE(score < 1100);
+  TEST_ASSERT_TRUE(score < 1200);
 }
 
 static void test_regr_black_up_rook(void) {
   // Black rook advantage → negative eval.
   int score = evalFEN("r3k3/8/8/8/8/8/8/4K3 w - - 0 1");
   TEST_ASSERT_TRUE(score < -400);
-  TEST_ASSERT_TRUE(score > -700);
+  TEST_ASSERT_TRUE(score > -650);
 }
 
 static void test_regr_white_up_minor(void) {

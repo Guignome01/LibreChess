@@ -123,6 +123,8 @@ Board representation, rules, movegen, evaluation, notation, FEN, and utilities. 
 | `src/types.h` | Core chess types: `Piece`/`Color`/`PieceType` enums, `PositionState` struct (castling rights, en passant target, halfmove/fullmove clocks) with `initial()` static factory, `GameResult` enum class, `gameResultName()`, `HashHistory` struct (Zobrist hash array + count, used by `Position`), `MoveFormat` enum class (`COORDINATE`, `SAN`, `LAN`). Game-management types (`GameHeader`, recording constants) live in `lib/game/src/types.h`. |
 | `src/move.h` | Move representation: `Move` struct (3 bytes: from/to/flags with capture, EP, castling, promotion bits), `ScoredMove` struct (Move + int16_t score), `MoveList` struct (fixed-size `Move[218]` array + count, used by both per-piece and bulk move generation, with `targetRow`/`targetCol`/`target` adapter accessors for UI), `MoveResult` struct (returned by `Position::makeMove()`), `MoveEntry` struct (move log record with `build()` factory), `invalidMoveResult()` factory. |
 | `src/zobrist.h` | `zobrist` namespace (header-only): constexpr-generated Zobrist keys, piece-index mapping, full-board hash computation (`computeHash(bb, mailbox, turn, state)`), pawn-only hash (`computePawnHash(bb)`) for pawn hash table. `Position` uses incremental hashing via XOR deltas in `applyMoveToBoard()`; `computeHash()` is retained for debug verification. |
+| `src/epd.h/.cpp` | `epd` namespace (wrapped in `namespace LibreChess`): generic EPD parser. Structs: `EPDOperation` (opcode + operand array), `EPDRecord` (4-field FEN + operation list + `findOperation()` / `id()` accessors). Functions: `parseEPDLine()`, `validateEPDLine()`. Supports standard opcodes (`bm`, `am`, `id`, `c0`, `c9`). Used by tactical test suites and the offline tuner. |
+| `src/trace.h/.cpp` | `eval` namespace: trace extraction for offline tuning (`#ifdef TUNING` only). `TraceEntry` (param index + coefficient), `Trace` (entry list + helpers), `TrainingPosition` (trace + game result). `extractTrace(bb)` mirrors `evaluatePosition()` recording per-parameter linear contributions. `buildParamMap()` / `findParam()` for name↔index lookup. Compiled only in the tuner build. |
 ### Game Orchestrator (`lib/game/`)
 
 Game lifecycle, history, recording, and DI interfaces. Depends on `lib/core/`.
@@ -152,13 +154,11 @@ Native unit tests using the PlatformIO Unity framework. Three test suites mirror
 test/
 ├── test_helpers.h                       Shared utilities (setupInitialBoard, clearBoard, placePiece, etc.)
 ├── test_shared.cpp                      Shared globals (bb, mailbox, needsDefaultKings)
-├── epd.h                                EPD parser header: EPDOperation, EPDRecord, parseEPDLine, validateEPDLine
-├── epd.cpp                              EPD parser implementation (auto-linked into all test suites)
 ├── test_core/
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls for core-only tests
 │   ├── test_attacks.cpp                 attacks: leaper tables, slider attacks (+ bulk reference cross-check), x-ray attacks, geometry rays, AttackInfo, SEE
 │   ├── test_bitboard.cpp               LibreChess: square mapping roundtrip, bit ops, square-color masks, BitboardSet mutations
-│   ├── test_epd.cpp                    EPD parser: parseEPDLine (bm/am/id/c0, quoted/comma-separated), validateEPDLine, accessors
+│   ├── test_epd.cpp                    EPD parser: parseEPDLine (bm/am/id/c0/c9, quoted/comma-separated), validateEPDLine, accessors
 │   ├── test_evaluation.cpp             eval: material scoring, pawn structure, tapered evaluation, pawn analysis functions, positional terms, pawn/eval hash tables
 │   ├── test_eval_regression.cpp        eval regression: 12 fixed-position score assertions (symmetry, material, pawn structure, threats, phase tapering)
 │   ├── test_fen.cpp                    FEN round-trip, boardToFEN/fenToBoard, validateFEN (valid/invalid positions, fields)
@@ -192,6 +192,15 @@ test/
 ```
 
 Run all: `pio test -e native`. Run one suite: `pio test -e native -f test_core`. See [PlatformIO Unit Testing docs](https://docs.platformio.org/en/latest/advanced/unit-testing/index.html).
+
+## Tuning Tools (`tools/tune/`)
+
+Offline Texel tuning infrastructure. Compiles the core and engine libraries with `-DTUNING` (which makes `EVAL_CONST` parameters mutable `int` instead of `constexpr`) and runs gradient descent on a labeled EPD corpus.
+
+| File | Purpose |
+|------|---------|
+| `tune.cpp` | Adam gradient-descent optimizer with float accumulators. Loads corpus via `epd::parseEPDLine()` with `c9` result annotations, uses `eval::extractTrace()` to compute per-parameter analytical gradients in double precision, and rounds to integer only at the end. Outputs C++ code for copy-paste into `evaluation.cpp`. |
+| `Makefile` | Builds the tuner using g++ with `-DTUNING -std=gnu++17`. Compiles all core + engine sources into object files, links with `-pthread`. Targets: `tune` (build), `pipeline` (build + run), `clean`. |
 
 ## Build Scripts (`src/web/build/`)
 

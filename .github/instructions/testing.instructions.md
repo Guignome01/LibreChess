@@ -30,13 +30,11 @@ Tests are split into three suites mirroring the library structure (`lib/core/`, 
 test/
 ├── test_helpers.h                       Shared utilities (setupInitialBoard, clearBoard, placePiece, etc.)
 ├── test_shared.cpp                      Shared globals (bb, mailbox, needsDefaultKings)
-├── epd.h                                EPD parser header: EPDOperation, EPDRecord, parseEPDLine, validateEPDLine
-├── epd.cpp                              EPD parser implementation (auto-linked into all test suites)
 ├── test_core/                           Core library tests (lib/core/)
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
 │   ├── test_attacks.cpp                 attacks: leaper tables, slider rays, x-ray attacks, geometry rays (between, line), computeAll, SEE
 │   ├── test_bitboard.cpp                LibreChess: square mapping, bit ops, square-color masks, BitboardSet mutations
-│   ├── test_epd.cpp                     EPD parser: parseEPDLine (bm/am/id/c0, quoted/comma-separated), validateEPDLine, accessors
+│   ├── test_epd.cpp                     EPD parser: parseEPDLine (bm/am/id/c0/c9, quoted/comma-separated), validateEPDLine, accessors
 │   ├── test_evaluation.cpp              eval: material scoring, pawn structure, tapered evaluation, pawn/eval hash tables, trapped pieces, connectivity, bad bishop, rook behind passer, protected/candidate passer, OCB scaling
 │   ├── test_eval_regression.cpp        eval regression: 17 fixed-position score assertions (symmetry, material, pawn structure, threats, phase tapering, bad bishop, rook behind passer, protected passer, candidate passer, OCB scaling)
 │   ├── test_fen.cpp                     FEN round-trip, boardToFEN/fenToBoard, validateFEN
@@ -90,7 +88,7 @@ Each library source file has a corresponding test file in the matching test suit
 | `lib/game/src/history.cpp` | `test_game/` | `test_history.cpp` + `test_history_persistence.cpp` |
 | `lib/engine/src/search.h/cpp` | `test_engine/` | `test_search.cpp` |
 | `lib/engine/src/engine.h/cpp` | `test_engine/` | `test_engine.cpp` |
-| `test/epd.h/cpp` | `test_core/` | `test_epd.cpp` |
+| `lib/core/src/epd.h/cpp` | `test_core/` | `test_epd.cpp` |
 
 Place tests in the suite that mirrors the owning library. When creating a new source file in any of the three libraries, create a matching test file in the corresponding `test_<lib>/` directory and register its test functions in that suite's main file.
 
@@ -168,7 +166,7 @@ Square mapping roundtrip (`squareOf(rowOf(sq), colOf(sq)) == sq` for all 64). LE
 Leaper attack tables (knight on e4, king on a1, pawn attacks per color). Slider attack functions (rook/bishop/queen on empty board and with blockers). Bulk slider correctness (all 64 squares × 5 occupancy patterns cross-checked against reference ray implementation for both rook and bishop). X-ray attack functions (`xrayRook`, `xrayBishop`). `between` geometry (file/rank/diagonal/anti-diagonal/adjacent/non-colinear). `line` geometry (rank/file/diagonal/non-colinear/endpoints). `computeAll` validation (initial knight attacks, pawn bulk attacks, color unions, kings-only board). SEE: pawn takes undefended knight, pawn takes defended rook, knight takes defended pawn (losing), queen takes defended pawn (losing), rook takes undefended bishop, en passant.
 
 ### EPD Parser (`test_epd.cpp`)
-`parseEPDLine`: basic FEN + bm opcode, multiple opcodes (bm + am + id + c0), quoted id strings, avoid move variations, comma-separated operands. `validateEPDLine`: valid/invalid FEN, missing fields. Accessors: `findOperation()` lookup, `id()` convenience, non-existent opcode returns nullptr yet `id()` returns empty.
+`parseEPDLine`: basic FEN + bm opcode, multiple opcodes (bm + am + id + c0), quoted id strings, avoid move variations, comma-separated operands, c9 game result parsing (white win/draw/black win). `validateEPDLine`: valid/invalid FEN, missing fields. Accessors: `findOperation()` lookup, `id()` convenience, non-existent opcode returns nullptr yet `id()` returns empty.
 
 ### Tactical Suites (`test_tactics/test_tactics.cpp`)
 Engine accuracy benchmarks using standard `.epd` files loaded at runtime via the EPD parser. Each suite reads its `.epd` file, parses each line into an `EPDRecord`, runs `search::findBestMove` at depth 6, converts both expected (SAN) and engine (Move) results to coordinate notation, and compares. Suites: **WAC** (Win At Chess, 300 positions), **BK** (Bratko-Kopec, 24 positions), **ERET** (Eigenmann Rapid Engine Test, 111 positions). Tests are informational — they assert only that at least one position is solved, printing individual mismatches and overall pass rate. Runtime ~3.5 minutes total.

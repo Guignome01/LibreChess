@@ -110,12 +110,66 @@ struct EvalHashTable {
 int evaluatePosition(const BitboardSet& bb,
                      PawnHashTable* pawnHash = nullptr);
 
+// Material value for a piece type, in centipawns.
+// Provides a single source of truth for piece values used by evaluation,
+// lazy evaluation, delta pruning, and SEE.
+// PieceType::NONE returns 0; PieceType::KING returns 0 (not a material piece).
+int materialValue(PieceType pt);
+
 // Pawn-structure query functions (exposed for unit testing).
 void initPawnMasks();
 bool isPassed(int sq, Color color, uint64_t enemyPawns);
 bool isIsolated(int sq, uint64_t friendlyPawns);
 bool isDoubled(int sq, Color color, uint64_t friendlyPawns);
 bool isBackward(int sq, Color color, uint64_t friendlyPawns, uint64_t enemyPawnAttacks);
+
+// ---------------------------------------------------------------------------
+// Tuning API — runtime parameter access for the gradient-descent optimizer.
+// Only available when compiled with -DTUNING.
+// ---------------------------------------------------------------------------
+
+#ifdef TUNING
+namespace tuning {
+
+int paramCount();
+const char* getName(int idx);
+int getValue(int idx);
+void setValue(int idx, int val);
+int getDefault(int idx);
+int getMin(int idx);
+int getMax(int idx);
+int getStep(int idx);
+
+}  // namespace tuning
+
+// ---------------------------------------------------------------------------
+// Eval internals — exposed for trace extraction (trace.cpp).
+// These mirror the file-local constants/functions in evaluation.cpp.
+// Only available in tuning builds; production builds keep them file-local.
+// ---------------------------------------------------------------------------
+
+// Phase weights for game-phase interpolation.
+constexpr int PHASE_KNIGHT = 1;
+constexpr int PHASE_BISHOP = 1;
+constexpr int PHASE_ROOK   = 2;
+constexpr int PHASE_QUEEN  = 4;
+constexpr int MAX_PHASE    = 24;
+
+// King danger table size and fixed per-piece-type weights.
+constexpr int KING_DANGER_TABLE_SIZE = 13;
+extern const int KING_DANGER_WEIGHT[4];
+
+// Mutable king danger table (tunable entries).
+extern int KING_DANGER_TABLE[13];
+
+// Center and space masks.
+extern const Bitboard CENTER_MASK;
+extern const Bitboard WHITE_SPACE_ZONE;
+extern const Bitboard BLACK_SPACE_ZONE;
+
+// Chebyshev (king) distance between two LERF squares.
+int chebyshevDist(Square a, Square b);
+#endif
 
 }  // namespace eval
 }  // namespace LibreChess

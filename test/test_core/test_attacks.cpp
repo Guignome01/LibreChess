@@ -2,6 +2,7 @@
 
 #include <bitboard.h>
 #include <attacks.h>
+#include <evaluation.h>
 
 #include "../test_helpers.h"
 
@@ -518,7 +519,7 @@ static Move makeSEEMove(Position& pos, const char* fen,
 }
 
 // PxN undefended: white pawn e4 captures black knight on d5.
-// Gain = +300 (knight value). No recapture.
+// Gain = knight value. No recapture.
 static void test_see_pawn_takes_undefended_knight(void) {
   init();
   // White: Ke1, Pe4.  Black: Ke8, Nd5.
@@ -526,12 +527,12 @@ static void test_see_pawn_takes_undefended_knight(void) {
   Position pos;
   Move m = makeSEEMove(pos, fen, "e4", "d5", MOVE_CAPTURE);
   int score = see(pos.bitboards(), pos.mailbox(), m);
-  TEST_ASSERT_EQUAL_INT(300, score);  // knight value
+  TEST_ASSERT_EQUAL_INT(eval::materialValue(PieceType::KNIGHT), score);
 }
 
 // PxR defended by pawn: white pawn e5 captures black rook on d6,
-// but d6 is defended by a black pawn on e7. PxR(+500), then pxP(-100).
-// Gain = 500 - 100 = +400.
+// but d6 is defended by a black pawn on e7. PxR(+rook), then pxP(-pawn).
+// Gain = rook - pawn.
 static void test_see_pawn_takes_defended_rook(void) {
   init();
   // White: Ke1, Pe5.  Black: Ke8, Rd6, Pe7.
@@ -539,13 +540,15 @@ static void test_see_pawn_takes_defended_rook(void) {
   Position pos;
   Move m = makeSEEMove(pos, fen, "e5", "d6", MOVE_CAPTURE);
   int score = see(pos.bitboards(), pos.mailbox(), m);
-  // PxR=500, then pxP=100 recapture → net = 500-100 = 400.
-  TEST_ASSERT_EQUAL_INT(400, score);
+  // PxR=rook, then pxP=pawn recapture → net = rook-pawn.
+  int expected = eval::materialValue(PieceType::ROOK)
+               - eval::materialValue(PieceType::PAWN);
+  TEST_ASSERT_EQUAL_INT(expected, score);
 }
 
 // NxP defended by pawn: white knight captures black pawn on d6,
 // but d6 is defended by a black pawn on c7.
-// Ne5xd6 (+100), c7xd6 recapture (-300). Net = 100-300 = -200.
+// Ne5xd6 (+pawn), c7xd6 recapture (-knight). Net = pawn - knight.
 static void test_see_knight_takes_defended_pawn(void) {
   init();
   // White: Ke1, Ne5.  Black: Ke8, Pd6, Pc7.
@@ -553,11 +556,13 @@ static void test_see_knight_takes_defended_pawn(void) {
   Position pos;
   Move m = makeSEEMove(pos, fen, "e5", "d6", MOVE_CAPTURE);
   int score = see(pos.bitboards(), pos.mailbox(), m);
-  TEST_ASSERT_EQUAL_INT(-200, score);  // losing capture
+  int expected = eval::materialValue(PieceType::PAWN)
+               - eval::materialValue(PieceType::KNIGHT);
+  TEST_ASSERT_EQUAL_INT(expected, score);
 }
 
 // QxP defended by pawn: white queen captures a pawn defended by another pawn.
-// QxP(+100), pxQ(-900). Net = 100-900 = -800. Major loss.
+// QxP(+pawn), pxQ(-queen). Net = pawn - queen. Major loss.
 static void test_see_queen_takes_defended_pawn(void) {
   init();
   // White: Ke1, Qe5.  Black: Ke8, Pd6, Pc7. (c7 defends d6)
@@ -565,10 +570,12 @@ static void test_see_queen_takes_defended_pawn(void) {
   Position pos;
   Move m = makeSEEMove(pos, fen, "e5", "d6", MOVE_CAPTURE);
   int score = see(pos.bitboards(), pos.mailbox(), m);
-  TEST_ASSERT_EQUAL_INT(-800, score);  // 100 - 900
+  int expected = eval::materialValue(PieceType::PAWN)
+               - eval::materialValue(PieceType::QUEEN);
+  TEST_ASSERT_EQUAL_INT(expected, score);
 }
 
-// RxB: white rook takes undefended black bishop. Gain = +300.
+// RxB: white rook takes undefended black bishop. Gain = bishop value.
 static void test_see_rook_takes_undefended_bishop(void) {
   init();
   // White: Ke1, Ra5.  Black: Ke8, Bd5.
@@ -577,7 +584,7 @@ static void test_see_rook_takes_undefended_bishop(void) {
   Position pos;
   Move m = makeSEEMove(pos, fen, "a5", "d5", MOVE_CAPTURE);
   int score = see(pos.bitboards(), pos.mailbox(), m);
-  TEST_ASSERT_EQUAL_INT(300, score);
+  TEST_ASSERT_EQUAL_INT(eval::materialValue(PieceType::BISHOP), score);
 }
 
 // EP capture: SEE should handle en passant correctly.
@@ -591,8 +598,8 @@ static void test_see_en_passant(void) {
   Move m = makeSEEMove(pos, fen, "e5", "f6",
                        MOVE_CAPTURE | MOVE_EP);
   int score = see(pos.bitboards(), pos.mailbox(), m);
-  // PxP ep: gain = 100 (pawn), no defenders of f6.
-  TEST_ASSERT_EQUAL_INT(100, score);
+  // PxP ep: gain = pawn value, no defenders of f6.
+  TEST_ASSERT_EQUAL_INT(eval::materialValue(PieceType::PAWN), score);
 }
 
 void register_attacks_tests() {

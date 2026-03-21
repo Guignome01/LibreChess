@@ -1,8 +1,8 @@
-#ifndef TEST_EPD_H
-#define TEST_EPD_H
+#ifndef LIBRECHESS_EPD_H
+#define LIBRECHESS_EPD_H
 
 // ---------------------------------------------------------------------------
-// EPD (Extended Position Description) parser — test utility.
+// EPD (Extended Position Description) parser.
 //
 // Parses EPD records as defined by the Chess Programming Wiki. An EPD line
 // consists of the first four FEN fields (piece placement, side to move,
@@ -14,13 +14,14 @@
 //   am  — avoid move(s), SAN               (ERET)
 //   id  — position identification, quoted   (all suites)
 //   c0  — comment, quoted                   (WAC)
+//   c9  — game result, quoted               (tuning corpora)
 //
-// Placed in test/ root so PlatformIO auto-links it into every test binary,
-// available to both test_core/ (EPD parser unit tests) and test_tactics/
-// (tactical suite runner).
+// Reference: https://www.chessprogramming.org/Extended_Position_Description
 // ---------------------------------------------------------------------------
 
 #include <string>
+
+namespace LibreChess {
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -74,4 +75,6 @@ bool validateEPDLine(const std::string& line);
 
 }  // namespace epd
 
-#endif  // TEST_EPD_H
+}  // namespace LibreChess
+
+#endif  // LIBRECHESS_EPD_H

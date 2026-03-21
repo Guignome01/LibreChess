@@ -27,6 +27,8 @@ Pure C++ with no hardware dependencies. Natively compilable for unit tests. Uses
 | `zobrist` | Zobrist key generation (constexpr xorshift64), piece-index mapping, full-board hash computation, pawn-only hash (`computePawnHash`) for pawn hash table | Stateless namespace (header-only) |
 | `fen` | FEN parse/serialize/validate | Stateless namespace |
 | `notation` | Coordinate/SAN/LAN conversion | Stateless namespace |
+| `epd` | Generic EPD parser (`namespace LibreChess`): `EPDOperation`, `EPDRecord`, `parseEPDLine()`, `validateEPDLine()`. Supports standard opcodes (`bm`, `am`, `id`, `c0`, `c9`). Used by tactical test suites and offline tuner. | Stateless namespace |
+| `eval` (trace) | Trace extraction for offline tuning (`#ifdef TUNING` only): `TraceEntry`, `Trace`, `TrainingPosition`, `extractTrace(bb)` (mirrors `evaluatePosition()` recording per-parameter contributions), `buildParamMap()`, `findParam()`. Defined in `trace.h`/`trace.cpp`. | Stateless namespace (compiled only with `-DTUNING`) |
 
 ### Game (`lib/game/`)
 

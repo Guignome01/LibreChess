@@ -1,4 +1,5 @@
 #include "attacks.h"
+#include "evaluation.h"
 
 namespace LibreChess {
 namespace attacks {
@@ -352,8 +353,13 @@ bool isSquareUnderAttack(const BitboardSet& bb, Square sq, Color defendingColor)
 // Reference: https://www.chessprogramming.org/Static_Exchange_Evaluation
 // ---------------------------------------------------------------------------
 
-// SEE piece values in centipawns, indexed by PieceType.
-static constexpr int SEE_VALUE[] = {0, 100, 300, 300, 500, 900, 20000};
+// SEE piece value lookup — uses eval::materialValue() for consistency with
+// the evaluation function.  King uses a sentinel value (captures by king
+// are always favorable if legal — the king can never be recaptured).
+static int seeValue(PieceType pt) {
+  if (pt == PieceType::KING) return 20000;
+  return eval::materialValue(pt);
+}
 
 // Find the least valuable attacker of `sq` for `color`.  Returns the
 // PieceType and sets `attackerBB` to the single-bit bitboard of the
@@ -416,7 +422,7 @@ int see(const BitboardSet& bb, const Piece mailbox[], Move m) {
   // Each subsequent entry is the value of the recapture.
   int gain[32];
   int d = 0;
-  gain[d] = SEE_VALUE[piece::raw(captured)];
+  gain[d] = seeValue(captured);
 
   // Remove the initial attacker from occupancy.
   Bitboard occupied = bb.occupied;
@@ -445,7 +451,7 @@ int see(const BitboardSet& bb, const Piece mailbox[], Move m) {
     ++d;
     // The gain is the value of the piece currently on the target square,
     // minus what was lost previously (negamax convention).
-    gain[d] = SEE_VALUE[piece::raw(onTarget)] - gain[d - 1];
+    gain[d] = seeValue(onTarget) - gain[d - 1];
 
     // If the gain is already so negative that even capturing can't help,
     // we can prune: the side to move would choose not to recapture.

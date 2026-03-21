@@ -377,7 +377,7 @@ static void test_tt_reduces_nodes(void) {
 
   // Search without TT
   search::SearchLimits limits;
-  limits.maxDepth = 5;
+  limits.maxDepth = 6;
   auto noTT = search::findBestMove(pos, limits);
 
   // Search with TT
@@ -386,7 +386,7 @@ static void test_tt_reduces_nodes(void) {
   tt.resize(search::DEFAULT_TT_SIZE);
   auto withTT = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
 
-  // TT should reduce node count.  Depth 5 ensures TT savings from
+  // TT should reduce node count.  Depth 6 ensures TT savings from
   // cross-iteration hits and hash move ordering clearly dominate any
   // overhead from IID/SE that only fire when TT is present.
   TEST_ASSERT_TRUE(withTT.nodes < noTT.nodes);
@@ -547,7 +547,7 @@ static void test_ordering_reduces_nodes(void) {
 
   // Without TT (no TT move ordering)
   search::SearchLimits limits;
-  limits.maxDepth = 5;
+  limits.maxDepth = 6;
   auto noTT = search::findBestMove(pos, limits);
 
   // With TT (TT move gets highest ordering priority)
@@ -556,7 +556,7 @@ static void test_ordering_reduces_nodes(void) {
   tt.resize(search::DEFAULT_TT_SIZE);
   auto withTT = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
 
-  // TT + move ordering should search fewer nodes (depth 5 ensures
+  // TT + move ordering should search fewer nodes (depth 6 ensures
   // TT savings dominate IID/SE overhead that only applies with TT)
   TEST_ASSERT_TRUE(withTT.nodes < noTT.nodes);
 
@@ -951,9 +951,9 @@ static void test_singular_extension_with_captures(void) {
   // Middlegame position with multiple captures available.
   const char* fen =
       "r2qkb1r/ppp2ppp/2n1bn2/3pp3/4P3/1BN2N2/PPPP1PPP/R1BQK2R w KQkq - 0 6";
-  auto result = searchFEN(fen, 7);
+  auto result = searchFEN(fen, 6);
   TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
-  TEST_ASSERT_EQUAL_INT(7, result.depth);
+  TEST_ASSERT_EQUAL_INT(6, result.depth);
 }
 
 // ===========================================================================

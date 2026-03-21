@@ -23,7 +23,7 @@
 #include <position.h>
 #include <search.h>
 
-#include "../epd.h"
+#include "epd.h"
 
 using namespace LibreChess;
 
