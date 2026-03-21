@@ -6,7 +6,9 @@
 
 #include <algorithm>
 #include <cstdio>
+#include <cstring>
 #include <unordered_map>
+#include <vector>
 
 namespace LibreChess {
 namespace eval {
@@ -790,6 +792,217 @@ Trace extractTrace(const BitboardSet& bb) {
 
   return t;
 }
+
+// ===========================================================================
+// Tuning parameter registry — maps tunable eval constants to metadata
+// so the optimizer can read/write them at runtime.
+//
+// Reference: https://www.chessprogramming.org/Texel%27s_Tuning_Method
+// ===========================================================================
+
+struct TuneEntry {
+  const char* name;
+  int* ptr;
+  int defaultVal;
+  int min, max, step;
+};
+
+// ---------------------------------------------------------------------------
+// buildRegistry — constructs the full parameter list on first access.
+//
+// Scalar eval constants are listed explicitly.  PST entries (12 arrays × 64
+// squares, minus 16 frozen pawn rank-1/rank-8 squares = 752 entries) are
+// bulk-registered via loops to avoid 752 manual lines.
+// ---------------------------------------------------------------------------
+// clang-format off
+static std::vector<TuneEntry>& buildRegistry() {
+  static std::vector<TuneEntry> reg;
+  if (!reg.empty()) return reg;
+
+  // ---- Scalar entries (78) ------------------------------------------------
+
+  // --- Material (4) ---
+  // MAT_PAWN is pinned at 100 — it defines the centipawn unit.
+  // Search pruning margins (futility, delta, razor) are calibrated for
+  // 100cp/pawn; allowing MAT_PAWN to drift breaks those margins.
+  reg.push_back({"MAT_KNIGHT",              &MATERIAL[1],               321,  250,  400, 10});
+  reg.push_back({"MAT_BISHOP",              &MATERIAL[2],               315,  250,  420, 10});
+  reg.push_back({"MAT_ROOK",                &MATERIAL[3],               525,  400,  610, 10});
+  reg.push_back({"MAT_QUEEN",               &MATERIAL[4],               939,  800, 1250, 20});
+
+  // --- Passed pawn rank bonus (12) ---
+  reg.push_back({"PASSED_R2_MG",            &PASSED_RANK_BONUS_MG[1],    19,    0,   30,  5});
+  reg.push_back({"PASSED_R3_MG",            &PASSED_RANK_BONUS_MG[2],    19,    0,   40,  5});
+  reg.push_back({"PASSED_R4_MG",            &PASSED_RANK_BONUS_MG[3],    11,    0,   50,  5});
+  reg.push_back({"PASSED_R5_MG",            &PASSED_RANK_BONUS_MG[4],    42,    0,  150, 10});
+  reg.push_back({"PASSED_R6_MG",            &PASSED_RANK_BONUS_MG[5],    61,    0,  180, 10});
+  reg.push_back({"PASSED_R7_MG",            &PASSED_RANK_BONUS_MG[6],    95,   20,  300, 15});
+  reg.push_back({"PASSED_R2_EG",            &PASSED_RANK_BONUS_EG[1],     0,    0,   30,  5});
+  reg.push_back({"PASSED_R3_EG",            &PASSED_RANK_BONUS_EG[2],     0,    0,   50,  5});
+  reg.push_back({"PASSED_R4_EG",            &PASSED_RANK_BONUS_EG[3],    27,    0,   80, 10});
+  reg.push_back({"PASSED_R5_EG",            &PASSED_RANK_BONUS_EG[4],    71,    0,  150, 10});
+  reg.push_back({"PASSED_R6_EG",            &PASSED_RANK_BONUS_EG[5],   154,   20,  300, 15});
+  reg.push_back({"PASSED_R7_EG",            &PASSED_RANK_BONUS_EG[6],   236,   80,  500, 20});
+
+  // --- Pawn structure scalars (8) ---
+  reg.push_back({"CONNECTED_PASSED",        &CONNECTED_PASSED,             0,    0,   40,  5});
+  reg.push_back({"ISOLATED_PENALTY",        &ISOLATED_PENALTY,           -17,  -30,    0,  5});
+  reg.push_back({"DOUBLED_PENALTY",         &DOUBLED_PENALTY,              0,  -40,    0,  5});
+  reg.push_back({"BACKWARD_PENALTY",        &BACKWARD_PENALTY,             0,  -35,    0,  5});
+  reg.push_back({"PROTECTED_PASSER_MG",     &PROTECTED_PASSER_MG,         31,    0,   40,  5});
+  reg.push_back({"PROTECTED_PASSER_EG",     &PROTECTED_PASSER_EG,          0,    0,   80,  5});
+  reg.push_back({"CANDIDATE_PASSER_MG",     &CANDIDATE_PASSER_MG,         26,    0,   30,  5});
+  reg.push_back({"CANDIDATE_PASSER_EG",     &CANDIDATE_PASSER_EG,         36,    0,   50,  5});
+
+  // --- Bishop pair (2) ---
+  reg.push_back({"BISHOP_PAIR_MG",          &BISHOP_PAIR_MG,              40,    0,  100,  5});
+  reg.push_back({"BISHOP_PAIR_EG",          &BISHOP_PAIR_EG,              61,   10,  150,  5});
+
+  // --- Rook on file (2) ---
+  reg.push_back({"ROOK_OPEN_FILE",          &ROOK_OPEN_FILE,              15,    0,   50,  5});
+  reg.push_back({"ROOK_SEMI_OPEN_FILE",     &ROOK_SEMI_OPEN_FILE,          2,    0,   40,  5});
+
+  // --- Rook on 7th (2) ---
+  reg.push_back({"ROOK_7TH_MG",             &ROOK_7TH_MG,                 0,    0,   50,  5});
+  reg.push_back({"ROOK_7TH_EG",             &ROOK_7TH_EG,                50,    0,   80,  5});
+
+  // --- Rook behind passer (2) ---
+  reg.push_back({"ROOK_BEHIND_OWN_EG",      &ROOK_BEHIND_OWN_PASSER_EG,  16,    0,   50,  5});
+  reg.push_back({"ROOK_BEHIND_ENEMY_EG",    &ROOK_BEHIND_ENEMY_PASSER_EG,-48,  -50,   10,  5});
+
+  // --- Outpost (1) ---
+  reg.push_back({"OUTPOST_BONUS",           &OUTPOST_BONUS,               19,    0,   60,  5});
+
+  // --- Bad bishop (2) ---
+  reg.push_back({"BAD_BISHOP_MG",           &BAD_BISHOP_MG,                0,  -15,    0,  1});
+  reg.push_back({"BAD_BISHOP_EG",           &BAD_BISHOP_EG,               -5,  -15,    0,  1});
+
+  // --- Trapped pieces (2) ---
+  reg.push_back({"TRAPPED_BISHOP",          &TRAPPED_BISHOP_PENALTY,     -86, -120,    0, 10});
+  reg.push_back({"TRAPPED_ROOK",            &TRAPPED_ROOK_PENALTY,       -44, -100,    0, 10});
+
+  // --- Mobility (8) ---
+  reg.push_back({"MOBILITY_KNIGHT_MG",      &MOBILITY_KNIGHT_MG,           9,    0,   20,  1});
+  reg.push_back({"MOBILITY_KNIGHT_EG",      &MOBILITY_KNIGHT_EG,           0,    0,   12,  1});
+  reg.push_back({"MOBILITY_BISHOP_MG",      &MOBILITY_BISHOP_MG,           5,    0,   12,  1});
+  reg.push_back({"MOBILITY_BISHOP_EG",      &MOBILITY_BISHOP_EG,           5,    0,   12,  1});
+  reg.push_back({"MOBILITY_ROOK_MG",        &MOBILITY_ROOK_MG,             3,    0,   16,  1});
+  reg.push_back({"MOBILITY_ROOK_EG",        &MOBILITY_ROOK_EG,             5,    0,   16,  1});
+  reg.push_back({"MOBILITY_QUEEN_MG",       &MOBILITY_QUEEN_MG,            0,    0,   12,  1});
+  reg.push_back({"MOBILITY_QUEEN_EG",       &MOBILITY_QUEEN_EG,           15,    0,   16,  1});
+
+  // --- King safety shield (3) ---
+  reg.push_back({"SHIELD_MISSING_PAWN",     &SHIELD_MISSING_PAWN,        -38,  -60,    0,  5});
+  reg.push_back({"SHIELD_ADVANCED_PAWN",    &SHIELD_ADVANCED_PAWN,         0,  -20,    0,  5});
+  reg.push_back({"SHIELD_OPEN_FILE",        &SHIELD_OPEN_FILE,           -36,  -50,    0,  5});
+
+  // --- King danger table (12) ---
+  // Entries 1..12 of the nonlinear penalty table.  TABLE[0] = 0 is fixed.
+  // Weights are constexpr — tuning shifts danger via table entries instead,
+  // keeping all parameters linear for analytical gradient computation.
+  reg.push_back({"KD_TABLE_1",              &KING_DANGER_TABLE[1],         0,    0,   20,  5});
+  reg.push_back({"KD_TABLE_2",              &KING_DANGER_TABLE[2],        14,    0,   30,  5});
+  reg.push_back({"KD_TABLE_3",              &KING_DANGER_TABLE[3],        17,    0,   50,  5});
+  reg.push_back({"KD_TABLE_4",              &KING_DANGER_TABLE[4],        35,    0,   80, 10});
+  reg.push_back({"KD_TABLE_5",              &KING_DANGER_TABLE[5],        26,   10,  130, 10});
+  reg.push_back({"KD_TABLE_6",              &KING_DANGER_TABLE[6],        65,   20,  200, 10});
+  reg.push_back({"KD_TABLE_7",              &KING_DANGER_TABLE[7],        98,   40,  280, 15});
+  reg.push_back({"KD_TABLE_8",              &KING_DANGER_TABLE[8],       133,   60,  360, 15});
+  reg.push_back({"KD_TABLE_9",              &KING_DANGER_TABLE[9],       177,   80,  440, 20});
+  reg.push_back({"KD_TABLE_10",             &KING_DANGER_TABLE[10],      231,  100,  500, 20});
+  reg.push_back({"KD_TABLE_11",             &KING_DANGER_TABLE[11],      265,  120,  600, 25});
+  reg.push_back({"KD_TABLE_12",             &KING_DANGER_TABLE[12],      326,  150,  700, 25});
+
+  // --- Center control (2) ---
+  reg.push_back({"CENTER_OCCUPATION",       &CENTER_OCCUPATION_BONUS,       0,    0,   50,  5});
+  reg.push_back({"CENTER_ATTACK",           &CENTER_ATTACK_BONUS,          15,    0,   15,  5});
+
+  // --- Space (1) ---
+  reg.push_back({"SPACE_BONUS",             &SPACE_BONUS,                  10,    0,   10,  1});
+
+  // --- Passed pawn king distance (2) ---
+  reg.push_back({"PASSER_OWN_KING",         &PASSER_OWN_KING,              6,    0,   15,  1});
+  reg.push_back({"PASSER_ENEMY_KING",       &PASSER_ENEMY_KING,           22,    0,   25,  2});
+
+  // --- Threats (12) ---
+  reg.push_back({"THREAT_P_MINOR_MG",       &THREAT_PAWN_VS_MINOR_MG,      8,    0,   30,  2});
+  reg.push_back({"THREAT_P_MINOR_EG",       &THREAT_PAWN_VS_MINOR_EG,      6,    0,   25,  2});
+  reg.push_back({"THREAT_P_ROOK_MG",        &THREAT_PAWN_VS_ROOK_MG,      12,    0,   35,  2});
+  reg.push_back({"THREAT_P_ROOK_EG",        &THREAT_PAWN_VS_ROOK_EG,       8,    0,   25,  2});
+  reg.push_back({"THREAT_P_QUEEN_MG",       &THREAT_PAWN_VS_QUEEN_MG,     15,    0,   50,  3});
+  reg.push_back({"THREAT_P_QUEEN_EG",       &THREAT_PAWN_VS_QUEEN_EG,     10,    0,   35,  2});
+  reg.push_back({"THREAT_N_ROOK_MG",        &THREAT_MINOR_VS_ROOK_MG,     42,    0,   45,  2});
+  reg.push_back({"THREAT_N_ROOK_EG",        &THREAT_MINOR_VS_ROOK_EG,      2,    0,   45,  2});
+  reg.push_back({"THREAT_N_QUEEN_MG",       &THREAT_MINOR_VS_QUEEN_MG,    22,    0,   55,  2});
+  reg.push_back({"THREAT_N_QUEEN_EG",       &THREAT_MINOR_VS_QUEEN_EG,     0,    0,   40,  2});
+  reg.push_back({"THREAT_R_QUEEN_MG",       &THREAT_ROOK_VS_QUEEN_MG,     22,    0,   30,  1});
+  reg.push_back({"THREAT_R_QUEEN_EG",       &THREAT_ROOK_VS_QUEEN_EG,      0,    0,   25,  1});
+
+  // --- Connectivity (1) ---
+  reg.push_back({"CONNECTIVITY",            &CONNECTIVITY_BONUS,           10,    0,   25,  1});
+  // clang-format on
+
+  // ---- PST entries (752) --------------------------------------------------
+  // 12 arrays × 64 squares = 768, minus 16 frozen pawn squares (rank 1 + 8).
+  // Bulk-registered via loop.  Name strings are heap-allocated (tuning build
+  // only, so the leak is harmless).
+  struct PstDef {
+    const char* prefix;
+    int* data;
+    bool isPawn;
+  };
+  // clang-format off
+  PstDef psts[] = {
+    {"PST_PAWN_MG",   PST_PAWN_MG,   true },
+    {"PST_KNIGHT_MG", PST_KNIGHT_MG, false},
+    {"PST_BISHOP_MG", PST_BISHOP_MG, false},
+    {"PST_ROOK_MG",   PST_ROOK_MG,   false},
+    {"PST_QUEEN_MG",  PST_QUEEN_MG,  false},
+    {"PST_KING_MG",   PST_KING_MG,   false},
+    {"PST_PAWN_EG",   PST_PAWN_EG,   true },
+    {"PST_KNIGHT_EG", PST_KNIGHT_EG, false},
+    {"PST_BISHOP_EG", PST_BISHOP_EG, false},
+    {"PST_ROOK_EG",   PST_ROOK_EG,   false},
+    {"PST_QUEEN_EG",  PST_QUEEN_EG,  false},
+    {"PST_KING_EG",   PST_KING_EG,   false},
+  };
+  // clang-format on
+
+  for (const auto& p : psts) {
+    for (int sq = 0; sq < 64; ++sq) {
+      // Pawn rank 1 (sq 0-7) and rank 8 (sq 56-63) are never occupied.
+      if (p.isPawn && (sq < 8 || sq >= 56)) continue;
+
+      char buf[32];
+      std::snprintf(buf, sizeof(buf), "%s_%d", p.prefix, sq);
+
+      // Heap-allocate name — tuning build only, leak is intentional.
+      char* name = new char[std::strlen(buf) + 1];
+      std::strcpy(name, buf);
+
+      reg.push_back({name, &p.data[sq], p.data[sq], -100, 100, 5});
+    }
+  }
+
+  return reg;
+}
+
+// ---------------------------------------------------------------------------
+// tuning:: accessor functions — thin wrappers around the registry.
+// ---------------------------------------------------------------------------
+
+namespace tuning {
+
+int paramCount()              { return static_cast<int>(buildRegistry().size()); }
+const char* getName(int i)    { return buildRegistry()[i].name; }
+int getValue(int i)           { return *buildRegistry()[i].ptr; }
+void setValue(int i, int v)   { *buildRegistry()[i].ptr = v; }
+int getDefault(int i)         { return buildRegistry()[i].defaultVal; }
+int getMin(int i)             { return buildRegistry()[i].min; }
+int getMax(int i)             { return buildRegistry()[i].max; }
+int getStep(int i)            { return buildRegistry()[i].step; }
+
+}  // namespace tuning
 
 }  // namespace eval
 }  // namespace LibreChess

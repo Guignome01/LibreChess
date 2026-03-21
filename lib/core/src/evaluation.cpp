@@ -4,26 +4,89 @@
 
 #include <cstring>       // memset
 
-// Tuning-only headers — cstdio for snprintf, vector for TUNE_REGISTRY.
+// Under TUNING, eval constants are mutable with external linkage so the
+// tuner (trace.cpp) can read/write them at runtime.  Production builds
+// keep full constexpr optimisation with file-local linkage.
+//
+//   EVAL_CONST  — tunable parameters (mutable in tuning builds).
+//   EVAL_FIXED  — non-tunable constants that trace.cpp must see.
 #ifdef TUNING
-#include <cstdio>
-#include <vector>
-#endif
-
-// Under TUNING, eval constants are mutable so the tuner can modify
-// them at runtime.  Production builds keep full constexpr optimisation.
-#ifdef TUNING
-#define EVAL_CONST
+#define EVAL_CONST              // mutable, external linkage
+#define EVAL_FIXED const        // immutable, external linkage
 #else
-#define EVAL_CONST constexpr
+#define EVAL_CONST static constexpr   // immutable, file-local
+#define EVAL_FIXED static constexpr   // immutable, file-local
 #endif
 
 namespace {
 
 using namespace LibreChess;
 
+// ---------------------------------------------------------------------------
+// Pawn-structure masks — file-local, initialized lazily.
+// ---------------------------------------------------------------------------
+
+Bitboard pawnPassedMask[2][64] = {};
+Bitboard pawnIsolatedMask[8] = {};
+Bitboard pawnForwardMask[2][64] = {};
+
+Bitboard adjacentFilesMask(int file) {
+  Bitboard mask = 0;
+  if (file > 0) mask |= fileBB(file - 1);
+  if (file < 7) mask |= fileBB(file + 1);
+  return mask;
+}
+
+void initPawnMasksImpl() {
+  static bool initialized = false;
+  if (initialized) return;
+  initialized = true;
+
+  for (int file = 0; file < 8; ++file)
+    pawnIsolatedMask[file] = adjacentFilesMask(file);
+
+  for (Square sq = 0; sq < 64; ++sq) {
+    const int rank = sq / 8;  // 0=rank1, 7=rank8 (LERF)
+    const int file = sq & 7;
+
+    Bitboard sameAndAdjacentFiles = fileBB(file);
+    if (file > 0) sameAndAdjacentFiles |= fileBB(file - 1);
+    if (file < 7) sameAndAdjacentFiles |= fileBB(file + 1);
+
+    Bitboard whitePassed = 0, blackPassed = 0;
+    Bitboard whiteForward = 0, blackForward = 0;
+
+    for (int r = rank + 1; r < 8; ++r) {
+      Bitboard rankMask = rankBB(r);
+      whitePassed |= sameAndAdjacentFiles & rankMask;
+      whiteForward |= fileBB(file) & rankMask;
+    }
+    for (int r = rank - 1; r >= 0; --r) {
+      Bitboard rankMask = rankBB(r);
+      blackPassed |= sameAndAdjacentFiles & rankMask;
+      blackForward |= fileBB(file) & rankMask;
+    }
+
+    pawnPassedMask[raw(Color::WHITE)][sq] = whitePassed;
+    pawnPassedMask[raw(Color::BLACK)][sq] = blackPassed;
+    pawnForwardMask[raw(Color::WHITE)][sq] = whiteForward;
+    pawnForwardMask[raw(Color::BLACK)][sq] = blackForward;
+  }
+}
+
+}  // anonymous namespace
+
+// ===========================================================================
+// eval — evaluation constants, helpers, and public API
+// ===========================================================================
+
+namespace LibreChess {
+namespace eval {
+
+// ---------------------------------------------------------------------------
 // Material values indexed by piece type offset (P=0 N=1 B=2 R=3 Q=4 K=5).
 // In centipawns to avoid mixing float/int arithmetic in the inner loop.
+// ---------------------------------------------------------------------------
 EVAL_CONST int MATERIAL[] = {100, 321, 315, 525, 939, 0};
 
 // ---------------------------------------------------------------------------
@@ -33,16 +96,12 @@ EVAL_CONST int MATERIAL[] = {100, 321, 315, 525, 939, 0};
 //
 // Midgame (MG) tables: king should hide behind pawns, minor pieces want
 // center control. Endgame (EG) tables: king should be active and central,
-// passed pawns and advancement matter more. Non-king/pawn pieces share the
-// same table for both phases initially — differentiate later if tuning shows
-// a benefit.
+// passed pawns and advancement matter more.
 // ---------------------------------------------------------------------------
 
 // clang-format off
 
 // --- Midgame PSTs ---
-// Under TUNING, PSTs are mutable int arrays so the tuner can adjust
-// individual square values.  Production builds keep constexpr for zero-cost.
 
 EVAL_CONST int PST_PAWN_MG[64] = {
    0,  0,  0,  0,  0,  0,  0,  0,   // rank 1 (never occupied)
@@ -112,7 +171,6 @@ EVAL_CONST int PST_KING_MG[64] = {
 
 // --- Endgame PSTs ---
 
-// Pawn EG: advancement is critical — passed pawns on high ranks are valuable.
 EVAL_CONST int PST_PAWN_EG[64] = {
    0,  0,  0,  0,  0,  0,  0,  0,   // rank 1 (never occupied)
   30, 30, 31, 29, 30, 34, 31, 30,   // rank 2
@@ -124,8 +182,6 @@ EVAL_CONST int PST_PAWN_EG[64] = {
    0,  0,  0,  0,  0,  0,  0,  0    // rank 8 (never occupied)
 };
 
-// Knight EG: centralization still important but less aggressive than MG.
-// Short-range piece — edge/corner penalised, center rewarded moderately.
 EVAL_CONST int PST_KNIGHT_EG[64] = {
   -7,  0, -1, -1, -1,  0, -2, -7,
    0,  0, -1,  1,  0,  0,  0,  0,
@@ -137,7 +193,6 @@ EVAL_CONST int PST_KNIGHT_EG[64] = {
   -7, -1,  0,  0,  0, -1,  0, -7
 };
 
-// Bishop EG: long diagonals gain value, edges less harsh than MG.
 EVAL_CONST int PST_BISHOP_EG[64] = {
    0,  0, -1,  0,  0, -1,  0,  0,
    0,  1, -1,  0,  1,  0,  3,  0,
@@ -149,7 +204,6 @@ EVAL_CONST int PST_BISHOP_EG[64] = {
    0,  0,  0,  0,  0,  0,  0,  0
 };
 
-// Rook EG: 7th rank bonus (promote/cut off king), central files encouraged.
 EVAL_CONST int PST_ROOK_EG[64] = {
    3,  1,  1,  1,  0,  2, -1, -1,
   -1,  0,  0,  0,  0,  0,  0, -1,
@@ -161,7 +215,6 @@ EVAL_CONST int PST_ROOK_EG[64] = {
    1,  1,  1,  0,  0,  0,  0,  0
 };
 
-// Queen EG: central activity rewarded, moderate bonus throughout.
 EVAL_CONST int PST_QUEEN_EG[64] = {
    0,  0,  0,  1,  0,  0,  0,  0,
    0,  0,  1,  2,  2,  0,  0,  0,
@@ -173,7 +226,6 @@ EVAL_CONST int PST_QUEEN_EG[64] = {
    0,  0,  0,  0,  0,  0,  0,  0
 };
 
-// King EG: wants to be active and central (opposite of MG).
 EVAL_CONST int PST_KING_EG[64] = {
   -1,  0,  0, -4, -2, -1,  1, -6,
   -1,  0,  1, -1, -1,  3,  5, -1,
@@ -188,97 +240,14 @@ EVAL_CONST int PST_KING_EG[64] = {
 // clang-format on
 
 // Indexed by piece type offset (PAWN=0 .. KING=5).
-// Pointer arrays reference the EVAL_CONST int tables above.
-// Always const int* — production arrays are constexpr (immutable), tuning code
-// accesses individual squares directly (not through these pointers).
-const int* const PST_MG[6] = {
+// File-local PST pointer lookup tables.
+static const int* const PST_MG[6] = {
     PST_PAWN_MG, PST_KNIGHT_MG, PST_BISHOP_MG,
     PST_ROOK_MG, PST_QUEEN_MG,  PST_KING_MG};
 
-// EG tables — per-piece endgame placement values.
-const int* const PST_EG[6] = {
+static const int* const PST_EG[6] = {
     PST_PAWN_EG, PST_KNIGHT_EG, PST_BISHOP_EG,
     PST_ROOK_EG, PST_QUEEN_EG,  PST_KING_EG};
-
-// ---------------------------------------------------------------------------
-// Game phase — non-pawn material determines how much the position resembles
-// an opening (phase = MAX_PHASE) vs a pure endgame (phase = 0).
-// Weights: N=1, B=1, R=2, Q=4 → max 4*(1+1+2+4) = 24.
-// ---------------------------------------------------------------------------
-constexpr int PHASE_KNIGHT = 1;
-constexpr int PHASE_BISHOP = 1;
-constexpr int PHASE_ROOK   = 2;
-constexpr int PHASE_QUEEN  = 4;
-constexpr int MAX_PHASE     = 24;  // 2*(1+1+2*2+4) = 24
-
-// ---------------------------------------------------------------------------
-// Pawn-structure masks (absorbed from chess_pieces.cpp).
-// File-local — initialized lazily.
-// ---------------------------------------------------------------------------
-
-Bitboard pawnPassedMask[2][64] = {};
-Bitboard pawnIsolatedMask[8] = {};
-Bitboard pawnForwardMask[2][64] = {};
-
-Bitboard adjacentFilesMask(int file) {
-  Bitboard mask = 0;
-  if (file > 0) mask |= fileBB(file - 1);
-  if (file < 7) mask |= fileBB(file + 1);
-  return mask;
-}
-
-void initPawnMasksImpl() {
-  static bool initialized = false;
-  if (initialized) return;
-  initialized = true;
-
-  for (int file = 0; file < 8; ++file)
-    pawnIsolatedMask[file] = adjacentFilesMask(file);
-
-  for (Square sq = 0; sq < 64; ++sq) {
-    const int rank = sq / 8;  // 0=rank1, 7=rank8 (LERF)
-    const int file = sq & 7;
-
-    Bitboard sameAndAdjacentFiles = fileBB(file);
-    if (file > 0) sameAndAdjacentFiles |= fileBB(file - 1);
-    if (file < 7) sameAndAdjacentFiles |= fileBB(file + 1);
-
-    Bitboard whitePassed = 0, blackPassed = 0;
-    Bitboard whiteForward = 0, blackForward = 0;
-
-    for (int r = rank + 1; r < 8; ++r) {
-      Bitboard rankMask = rankBB(r);
-      whitePassed |= sameAndAdjacentFiles & rankMask;
-      whiteForward |= fileBB(file) & rankMask;
-    }
-    for (int r = rank - 1; r >= 0; --r) {
-      Bitboard rankMask = rankBB(r);
-      blackPassed |= sameAndAdjacentFiles & rankMask;
-      blackForward |= fileBB(file) & rankMask;
-    }
-
-    pawnPassedMask[raw(Color::WHITE)][sq] = whitePassed;
-    pawnPassedMask[raw(Color::BLACK)][sq] = blackPassed;
-    pawnForwardMask[raw(Color::WHITE)][sq] = whiteForward;
-    pawnForwardMask[raw(Color::BLACK)][sq] = blackForward;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Pawn structure constants — centipawns.
-// Values are initial estimates based on CPW's Simplified Evaluation Function.
-// ---------------------------------------------------------------------------
-
-}  // anonymous namespace
-
-// ===========================================================================
-// eval — public API + internal helpers
-// ===========================================================================
-
-namespace LibreChess {
-namespace eval {
-
-using namespace LibreChess;
 
 // ---------------------------------------------------------------------------
 // Pawn-structure query functions (public for testing).
@@ -340,23 +309,23 @@ bool isBackward(Square sq, Color color, Bitboard friendlyPawns, Bitboard enemyPa
 // Reference: https://www.chessprogramming.org/Passed_Pawn
 // ---------------------------------------------------------------------------
 
-static EVAL_CONST int PASSED_RANK_BONUS_MG[] = {0, 19, 19, 11, 42, 61, 95, 0};
-static EVAL_CONST int PASSED_RANK_BONUS_EG[] = {0, 0, 0, 27, 71, 154, 236, 0};
-static EVAL_CONST int CONNECTED_PASSED    =  0;
-static EVAL_CONST int ISOLATED_PENALTY    = -17;
-static EVAL_CONST int DOUBLED_PENALTY     =  0;
-static EVAL_CONST int BACKWARD_PENALTY    =  0;
+EVAL_CONST int PASSED_RANK_BONUS_MG[] = {0, 19, 19, 11, 42, 61, 95, 0};
+EVAL_CONST int PASSED_RANK_BONUS_EG[] = {0, 0, 0, 27, 71, 154, 236, 0};
+EVAL_CONST int CONNECTED_PASSED    =  0;
+EVAL_CONST int ISOLATED_PENALTY    = -17;
+EVAL_CONST int DOUBLED_PENALTY     =  0;
+EVAL_CONST int BACKWARD_PENALTY    =  0;
 
 // Protected passed pawn — extra bonus when a passer is defended by a pawn.
 // Reference: https://www.chessprogramming.org/Passed_Pawn#Protected
-static EVAL_CONST int PROTECTED_PASSER_MG = 31;
-static EVAL_CONST int PROTECTED_PASSER_EG = 0;
+EVAL_CONST int PROTECTED_PASSER_MG = 31;
+EVAL_CONST int PROTECTED_PASSER_EG = 0;
 
 // Candidate passed pawn — bonus for a pawn that could become passed with
 // one favorable exchange (only one blocking enemy pawn).
 // Reference: https://www.chessprogramming.org/Candidate_Passed_Pawn
-static EVAL_CONST int CANDIDATE_PASSER_MG = 26;
-static EVAL_CONST int CANDIDATE_PASSER_EG = 36;
+EVAL_CONST int CANDIDATE_PASSER_MG = 26;
+EVAL_CONST int CANDIDATE_PASSER_EG = 36;
 
 // ---------------------------------------------------------------------------
 // Pawn structure scoring — centipawns, white-relative.
@@ -495,8 +464,8 @@ static void evalPawnStructure(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Bishop_Pair
 // ---------------------------------------------------------------------------
 
-static EVAL_CONST int BISHOP_PAIR_MG = 40;
-static EVAL_CONST int BISHOP_PAIR_EG = 61;
+EVAL_CONST int BISHOP_PAIR_MG = 40;
+EVAL_CONST int BISHOP_PAIR_EG = 61;
 
 static void evalBishopPair(const BitboardSet& bb,
                            int& mgScore, int& egScore) {
@@ -520,8 +489,8 @@ static void evalBishopPair(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Rook_on_Open_File
 // ---------------------------------------------------------------------------
 
-static EVAL_CONST int ROOK_OPEN_FILE      = 15;
-static EVAL_CONST int ROOK_SEMI_OPEN_FILE = 2;
+EVAL_CONST int ROOK_OPEN_FILE      = 15;
+EVAL_CONST int ROOK_SEMI_OPEN_FILE = 2;
 
 static void evalRookFiles(const BitboardSet& bb,
                           int& mgScore, int& egScore) {
@@ -568,8 +537,8 @@ static void evalRookFiles(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Rook_on_Seventh
 // ---------------------------------------------------------------------------
 
-static EVAL_CONST int ROOK_7TH_MG = 0;
-static EVAL_CONST int ROOK_7TH_EG = 50;
+EVAL_CONST int ROOK_7TH_MG = 0;
+EVAL_CONST int ROOK_7TH_EG = 50;
 
 static void evalRookOnSeventh(const BitboardSet& bb,
                               int& mgScore, int& egScore) {
@@ -613,14 +582,14 @@ static void evalRookOnSeventh(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Mobility
 // ---------------------------------------------------------------------------
 
-static EVAL_CONST int MOBILITY_KNIGHT_MG = 9;
-static EVAL_CONST int MOBILITY_KNIGHT_EG = 0;
-static EVAL_CONST int MOBILITY_BISHOP_MG = 5;
-static EVAL_CONST int MOBILITY_BISHOP_EG = 5;
-static EVAL_CONST int MOBILITY_ROOK_MG   = 3;
-static EVAL_CONST int MOBILITY_ROOK_EG   = 5;
-static EVAL_CONST int MOBILITY_QUEEN_MG  = 0;
-static EVAL_CONST int MOBILITY_QUEEN_EG  = 15;
+EVAL_CONST int MOBILITY_KNIGHT_MG = 9;
+EVAL_CONST int MOBILITY_KNIGHT_EG = 0;
+EVAL_CONST int MOBILITY_BISHOP_MG = 5;
+EVAL_CONST int MOBILITY_BISHOP_EG = 5;
+EVAL_CONST int MOBILITY_ROOK_MG   = 3;
+EVAL_CONST int MOBILITY_ROOK_EG   = 5;
+EVAL_CONST int MOBILITY_QUEEN_MG  = 0;
+EVAL_CONST int MOBILITY_QUEEN_EG  = 15;
 
 static void evalMobility(const BitboardSet& bb,
                          const attacks::AttackInfo& info,
@@ -667,9 +636,9 @@ static void evalMobility(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/King_Safety
 // ---------------------------------------------------------------------------
 
-static EVAL_CONST int SHIELD_MISSING_PAWN  = -38;
-static EVAL_CONST int SHIELD_ADVANCED_PAWN = 0;
-static EVAL_CONST int SHIELD_OPEN_FILE     = -36;
+EVAL_CONST int SHIELD_MISSING_PAWN  = -38;
+EVAL_CONST int SHIELD_ADVANCED_PAWN = 0;
+EVAL_CONST int SHIELD_OPEN_FILE     = -36;
 
 // Evaluate pawn shield for one side. Returns MG bonus (positive = good).
 static int evalShieldOneSide(const BitboardSet& bb, Color color) {
@@ -756,11 +725,7 @@ static void evalKingSafety(const BitboardSet& bb,
 constexpr Square SQ_D4 = 27, SQ_D5 = 35, SQ_E4 = 28, SQ_E5 = 36;
 
 // Center mask: the four central squares {d4, d5, e4, e5}.
-#ifdef TUNING
-const Bitboard CENTER_MASK =
-#else
-static constexpr Bitboard CENTER_MASK =
-#endif
+EVAL_FIXED Bitboard CENTER_MASK =
     squareBB(SQ_D4) | squareBB(SQ_D5) | squareBB(SQ_E4) | squareBB(SQ_E5);
 
 // ---------------------------------------------------------------------------
@@ -777,8 +742,8 @@ static constexpr Bitboard CENTER_MASK =
 // Reference: https://www.chessprogramming.org/Center_Control
 // ---------------------------------------------------------------------------
 
-static EVAL_CONST int CENTER_OCCUPATION_BONUS = 0;
-static EVAL_CONST int CENTER_ATTACK_BONUS     = 15;
+EVAL_CONST int CENTER_OCCUPATION_BONUS = 0;
+EVAL_CONST int CENTER_ATTACK_BONUS     = 15;
 
 static void evalCenterControl(const BitboardSet& bb,
                               int& mgScore, int& egScore) {
@@ -837,8 +802,8 @@ static int chebyshevDist(Square a, Square b) {
 // Reference: https://www.chessprogramming.org/King_Distance#Passed_Pawn
 // ---------------------------------------------------------------------------
 
-static EVAL_CONST int PASSER_OWN_KING   = 6;
-static EVAL_CONST int PASSER_ENEMY_KING = 22;
+EVAL_CONST int PASSER_OWN_KING   = 6;
+EVAL_CONST int PASSER_ENEMY_KING = 22;
 
 static void evalPassedPawnKingDist(const BitboardSet& bb, int& egScore) {
   Bitboard whitePawns = bb.byPiece[0];
@@ -885,22 +850,14 @@ static void evalPassedPawnKingDist(const BitboardSet& bb, int& egScore) {
 // Reference: https://www.chessprogramming.org/Space
 // ---------------------------------------------------------------------------
 
-static EVAL_CONST int SPACE_BONUS = 10;
+EVAL_CONST int SPACE_BONUS = 10;
 
 // Files c–f, ranks 2–4 (LERF ranks 1–3) for White.
-#ifdef TUNING
-const Bitboard WHITE_SPACE_ZONE =
-#else
-static constexpr Bitboard WHITE_SPACE_ZONE =
-#endif
+EVAL_FIXED Bitboard WHITE_SPACE_ZONE =
     (FILE_C | FILE_D | FILE_E | FILE_F) & (RANK_2 | RANK_3 | RANK_4);
 
 // Files c–f, ranks 5–7 (LERF ranks 4–6) for Black.
-#ifdef TUNING
-const Bitboard BLACK_SPACE_ZONE =
-#else
-static constexpr Bitboard BLACK_SPACE_ZONE =
-#endif
+EVAL_FIXED Bitboard BLACK_SPACE_ZONE =
     (FILE_C | FILE_D | FILE_E | FILE_F) & (RANK_5 | RANK_6 | RANK_7);
 
 static void evalSpace(const BitboardSet& bb,
@@ -933,7 +890,7 @@ static void evalSpace(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Outposts
 // ---------------------------------------------------------------------------
 
-static EVAL_CONST int OUTPOST_BONUS = 19;
+EVAL_CONST int OUTPOST_BONUS = 19;
 
 static void evalKnightOutposts(const BitboardSet& bb,
                                int& mgScore, int& egScore) {
@@ -1023,8 +980,8 @@ static void evalKnightOutposts(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Trapped_Pieces
 // ---------------------------------------------------------------------------
 
-static EVAL_CONST int TRAPPED_BISHOP_PENALTY = -86;
-static EVAL_CONST int TRAPPED_ROOK_PENALTY   = -44;
+EVAL_CONST int TRAPPED_BISHOP_PENALTY = -86;
+EVAL_CONST int TRAPPED_ROOK_PENALTY   = -44;
 
 static void evalTrappedPieces(const BitboardSet& bb,
                               int& mgScore, int& /* egScore */) {
@@ -1114,7 +1071,7 @@ static void evalTrappedPieces(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Connectivity
 // ---------------------------------------------------------------------------
 
-static EVAL_CONST int CONNECTIVITY_BONUS = 10;
+EVAL_CONST int CONNECTIVITY_BONUS = 10;
 
 static void evalConnectivity(const BitboardSet& bb,
                              const attacks::AttackInfo& info,
@@ -1150,18 +1107,18 @@ static void evalConnectivity(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Evaluation#Threats
 // ---------------------------------------------------------------------------
 
-static EVAL_CONST int THREAT_PAWN_VS_MINOR_MG  =  8;
-static EVAL_CONST int THREAT_PAWN_VS_MINOR_EG  =  6;
-static EVAL_CONST int THREAT_PAWN_VS_ROOK_MG   = 12;
-static EVAL_CONST int THREAT_PAWN_VS_ROOK_EG   =  8;
-static EVAL_CONST int THREAT_PAWN_VS_QUEEN_MG  = 15;
-static EVAL_CONST int THREAT_PAWN_VS_QUEEN_EG  = 10;
-static EVAL_CONST int THREAT_MINOR_VS_ROOK_MG  = 42;
-static EVAL_CONST int THREAT_MINOR_VS_ROOK_EG  =  2;
-static EVAL_CONST int THREAT_MINOR_VS_QUEEN_MG = 22;
-static EVAL_CONST int THREAT_MINOR_VS_QUEEN_EG =  0;
-static EVAL_CONST int THREAT_ROOK_VS_QUEEN_MG  = 22;
-static EVAL_CONST int THREAT_ROOK_VS_QUEEN_EG  =  0;
+EVAL_CONST int THREAT_PAWN_VS_MINOR_MG  =  8;
+EVAL_CONST int THREAT_PAWN_VS_MINOR_EG  =  6;
+EVAL_CONST int THREAT_PAWN_VS_ROOK_MG   = 12;
+EVAL_CONST int THREAT_PAWN_VS_ROOK_EG   =  8;
+EVAL_CONST int THREAT_PAWN_VS_QUEEN_MG  = 15;
+EVAL_CONST int THREAT_PAWN_VS_QUEEN_EG  = 10;
+EVAL_CONST int THREAT_MINOR_VS_ROOK_MG  = 42;
+EVAL_CONST int THREAT_MINOR_VS_ROOK_EG  =  2;
+EVAL_CONST int THREAT_MINOR_VS_QUEEN_MG = 22;
+EVAL_CONST int THREAT_MINOR_VS_QUEEN_EG =  0;
+EVAL_CONST int THREAT_ROOK_VS_QUEEN_MG  = 22;
+EVAL_CONST int THREAT_ROOK_VS_QUEEN_EG  =  0;
 
 static void evalThreats(const BitboardSet& bb,
                         const attacks::AttackInfo& info,
@@ -1231,24 +1188,13 @@ static void evalThreats(const BitboardSet& bb,
 // Indexed by minor/major piece offset (N=0, B=1, R=2, Q=3).
 // Fixed (not tunable) — tuning shifts danger via TABLE entries instead,
 // keeping all parameters linear for analytical gradient computation.
-#ifdef TUNING
-const int KING_DANGER_WEIGHT[] = {2, 2, 3, 5};
-#else
-static constexpr int KING_DANGER_WEIGHT[] = {2, 2, 3, 5};
-#endif
+EVAL_FIXED int KING_DANGER_WEIGHT[] = {2, 2, 3, 5};
 
 // Nonlinear danger table — maps total attacker weight to MG penalty (cp).
 // Index = sum of attacker weights (0..max).  Clamped at the last entry.
 // TABLE[0] stays fixed at 0; entries 1..12 are tunable.
-#ifdef TUNING
 EVAL_CONST int KING_DANGER_TABLE[] = {
-#else
-static EVAL_CONST int KING_DANGER_TABLE[] = {
-#endif
     0, 0, 14, 17, 35, 26, 65, 98, 133, 177, 231, 265, 326};
-#ifndef TUNING
-static constexpr int KING_DANGER_TABLE_SIZE = 13;
-#endif
 
 static void evalKingDanger(const BitboardSet& bb,
                            const attacks::AttackInfo& info,
@@ -1406,8 +1352,8 @@ void EvalHashTable::store(uint64_t hash, int16_t s) {
 // Reference: https://www.chessprogramming.org/Bad_Bishop
 // ---------------------------------------------------------------------------
 
-static EVAL_CONST int BAD_BISHOP_MG = 0;
-static EVAL_CONST int BAD_BISHOP_EG = -5;
+EVAL_CONST int BAD_BISHOP_MG = 0;
+EVAL_CONST int BAD_BISHOP_EG = -5;
 
 static void evalBadBishop(const BitboardSet& bb,
                           int& mgScore, int& egScore) {
@@ -1443,8 +1389,8 @@ static void evalBadBishop(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Tarrasch_Rule
 // ---------------------------------------------------------------------------
 
-static EVAL_CONST int ROOK_BEHIND_OWN_PASSER_EG   =  16;
-static EVAL_CONST int ROOK_BEHIND_ENEMY_PASSER_EG  = -48;
+EVAL_CONST int ROOK_BEHIND_OWN_PASSER_EG   =  16;
+EVAL_CONST int ROOK_BEHIND_ENEMY_PASSER_EG  = -48;
 
 static void evalRookBehindPasser(const BitboardSet& bb, int& egScore) {
   Bitboard whitePawns = bb.byPiece[0];
@@ -1575,220 +1521,6 @@ int evaluatePosition(const BitboardSet& bb,
 
   return score;
 }
-
-// ---------------------------------------------------------------------------
-// Tuning parameter registry — maps tunable eval constants to metadata
-// so the optimizer can read/write them at runtime.
-//
-// Only compiled when TUNING is defined (tune build only).
-// Production builds are unaffected — constants remain constexpr.
-//
-// Reference: https://www.chessprogramming.org/Texel%27s_Tuning_Method
-// ---------------------------------------------------------------------------
-
-#ifdef TUNING
-
-struct TuneEntry {
-  const char* name;
-  int* ptr;
-  int defaultVal;
-  int min, max, step;
-};
-
-// ---------------------------------------------------------------------------
-// buildRegistry — constructs the full parameter list on first access.
-//
-// Scalar eval constants are listed explicitly.  PST entries (12 arrays × 64
-// squares, minus 16 frozen pawn rank-1/rank-8 squares = 752 entries) are
-// bulk-registered via loops to avoid 752 manual lines.
-// ---------------------------------------------------------------------------
-// clang-format off
-static std::vector<TuneEntry>& buildRegistry() {
-  static std::vector<TuneEntry> reg;
-  if (!reg.empty()) return reg;
-
-  // ---- Scalar entries (78) ------------------------------------------------
-
-  // --- Material (4) ---
-  // MAT_PAWN is pinned at 100 — it defines the centipawn unit.
-  // Search pruning margins (futility, delta, razor) are calibrated for
-  // 100cp/pawn; allowing MAT_PAWN to drift breaks those margins.
-  reg.push_back({"MAT_KNIGHT",              &MATERIAL[1],               321,  250,  400, 10});
-  reg.push_back({"MAT_BISHOP",              &MATERIAL[2],               315,  250,  420, 10});
-  reg.push_back({"MAT_ROOK",                &MATERIAL[3],               525,  400,  610, 10});
-  reg.push_back({"MAT_QUEEN",               &MATERIAL[4],               939,  800, 1250, 20});
-
-  // --- Passed pawn rank bonus (12) ---
-  reg.push_back({"PASSED_R2_MG",            &PASSED_RANK_BONUS_MG[1],    19,    0,   30,  5});
-  reg.push_back({"PASSED_R3_MG",            &PASSED_RANK_BONUS_MG[2],    19,    0,   40,  5});
-  reg.push_back({"PASSED_R4_MG",            &PASSED_RANK_BONUS_MG[3],    11,    0,   50,  5});
-  reg.push_back({"PASSED_R5_MG",            &PASSED_RANK_BONUS_MG[4],    42,    0,  150, 10});
-  reg.push_back({"PASSED_R6_MG",            &PASSED_RANK_BONUS_MG[5],    61,    0,  180, 10});
-  reg.push_back({"PASSED_R7_MG",            &PASSED_RANK_BONUS_MG[6],    95,   20,  300, 15});
-  reg.push_back({"PASSED_R2_EG",            &PASSED_RANK_BONUS_EG[1],     0,    0,   30,  5});
-  reg.push_back({"PASSED_R3_EG",            &PASSED_RANK_BONUS_EG[2],     0,    0,   50,  5});
-  reg.push_back({"PASSED_R4_EG",            &PASSED_RANK_BONUS_EG[3],    27,    0,   80, 10});
-  reg.push_back({"PASSED_R5_EG",            &PASSED_RANK_BONUS_EG[4],    71,    0,  150, 10});
-  reg.push_back({"PASSED_R6_EG",            &PASSED_RANK_BONUS_EG[5],   154,   20,  300, 15});
-  reg.push_back({"PASSED_R7_EG",            &PASSED_RANK_BONUS_EG[6],   236,   80,  500, 20});
-
-  // --- Pawn structure scalars (8) ---
-  reg.push_back({"CONNECTED_PASSED",        &CONNECTED_PASSED,             0,    0,   40,  5});
-  reg.push_back({"ISOLATED_PENALTY",        &ISOLATED_PENALTY,           -17,  -30,    0,  5});
-  reg.push_back({"DOUBLED_PENALTY",         &DOUBLED_PENALTY,              0,  -40,    0,  5});
-  reg.push_back({"BACKWARD_PENALTY",        &BACKWARD_PENALTY,             0,  -35,    0,  5});
-  reg.push_back({"PROTECTED_PASSER_MG",     &PROTECTED_PASSER_MG,         31,    0,   40,  5});
-  reg.push_back({"PROTECTED_PASSER_EG",     &PROTECTED_PASSER_EG,          0,    0,   80,  5});
-  reg.push_back({"CANDIDATE_PASSER_MG",     &CANDIDATE_PASSER_MG,         26,    0,   30,  5});
-  reg.push_back({"CANDIDATE_PASSER_EG",     &CANDIDATE_PASSER_EG,         36,    0,   50,  5});
-
-  // --- Bishop pair (2) ---
-  reg.push_back({"BISHOP_PAIR_MG",          &BISHOP_PAIR_MG,              40,    0,  100,  5});
-  reg.push_back({"BISHOP_PAIR_EG",          &BISHOP_PAIR_EG,              61,   10,  150,  5});
-
-  // --- Rook on file (2) ---
-  reg.push_back({"ROOK_OPEN_FILE",          &ROOK_OPEN_FILE,              15,    0,   50,  5});
-  reg.push_back({"ROOK_SEMI_OPEN_FILE",     &ROOK_SEMI_OPEN_FILE,          2,    0,   40,  5});
-
-  // --- Rook on 7th (2) ---
-  reg.push_back({"ROOK_7TH_MG",             &ROOK_7TH_MG,                 0,    0,   50,  5});
-  reg.push_back({"ROOK_7TH_EG",             &ROOK_7TH_EG,                50,    0,   80,  5});
-
-  // --- Rook behind passer (2) ---
-  reg.push_back({"ROOK_BEHIND_OWN_EG",      &ROOK_BEHIND_OWN_PASSER_EG,  16,    0,   50,  5});
-  reg.push_back({"ROOK_BEHIND_ENEMY_EG",    &ROOK_BEHIND_ENEMY_PASSER_EG,-48,  -50,   10,  5});
-
-  // --- Outpost (1) ---
-  reg.push_back({"OUTPOST_BONUS",           &OUTPOST_BONUS,               19,    0,   60,  5});
-
-  // --- Bad bishop (2) ---
-  reg.push_back({"BAD_BISHOP_MG",           &BAD_BISHOP_MG,                0,  -15,    0,  1});
-  reg.push_back({"BAD_BISHOP_EG",           &BAD_BISHOP_EG,               -5,  -15,    0,  1});
-
-  // --- Trapped pieces (2) ---
-  reg.push_back({"TRAPPED_BISHOP",          &TRAPPED_BISHOP_PENALTY,     -86, -120,    0, 10});
-  reg.push_back({"TRAPPED_ROOK",            &TRAPPED_ROOK_PENALTY,       -44, -100,    0, 10});
-
-  // --- Mobility (8) ---
-  reg.push_back({"MOBILITY_KNIGHT_MG",      &MOBILITY_KNIGHT_MG,           9,    0,   20,  1});
-  reg.push_back({"MOBILITY_KNIGHT_EG",      &MOBILITY_KNIGHT_EG,           0,    0,   12,  1});
-  reg.push_back({"MOBILITY_BISHOP_MG",      &MOBILITY_BISHOP_MG,           5,    0,   12,  1});
-  reg.push_back({"MOBILITY_BISHOP_EG",      &MOBILITY_BISHOP_EG,           5,    0,   12,  1});
-  reg.push_back({"MOBILITY_ROOK_MG",        &MOBILITY_ROOK_MG,             3,    0,   16,  1});
-  reg.push_back({"MOBILITY_ROOK_EG",        &MOBILITY_ROOK_EG,             5,    0,   16,  1});
-  reg.push_back({"MOBILITY_QUEEN_MG",       &MOBILITY_QUEEN_MG,            0,    0,   12,  1});
-  reg.push_back({"MOBILITY_QUEEN_EG",       &MOBILITY_QUEEN_EG,           15,    0,   16,  1});
-
-  // --- King safety shield (3) ---
-  reg.push_back({"SHIELD_MISSING_PAWN",     &SHIELD_MISSING_PAWN,        -38,  -60,    0,  5});
-  reg.push_back({"SHIELD_ADVANCED_PAWN",    &SHIELD_ADVANCED_PAWN,         0,  -20,    0,  5});
-  reg.push_back({"SHIELD_OPEN_FILE",        &SHIELD_OPEN_FILE,           -36,  -50,    0,  5});
-
-  // --- King danger table (12) ---
-  // Entries 1..12 of the nonlinear penalty table.  TABLE[0] = 0 is fixed.
-  // Weights are constexpr — tuning shifts danger via table entries instead,
-  // keeping all parameters linear for analytical gradient computation.
-  reg.push_back({"KD_TABLE_1",              &KING_DANGER_TABLE[1],         0,    0,   20,  5});
-  reg.push_back({"KD_TABLE_2",              &KING_DANGER_TABLE[2],        14,    0,   30,  5});
-  reg.push_back({"KD_TABLE_3",              &KING_DANGER_TABLE[3],        17,    0,   50,  5});
-  reg.push_back({"KD_TABLE_4",              &KING_DANGER_TABLE[4],        35,    0,   80, 10});
-  reg.push_back({"KD_TABLE_5",              &KING_DANGER_TABLE[5],        26,   10,  130, 10});
-  reg.push_back({"KD_TABLE_6",              &KING_DANGER_TABLE[6],        65,   20,  200, 10});
-  reg.push_back({"KD_TABLE_7",              &KING_DANGER_TABLE[7],        98,   40,  280, 15});
-  reg.push_back({"KD_TABLE_8",              &KING_DANGER_TABLE[8],       133,   60,  360, 15});
-  reg.push_back({"KD_TABLE_9",              &KING_DANGER_TABLE[9],       177,   80,  440, 20});
-  reg.push_back({"KD_TABLE_10",             &KING_DANGER_TABLE[10],      231,  100,  500, 20});
-  reg.push_back({"KD_TABLE_11",             &KING_DANGER_TABLE[11],      265,  120,  600, 25});
-  reg.push_back({"KD_TABLE_12",             &KING_DANGER_TABLE[12],      326,  150,  700, 25});
-
-  // --- Center control (2) ---
-  reg.push_back({"CENTER_OCCUPATION",       &CENTER_OCCUPATION_BONUS,       0,    0,   50,  5});
-  reg.push_back({"CENTER_ATTACK",           &CENTER_ATTACK_BONUS,          15,    0,   15,  5});
-
-  // --- Space (1) ---
-  reg.push_back({"SPACE_BONUS",             &SPACE_BONUS,                  10,    0,   10,  1});
-
-  // --- Passed pawn king distance (2) ---
-  reg.push_back({"PASSER_OWN_KING",         &PASSER_OWN_KING,              6,    0,   15,  1});
-  reg.push_back({"PASSER_ENEMY_KING",       &PASSER_ENEMY_KING,           22,    0,   25,  2});
-
-  // --- Threats (12) ---
-  reg.push_back({"THREAT_P_MINOR_MG",       &THREAT_PAWN_VS_MINOR_MG,      8,    0,   30,  2});
-  reg.push_back({"THREAT_P_MINOR_EG",       &THREAT_PAWN_VS_MINOR_EG,      6,    0,   25,  2});
-  reg.push_back({"THREAT_P_ROOK_MG",        &THREAT_PAWN_VS_ROOK_MG,      12,    0,   35,  2});
-  reg.push_back({"THREAT_P_ROOK_EG",        &THREAT_PAWN_VS_ROOK_EG,       8,    0,   25,  2});
-  reg.push_back({"THREAT_P_QUEEN_MG",       &THREAT_PAWN_VS_QUEEN_MG,     15,    0,   50,  3});
-  reg.push_back({"THREAT_P_QUEEN_EG",       &THREAT_PAWN_VS_QUEEN_EG,     10,    0,   35,  2});
-  reg.push_back({"THREAT_N_ROOK_MG",        &THREAT_MINOR_VS_ROOK_MG,     42,    0,   45,  2});
-  reg.push_back({"THREAT_N_ROOK_EG",        &THREAT_MINOR_VS_ROOK_EG,      2,    0,   45,  2});
-  reg.push_back({"THREAT_N_QUEEN_MG",       &THREAT_MINOR_VS_QUEEN_MG,    22,    0,   55,  2});
-  reg.push_back({"THREAT_N_QUEEN_EG",       &THREAT_MINOR_VS_QUEEN_EG,     0,    0,   40,  2});
-  reg.push_back({"THREAT_R_QUEEN_MG",       &THREAT_ROOK_VS_QUEEN_MG,     22,    0,   30,  1});
-  reg.push_back({"THREAT_R_QUEEN_EG",       &THREAT_ROOK_VS_QUEEN_EG,      0,    0,   25,  1});
-
-  // --- Connectivity (1) ---
-  reg.push_back({"CONNECTIVITY",            &CONNECTIVITY_BONUS,           10,    0,   25,  1});
-  // clang-format on
-
-  // ---- PST entries (752) --------------------------------------------------
-  // 12 arrays × 64 squares = 768, minus 16 frozen pawn squares (rank 1 + 8).
-  // Bulk-registered via loop.  Name strings are heap-allocated (tuning build
-  // only, so the leak is harmless).
-  struct PstDef {
-    const char* prefix;
-    int* data;
-    bool isPawn;
-  };
-  // clang-format off
-  PstDef psts[] = {
-    {"PST_PAWN_MG",   PST_PAWN_MG,   true },
-    {"PST_KNIGHT_MG", PST_KNIGHT_MG, false},
-    {"PST_BISHOP_MG", PST_BISHOP_MG, false},
-    {"PST_ROOK_MG",   PST_ROOK_MG,   false},
-    {"PST_QUEEN_MG",  PST_QUEEN_MG,  false},
-    {"PST_KING_MG",   PST_KING_MG,   false},
-    {"PST_PAWN_EG",   PST_PAWN_EG,   true },
-    {"PST_KNIGHT_EG", PST_KNIGHT_EG, false},
-    {"PST_BISHOP_EG", PST_BISHOP_EG, false},
-    {"PST_ROOK_EG",   PST_ROOK_EG,   false},
-    {"PST_QUEEN_EG",  PST_QUEEN_EG,  false},
-    {"PST_KING_EG",   PST_KING_EG,   false},
-  };
-  // clang-format on
-
-  for (const auto& p : psts) {
-    for (int sq = 0; sq < 64; ++sq) {
-      // Pawn rank 1 (sq 0-7) and rank 8 (sq 56-63) are never occupied.
-      if (p.isPawn && (sq < 8 || sq >= 56)) continue;
-
-      char buf[32];
-      std::snprintf(buf, sizeof(buf), "%s_%d", p.prefix, sq);
-
-      // Heap-allocate name — tuning build only, leak is intentional.
-      char* name = new char[std::strlen(buf) + 1];
-      std::strcpy(name, buf);
-
-      reg.push_back({name, &p.data[sq], p.data[sq], -100, 100, 5});
-    }
-  }
-
-  return reg;
-}
-
-namespace tuning {
-
-int paramCount()              { return static_cast<int>(buildRegistry().size()); }
-const char* getName(int i)    { return buildRegistry()[i].name; }
-int getValue(int i)           { return *buildRegistry()[i].ptr; }
-void setValue(int i, int v)   { *buildRegistry()[i].ptr = v; }
-int getDefault(int i)         { return buildRegistry()[i].defaultVal; }
-int getMin(int i)             { return buildRegistry()[i].min; }
-int getMax(int i)             { return buildRegistry()[i].max; }
-int getStep(int i)            { return buildRegistry()[i].step; }
-
-}  // namespace tuning
-
-#endif  // TUNING
 
 }  // namespace eval
 }  // namespace LibreChess
