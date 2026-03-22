@@ -825,104 +825,104 @@ static std::vector<TuneEntry>& buildRegistry() {
   // MAT_PAWN is pinned at 100 — it defines the centipawn unit.
   // Search pruning margins (futility, delta, razor) are calibrated for
   // 100cp/pawn; allowing MAT_PAWN to drift breaks those margins.
-  reg.push_back({"MAT_KNIGHT",              &MATERIAL[1],               321,  250,  400, 10});
-  reg.push_back({"MAT_BISHOP",              &MATERIAL[2],               315,  250,  420, 10});
-  reg.push_back({"MAT_ROOK",                &MATERIAL[3],               525,  400,  610, 10});
-  reg.push_back({"MAT_QUEEN",               &MATERIAL[4],               939,  800, 1250, 20});
+  reg.push_back({"MAT_KNIGHT",              &MATERIAL[1],               300,  250,  400, 10});
+  reg.push_back({"MAT_BISHOP",              &MATERIAL[2],               300,  250,  420, 10});
+  reg.push_back({"MAT_ROOK",                &MATERIAL[3],               500,  400,  610, 10});
+  reg.push_back({"MAT_QUEEN",               &MATERIAL[4],               900,  800, 1250, 20});
 
   // --- Passed pawn rank bonus (12) ---
-  reg.push_back({"PASSED_R2_MG",            &PASSED_RANK_BONUS_MG[1],    19,    0,   30,  5});
-  reg.push_back({"PASSED_R3_MG",            &PASSED_RANK_BONUS_MG[2],    19,    0,   40,  5});
-  reg.push_back({"PASSED_R4_MG",            &PASSED_RANK_BONUS_MG[3],    11,    0,   50,  5});
-  reg.push_back({"PASSED_R5_MG",            &PASSED_RANK_BONUS_MG[4],    42,    0,  150, 10});
-  reg.push_back({"PASSED_R6_MG",            &PASSED_RANK_BONUS_MG[5],    61,    0,  180, 10});
-  reg.push_back({"PASSED_R7_MG",            &PASSED_RANK_BONUS_MG[6],    95,   20,  300, 15});
+  reg.push_back({"PASSED_R2_MG",            &PASSED_RANK_BONUS_MG[1],    18,    0,   30,  5});
+  reg.push_back({"PASSED_R3_MG",            &PASSED_RANK_BONUS_MG[2],     8,    0,   40,  5});
+  reg.push_back({"PASSED_R4_MG",            &PASSED_RANK_BONUS_MG[3],     4,    0,   50,  5});
+  reg.push_back({"PASSED_R5_MG",            &PASSED_RANK_BONUS_MG[4],    20,    0,  150, 10});
+  reg.push_back({"PASSED_R6_MG",            &PASSED_RANK_BONUS_MG[5],    24,    0,  180, 10});
+  reg.push_back({"PASSED_R7_MG",            &PASSED_RANK_BONUS_MG[6],    20,   20,  300, 15});
   reg.push_back({"PASSED_R2_EG",            &PASSED_RANK_BONUS_EG[1],     0,    0,   30,  5});
-  reg.push_back({"PASSED_R3_EG",            &PASSED_RANK_BONUS_EG[2],     0,    0,   50,  5});
-  reg.push_back({"PASSED_R4_EG",            &PASSED_RANK_BONUS_EG[3],    27,    0,   80, 10});
-  reg.push_back({"PASSED_R5_EG",            &PASSED_RANK_BONUS_EG[4],    71,    0,  150, 10});
-  reg.push_back({"PASSED_R6_EG",            &PASSED_RANK_BONUS_EG[5],   154,   20,  300, 15});
-  reg.push_back({"PASSED_R7_EG",            &PASSED_RANK_BONUS_EG[6],   236,   80,  500, 20});
+  reg.push_back({"PASSED_R3_EG",            &PASSED_RANK_BONUS_EG[2],     5,    0,   50,  5});
+  reg.push_back({"PASSED_R4_EG",            &PASSED_RANK_BONUS_EG[3],    33,    0,   80, 10});
+  reg.push_back({"PASSED_R5_EG",            &PASSED_RANK_BONUS_EG[4],    69,    0,  150, 10});
+  reg.push_back({"PASSED_R6_EG",            &PASSED_RANK_BONUS_EG[5],   138,   20,  300, 15});
+  reg.push_back({"PASSED_R7_EG",            &PASSED_RANK_BONUS_EG[6],   199,   80,  500, 20});
 
   // --- Pawn structure scalars (8) ---
   reg.push_back({"CONNECTED_PASSED",        &CONNECTED_PASSED,             0,    0,   40,  5});
-  reg.push_back({"ISOLATED_PENALTY",        &ISOLATED_PENALTY,           -17,  -30,    0,  5});
+  reg.push_back({"ISOLATED_PENALTY",        &ISOLATED_PENALTY,           -10,  -30,    0,  5});
   reg.push_back({"DOUBLED_PENALTY",         &DOUBLED_PENALTY,              0,  -40,    0,  5});
   reg.push_back({"BACKWARD_PENALTY",        &BACKWARD_PENALTY,             0,  -35,    0,  5});
-  reg.push_back({"PROTECTED_PASSER_MG",     &PROTECTED_PASSER_MG,         31,    0,   40,  5});
+  reg.push_back({"PROTECTED_PASSER_MG",     &PROTECTED_PASSER_MG,         17,    0,   40,  5});
   reg.push_back({"PROTECTED_PASSER_EG",     &PROTECTED_PASSER_EG,          0,    0,   80,  5});
-  reg.push_back({"CANDIDATE_PASSER_MG",     &CANDIDATE_PASSER_MG,         26,    0,   30,  5});
-  reg.push_back({"CANDIDATE_PASSER_EG",     &CANDIDATE_PASSER_EG,         36,    0,   50,  5});
+  reg.push_back({"CANDIDATE_PASSER_MG",     &CANDIDATE_PASSER_MG,         14,    0,   30,  5});
+  reg.push_back({"CANDIDATE_PASSER_EG",     &CANDIDATE_PASSER_EG,         41,    0,   50,  5});
 
   // --- Bishop pair (2) ---
-  reg.push_back({"BISHOP_PAIR_MG",          &BISHOP_PAIR_MG,              40,    0,  100,  5});
-  reg.push_back({"BISHOP_PAIR_EG",          &BISHOP_PAIR_EG,              61,   10,  150,  5});
+  reg.push_back({"BISHOP_PAIR_MG",          &BISHOP_PAIR_MG,              76,    0,  100,  5});
+  reg.push_back({"BISHOP_PAIR_EG",          &BISHOP_PAIR_EG,              17,   10,  150,  5});
 
   // --- Rook on file (2) ---
-  reg.push_back({"ROOK_OPEN_FILE",          &ROOK_OPEN_FILE,              15,    0,   50,  5});
-  reg.push_back({"ROOK_SEMI_OPEN_FILE",     &ROOK_SEMI_OPEN_FILE,          2,    0,   40,  5});
+  reg.push_back({"ROOK_OPEN_FILE",          &ROOK_OPEN_FILE,               3,    0,   50,  5});
+  reg.push_back({"ROOK_SEMI_OPEN_FILE",     &ROOK_SEMI_OPEN_FILE,         16,    0,   40,  5});
 
   // --- Rook on 7th (2) ---
-  reg.push_back({"ROOK_7TH_MG",             &ROOK_7TH_MG,                 0,    0,   50,  5});
-  reg.push_back({"ROOK_7TH_EG",             &ROOK_7TH_EG,                50,    0,   80,  5});
+  reg.push_back({"ROOK_7TH_MG",             &ROOK_7TH_MG,                 20,    0,   50,  5});
+  reg.push_back({"ROOK_7TH_EG",             &ROOK_7TH_EG,                 38,    0,   80,  5});
 
   // --- Rook behind passer (2) ---
-  reg.push_back({"ROOK_BEHIND_OWN_EG",      &ROOK_BEHIND_OWN_PASSER_EG,  16,    0,   50,  5});
-  reg.push_back({"ROOK_BEHIND_ENEMY_EG",    &ROOK_BEHIND_ENEMY_PASSER_EG,-48,  -50,   10,  5});
+  reg.push_back({"ROOK_BEHIND_OWN_EG",      &ROOK_BEHIND_OWN_PASSER_EG,   50,    0,   50,  5});
+  reg.push_back({"ROOK_BEHIND_ENEMY_EG",    &ROOK_BEHIND_ENEMY_PASSER_EG,-45,  -50,   10,  5});
 
   // --- Outpost (1) ---
-  reg.push_back({"OUTPOST_BONUS",           &OUTPOST_BONUS,               19,    0,   60,  5});
+  reg.push_back({"OUTPOST_BONUS",           &OUTPOST_BONUS,                0,    0,   60,  5});
 
   // --- Bad bishop (2) ---
   reg.push_back({"BAD_BISHOP_MG",           &BAD_BISHOP_MG,                0,  -15,    0,  1});
-  reg.push_back({"BAD_BISHOP_EG",           &BAD_BISHOP_EG,               -5,  -15,    0,  1});
+  reg.push_back({"BAD_BISHOP_EG",           &BAD_BISHOP_EG,                0,  -15,    0,  1});
 
   // --- Trapped pieces (2) ---
-  reg.push_back({"TRAPPED_BISHOP",          &TRAPPED_BISHOP_PENALTY,     -86, -120,    0, 10});
-  reg.push_back({"TRAPPED_ROOK",            &TRAPPED_ROOK_PENALTY,       -44, -100,    0, 10});
+  reg.push_back({"TRAPPED_BISHOP",          &TRAPPED_BISHOP_PENALTY,     -26, -120,    0, 10});
+  reg.push_back({"TRAPPED_ROOK",            &TRAPPED_ROOK_PENALTY,         0, -100,    0, 10});
 
   // --- Mobility (8) ---
-  reg.push_back({"MOBILITY_KNIGHT_MG",      &MOBILITY_KNIGHT_MG,           9,    0,   20,  1});
-  reg.push_back({"MOBILITY_KNIGHT_EG",      &MOBILITY_KNIGHT_EG,           0,    0,   12,  1});
-  reg.push_back({"MOBILITY_BISHOP_MG",      &MOBILITY_BISHOP_MG,           5,    0,   12,  1});
-  reg.push_back({"MOBILITY_BISHOP_EG",      &MOBILITY_BISHOP_EG,           5,    0,   12,  1});
-  reg.push_back({"MOBILITY_ROOK_MG",        &MOBILITY_ROOK_MG,             3,    0,   16,  1});
-  reg.push_back({"MOBILITY_ROOK_EG",        &MOBILITY_ROOK_EG,             5,    0,   16,  1});
-  reg.push_back({"MOBILITY_QUEEN_MG",       &MOBILITY_QUEEN_MG,            0,    0,   12,  1});
-  reg.push_back({"MOBILITY_QUEEN_EG",       &MOBILITY_QUEEN_EG,           15,    0,   16,  1});
+  reg.push_back({"MOBILITY_KNIGHT_MG",      &MOBILITY_KNIGHT_MG,          15,    0,   20,  1});
+  reg.push_back({"MOBILITY_KNIGHT_EG",      &MOBILITY_KNIGHT_EG,          12,    0,   12,  1});
+  reg.push_back({"MOBILITY_BISHOP_MG",      &MOBILITY_BISHOP_MG,           3,    0,   12,  1});
+  reg.push_back({"MOBILITY_BISHOP_EG",      &MOBILITY_BISHOP_EG,          12,    0,   12,  1});
+  reg.push_back({"MOBILITY_ROOK_MG",        &MOBILITY_ROOK_MG,             0,    0,   16,  1});
+  reg.push_back({"MOBILITY_ROOK_EG",        &MOBILITY_ROOK_EG,            16,    0,   16,  1});
+  reg.push_back({"MOBILITY_QUEEN_MG",       &MOBILITY_QUEEN_MG,            4,    0,   12,  1});
+  reg.push_back({"MOBILITY_QUEEN_EG",       &MOBILITY_QUEEN_EG,           16,    0,   16,  1});
 
   // --- King safety shield (3) ---
-  reg.push_back({"SHIELD_MISSING_PAWN",     &SHIELD_MISSING_PAWN,        -38,  -60,    0,  5});
-  reg.push_back({"SHIELD_ADVANCED_PAWN",    &SHIELD_ADVANCED_PAWN,         0,  -20,    0,  5});
-  reg.push_back({"SHIELD_OPEN_FILE",        &SHIELD_OPEN_FILE,           -36,  -50,    0,  5});
+  reg.push_back({"SHIELD_MISSING_PAWN",     &SHIELD_MISSING_PAWN,        -14,  -60,    0,  5});
+  reg.push_back({"SHIELD_ADVANCED_PAWN",    &SHIELD_ADVANCED_PAWN,       -14,  -20,    0,  5});
+  reg.push_back({"SHIELD_OPEN_FILE",        &SHIELD_OPEN_FILE,           -29,  -50,    0,  5});
 
   // --- King danger table (12) ---
   // Entries 1..12 of the nonlinear penalty table.  TABLE[0] = 0 is fixed.
   // Weights are constexpr — tuning shifts danger via table entries instead,
   // keeping all parameters linear for analytical gradient computation.
   reg.push_back({"KD_TABLE_1",              &KING_DANGER_TABLE[1],         0,    0,   20,  5});
-  reg.push_back({"KD_TABLE_2",              &KING_DANGER_TABLE[2],        14,    0,   30,  5});
-  reg.push_back({"KD_TABLE_3",              &KING_DANGER_TABLE[3],        17,    0,   50,  5});
-  reg.push_back({"KD_TABLE_4",              &KING_DANGER_TABLE[4],        35,    0,   80, 10});
-  reg.push_back({"KD_TABLE_5",              &KING_DANGER_TABLE[5],        26,   10,  130, 10});
-  reg.push_back({"KD_TABLE_6",              &KING_DANGER_TABLE[6],        65,   20,  200, 10});
-  reg.push_back({"KD_TABLE_7",              &KING_DANGER_TABLE[7],        98,   40,  280, 15});
-  reg.push_back({"KD_TABLE_8",              &KING_DANGER_TABLE[8],       133,   60,  360, 15});
-  reg.push_back({"KD_TABLE_9",              &KING_DANGER_TABLE[9],       177,   80,  440, 20});
-  reg.push_back({"KD_TABLE_10",             &KING_DANGER_TABLE[10],      231,  100,  500, 20});
-  reg.push_back({"KD_TABLE_11",             &KING_DANGER_TABLE[11],      265,  120,  600, 25});
-  reg.push_back({"KD_TABLE_12",             &KING_DANGER_TABLE[12],      326,  150,  700, 25});
+  reg.push_back({"KD_TABLE_2",              &KING_DANGER_TABLE[2],        12,    0,   30,  5});
+  reg.push_back({"KD_TABLE_3",              &KING_DANGER_TABLE[3],        12,    0,   50,  5});
+  reg.push_back({"KD_TABLE_4",              &KING_DANGER_TABLE[4],        48,    0,   80, 10});
+  reg.push_back({"KD_TABLE_5",              &KING_DANGER_TABLE[5],        10,   10,  130, 10});
+  reg.push_back({"KD_TABLE_6",              &KING_DANGER_TABLE[6],        37,   20,  200, 10});
+  reg.push_back({"KD_TABLE_7",              &KING_DANGER_TABLE[7],        57,   40,  280, 15});
+  reg.push_back({"KD_TABLE_8",              &KING_DANGER_TABLE[8],        60,   60,  360, 15});
+  reg.push_back({"KD_TABLE_9",              &KING_DANGER_TABLE[9],       139,   80,  440, 20});
+  reg.push_back({"KD_TABLE_10",             &KING_DANGER_TABLE[10],      243,  100,  500, 20});
+  reg.push_back({"KD_TABLE_11",             &KING_DANGER_TABLE[11],      163,  120,  600, 25});
+  reg.push_back({"KD_TABLE_12",             &KING_DANGER_TABLE[12],      251,  150,  700, 25});
 
   // --- Center control (2) ---
-  reg.push_back({"CENTER_OCCUPATION",       &CENTER_OCCUPATION_BONUS,       0,    0,   50,  5});
-  reg.push_back({"CENTER_ATTACK",           &CENTER_ATTACK_BONUS,          15,    0,   15,  5});
+  reg.push_back({"CENTER_OCCUPATION",       &CENTER_OCCUPATION_BONUS,      3,    0,   50,  5});
+  reg.push_back({"CENTER_ATTACK",           &CENTER_ATTACK_BONUS,          6,    0,   15,  5});
 
   // --- Space (1) ---
-  reg.push_back({"SPACE_BONUS",             &SPACE_BONUS,                  10,    0,   10,  1});
+  reg.push_back({"SPACE_BONUS",             &SPACE_BONUS,                  0,    0,   10,  1});
 
   // --- Passed pawn king distance (2) ---
-  reg.push_back({"PASSER_OWN_KING",         &PASSER_OWN_KING,              6,    0,   15,  1});
-  reg.push_back({"PASSER_ENEMY_KING",       &PASSER_ENEMY_KING,           22,    0,   25,  2});
+  reg.push_back({"PASSER_OWN_KING",         &PASSER_OWN_KING,              7,    0,   15,  1});
+  reg.push_back({"PASSER_ENEMY_KING",       &PASSER_ENEMY_KING,           17,    0,   25,  2});
 
   // --- Threats (12) ---
   reg.push_back({"THREAT_P_MINOR_MG",       &THREAT_PAWN_VS_MINOR_MG,      8,    0,   30,  2});
@@ -931,15 +931,15 @@ static std::vector<TuneEntry>& buildRegistry() {
   reg.push_back({"THREAT_P_ROOK_EG",        &THREAT_PAWN_VS_ROOK_EG,       8,    0,   25,  2});
   reg.push_back({"THREAT_P_QUEEN_MG",       &THREAT_PAWN_VS_QUEEN_MG,     15,    0,   50,  3});
   reg.push_back({"THREAT_P_QUEEN_EG",       &THREAT_PAWN_VS_QUEEN_EG,     10,    0,   35,  2});
-  reg.push_back({"THREAT_N_ROOK_MG",        &THREAT_MINOR_VS_ROOK_MG,     42,    0,   45,  2});
-  reg.push_back({"THREAT_N_ROOK_EG",        &THREAT_MINOR_VS_ROOK_EG,      2,    0,   45,  2});
-  reg.push_back({"THREAT_N_QUEEN_MG",       &THREAT_MINOR_VS_QUEEN_MG,    22,    0,   55,  2});
+  reg.push_back({"THREAT_N_ROOK_MG",        &THREAT_MINOR_VS_ROOK_MG,     45,    0,   45,  2});
+  reg.push_back({"THREAT_N_ROOK_EG",        &THREAT_MINOR_VS_ROOK_EG,      0,    0,   45,  2});
+  reg.push_back({"THREAT_N_QUEEN_MG",       &THREAT_MINOR_VS_QUEEN_MG,    52,    0,   55,  2});
   reg.push_back({"THREAT_N_QUEEN_EG",       &THREAT_MINOR_VS_QUEEN_EG,     0,    0,   40,  2});
-  reg.push_back({"THREAT_R_QUEEN_MG",       &THREAT_ROOK_VS_QUEEN_MG,     22,    0,   30,  1});
+  reg.push_back({"THREAT_R_QUEEN_MG",       &THREAT_ROOK_VS_QUEEN_MG,     28,    0,   30,  1});
   reg.push_back({"THREAT_R_QUEEN_EG",       &THREAT_ROOK_VS_QUEEN_EG,      0,    0,   25,  1});
 
   // --- Connectivity (1) ---
-  reg.push_back({"CONNECTIVITY",            &CONNECTIVITY_BONUS,           10,    0,   25,  1});
+  reg.push_back({"CONNECTIVITY",            &CONNECTIVITY_BONUS,          25,    0,   25,  1});
   // clang-format on
 
   // ---- PST entries (752) --------------------------------------------------

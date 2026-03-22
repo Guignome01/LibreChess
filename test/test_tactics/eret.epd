@@ -38,7 +38,7 @@ r1k1n2n/8/pP6/5R2/8/1b1B4/4N3/1K5N w - - bm b7; id "ERET 036 - Endgame";
 8/6N1/3kNKp1/3p4/4P3/p7/P6b/8 w - - bm exd5; id "ERET 038 - Endgame";
 r1b1k2r/pp3ppp/1qn1p3/2bn4/8/6P1/PPN1PPBP/RNBQ1RK1 w kq - bm a3; id "ERET 039 - Development";
 r3kb1r/3n1ppp/p3p3/1p1pP2P/P3PBP1/4P3/1q2B3/R2Q1K1R b kq - bm Bc5; id "ERET 040 - King Safety";
-3q1rk1/2nbppb1/pr1p1n1p/2pP1Pp1/2P1P2Q/2N2N2/1P2B1PP/R1B2RK1 w - - bm Nxg5; - id "ERET 041 - Knight Sacrifice";
+3q1rk1/2nbppb1/pr1p1n1p/2pP1Pp1/2P1P2Q/2N2N2/1P2B1PP/R1B2RK1 w - - bm Nxg5; id "ERET 041 - Knight Sacrifice";
 8/2k5/N3p1p1/2KpP1P1/b2P4/8/8/8 b - - bm Kb7; id "ERET 042 - Endgame";
 2r1rbk1/1pqb1p1p/p2p1np1/P4p2/3NP1P1/2NP1R1Q/1P5P/R5BK w - - bm Nxf5; id "ERET 043 - Knight Sacrifice";
 rnb2rk1/pp2q2p/3p4/2pP2p1/2P1Pp2/2N5/PP1QBRPP/R5K1 w - - bm h4; id "ERET 044 - Open Line";
