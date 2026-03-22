@@ -106,10 +106,11 @@ void SearchState::clearHeuristics() {
 namespace {
 
 // ---------------------------------------------------------------------------
-// Node check interval — every 1024 nodes, poll time and external stop.
+// Node check interval — every 512 nodes, poll time and external stop.
+// Lower values give finer time resolution at negligible overhead cost.
 // ---------------------------------------------------------------------------
 
-constexpr uint32_t CHECK_INTERVAL = 1024;
+constexpr uint32_t CHECK_INTERVAL = 512;
 
 // ---------------------------------------------------------------------------
 // Null Move Pruning constants.
@@ -211,7 +212,7 @@ static constexpr int FUTILITY_MARGIN[] = {0, 200, 500};  // indexed by depth
 // ---------------------------------------------------------------------------
 // Late Move Pruning (LMP) thresholds.
 //
-// At shallow depths (depth <= 3) in non-PV, non-check nodes, once enough
+// At shallow depths (depth <= 5) in non-PV, non-check nodes, once enough
 // moves have been searched without improving alpha, remaining quiet moves
 // are skipped entirely.  More aggressive than LMR (which only reduces
 // depth; LMP skips the move outright).
@@ -222,7 +223,7 @@ static constexpr int FUTILITY_MARGIN[] = {0, 200, 500};  // indexed by depth
 // Reference: https://www.chessprogramming.org/Late_Move_Pruning
 // ---------------------------------------------------------------------------
 
-static constexpr int LMP_THRESHOLD[] = {0, 5, 12, 20};  // indexed by depth
+static constexpr int LMP_THRESHOLD[] = {0, 5, 12, 20, 30, 42};  // indexed by depth
 
 // ---------------------------------------------------------------------------
 // Razoring margins.
@@ -381,10 +382,65 @@ static constexpr int SEE_NOT_COMPUTED = -32000;
 
 // Validate that a Move struct represents a legal move in the given position.
 // Used by MovePicker to validate TT, killer, and countermove candidates.
+// ---------------------------------------------------------------------------
+// Move validation + flag reconstruction for TT / killer / countermoves.
+//
+// Moves stored in the TT, killer slots, or countermove table carry flags
+// (EP, castling, capture, promotion) from the position where they were
+// recorded.  On a hash collision or when replayed at a different node in
+// the search tree, those flags may be stale (e.g. EP flag set when no EP
+// is possible).  Playing a move with wrong flags causes Position::make()
+// to take an incorrect code path — specifically, the EP path reads
+// mailbox_[epSq] expecting a pawn but finds NONE, producing an invalid
+// pieceZobristIndex of -1 and a PST array-out-of-bounds access.
+//
+// Fix: after confirming from→to is pseudo-legal, **reconstruct** the
+// flags from the current position so make() always sees correct metadata.
+// The promotion-type index (bits 4-5) is preserved from the stored move
+// since it encodes the engine's deliberate choice.
+//
+// Reference: https://www.chessprogramming.org/Transposition_Table#Move_from_another_Position
+// ---------------------------------------------------------------------------
+
 static bool isMoveValid(const BitboardSet& bb, const Piece mailbox[],
-                        const Move& m, const PositionState& state) {
-  return movegen::isValidMove(bb, mailbox,
-      rowOf(m.from), colOf(m.from), rowOf(m.to), colOf(m.to), state);
+                        Move& m, const PositionState& state, Color side) {
+  // Reject moves where the piece doesn't belong to the current side.
+  Piece piece = mailbox[m.from];
+  if (piece == Piece::NONE || piece::pieceColor(piece) != side)
+    return false;
+
+  // Step 1: validate from→to is legal (pseudo-legal + does not leave
+  //         own king in check).
+  if (!movegen::isValidMove(bb, mailbox,
+        rowOf(m.from), colOf(m.from), rowOf(m.to), colOf(m.to), state))
+    return false;
+
+  // Step 2: reconstruct flags from the current position.
+  PieceType pt = piece::pieceType(piece);
+  int toRow = rowOf(m.to);
+  int toCol = colOf(m.to);
+
+  uint8_t flags = 0;
+
+  // Capture: destination has an opponent piece.
+  if (mailbox[m.to] != Piece::NONE)
+    flags |= MOVE_CAPTURE;
+
+  // En passant: pawn moving diagonally to the EP target square.
+  if (pt == PieceType::PAWN && state.epRow >= 0 &&
+      toRow == state.epRow && toCol == state.epCol)
+    flags |= MOVE_EP | MOVE_CAPTURE;
+
+  // Castling: king sliding two files.
+  if (pt == PieceType::KING && abs(colOf(m.from) - toCol) == 2)
+    flags |= MOVE_CASTLING;
+
+  // Promotion: pawn reaching the back rank; preserve promo-type choice.
+  if (pt == PieceType::PAWN && toRow == piece::promotionRow(side))
+    flags |= MOVE_PROMOTION | (m.flags & (0x03 << MOVE_PROMO_SHIFT));
+
+  m.flags = flags;
+  return true;
 }
 
 // Partial selection sort: find the best-scored move in [start, end) and
@@ -542,7 +598,7 @@ struct MovePicker {
         // --- TT move: highest priority, validated for legality ----------
         case STAGE_TT:
           stage = STAGE_INIT_CAPTURES;
-          if (hasTT && isMoveValid(*bb, mailbox, ttMove, *posState)) {
+          if (hasTT && isMoveValid(*bb, mailbox, ttMove, *posState, side)) {
             lastSee = SEE_NOT_COMPUTED;
             ttYielded = true;
             return ttMove;
@@ -584,7 +640,7 @@ struct MovePicker {
             // Skip if this is a capture in the current position
             if (mailbox[km.to] != Piece::NONE) continue;
             // Validate legality
-            if (!isMoveValid(*bb, mailbox, km, *posState)) continue;
+            if (!isMoveValid(*bb, mailbox, km, *posState, side)) continue;
             lastSee = SEE_NOT_COMPUTED;
             if (killerPhase == 1)
               killer0Yielded = true;
@@ -599,13 +655,13 @@ struct MovePicker {
         case STAGE_COUNTERMOVE:
           stage = STAGE_INIT_QUIETS;
           if (hasCounter) {
-            const Move& cm = counterMove;
+            Move cm = counterMove;
             if (!(ttYielded && cm == ttMove) &&
                 !(killer0Yielded && cm == killer0) &&
                 !(killer1Yielded && cm == killer1) &&
                 cm.from != 0 && // not null
                 mailbox[cm.to] == Piece::NONE &&
-                isMoveValid(*bb, mailbox, cm, *posState)) {
+                isMoveValid(*bb, mailbox, cm, *posState, side)) {
               lastSee = SEE_NOT_COMPUTED;
               counterYielded = true;
               return cm;
@@ -682,8 +738,9 @@ private:
         int mvvlva = MVV_LVA_VALUE[raw(victim)] * 16 -
                      MVV_LVA_VALUE[raw(attacker)];
         int capHistIdx = pieceZobristIndex(mailbox[m.from]);
-        int capHist = (capHistIdx >= 0)
-                          ? ss->captureHistory[capHistIdx][m.to]
+        int victimIdx = raw(victim) - 1;
+        int capHist = (capHistIdx >= 0 && victimIdx >= 0 && victimIdx < 6)
+                          ? ss->captureHistory[capHistIdx][victimIdx][m.to]
                           : 0;
         scores[i] = mvvlva + capHist / 16;
       } else {
@@ -787,7 +844,8 @@ int evaluate(const Position& pos, SearchState& state) {
     if (cached) return cached->score;
   }
 
-  int score = eval::evaluatePosition(pos.bitboards(), state.pawnHash);
+  int score = eval::evaluatePosition(pos.bitboards(), pos.mgPST(), pos.egPST(),
+                                     state.pawnHash);
   int stm = (pos.sideToMove() == Color::WHITE) ? score : -score;
   int result = stm + TEMPO_BONUS;
 
@@ -822,66 +880,102 @@ bool hasNonPawnMaterial(const Position& pos) {
 // score provides a lower bound: the side to move can always choose not to
 // capture (fail-soft).
 //
+// When the side to move is **in check**, standing pat is not valid (the
+// position might be checkmate), so all evasion moves are generated and
+// searched.  Delta and SEE pruning are also skipped under check — we
+// must find any legal escape or confirm checkmate.
+//
 // Reference: https://www.chessprogramming.org/Quiescence_Search
 // ---------------------------------------------------------------------------
 
-int quiescence(Position& pos, int alpha, int beta, SearchState& state) {
+int quiescence(Position& pos, int alpha, int beta, int ply,
+               SearchState& state) {
   state.nodes++;
+
+  // --- Ply overflow guard ---
+  // Check evasions generate all moves (including quiets), which can cause
+  // unbounded recursion in positions with perpetual checks.  Bound the
+  // qsearch depth to the same MAX_PLY limit used by negamax.
+  // Reference: https://www.chessprogramming.org/Quiescence_Search
+  if (ply >= MAX_PLY - 1) return evaluate(pos, state);
 
   // Periodic time / cancellation check
   if ((state.nodes & (CHECK_INTERVAL - 1)) == 0) state.checkTime();
   if (state.stopped) return 0;
 
+  bool inCheck = pos.inCheck();
+
   // Standing pat — assume we can do at least as well as the static eval.
+  // Not valid when in check: the side to move *must* escape, so standing
+  // pat cannot be used as a lower bound.
   // Fail-soft: track bestScore separately from alpha so TT gets accurate
   // scores.  Reference: https://www.chessprogramming.org/Fail-Soft
-  int standPat = evaluate(pos, state);
-  if (standPat >= beta) return standPat;
-  int bestScore = standPat;
-  if (standPat > alpha) alpha = standPat;
+  int standPat = 0;
+  if (!inCheck) {
+    standPat = evaluate(pos, state);
+    if (standPat >= beta) return standPat;
+    if (standPat > alpha) alpha = standPat;
+  }
 
-  // Generate capture moves only
-  MoveList captures;
-  movegen::generateCaptures(pos.bitboards(), pos.mailbox(),
-                            pos.sideToMove(), pos.positionState(), captures);
+  // bestScore starts at -MATE_SCORE when in check (assume mated until we
+  // find a legal move), or at standPat when not in check.
+  int bestScore = inCheck ? (-MATE_SCORE) : standPat;
+
+  // In check: generate all evasion moves (not just captures).
+  // Not in check: generate capture moves only.
+  MoveList moves;
+  if (inCheck)
+    movegen::generateAllMoves(pos.bitboards(), pos.mailbox(),
+                              pos.sideToMove(), pos.positionState(), moves);
+  else
+    movegen::generateCaptures(pos.bitboards(), pos.mailbox(),
+                              pos.sideToMove(), pos.positionState(), moves);
 
   // --- MVV-LVA ordering for captures ---
   // Score captures by Most Valuable Victim − Least Valuable Aggressor so
   // the best trades are tried first, improving beta-cutoff rates.
+  // Non-captures (evasions under check) get a neutral score.
   // Reference: https://www.chessprogramming.org/MVV-LVA
   int capScores[MAX_MOVES];
-  for (int j = 0; j < captures.count; ++j) {
-    const Move& cm = captures.moves[j];
-    PieceType victim   = cm.isEP() ? PieceType::PAWN
-                                   : pieceType(pos.mailbox()[cm.to]);
-    PieceType attacker = pieceType(pos.mailbox()[cm.from]);
-    capScores[j] = MVV_LVA_VALUE[raw(victim)] * 16 -
-                   MVV_LVA_VALUE[raw(attacker)];
+  for (int j = 0; j < moves.count; ++j) {
+    const Move& cm = moves.moves[j];
+    if (cm.isCapture()) {
+      PieceType victim   = cm.isEP() ? PieceType::PAWN
+                                     : pieceType(pos.mailbox()[cm.to]);
+      PieceType attacker = pieceType(pos.mailbox()[cm.from]);
+      capScores[j] = MVV_LVA_VALUE[raw(victim)] * 16 -
+                     MVV_LVA_VALUE[raw(attacker)];
+    } else {
+      capScores[j] = 0;
+    }
   }
 
-  for (int i = 0; i < captures.count; ++i) {
-    pickBest(captures, capScores, i);
-    Move m = captures.moves[i];
+  for (int i = 0; i < moves.count; ++i) {
+    pickBest(moves, capScores, i);
+    Move m = moves.moves[i];
 
-    // --- Delta Pruning ---
-    // If the captured piece's value plus a safety margin cannot raise the
-    // score to alpha, this capture is hopeless — skip it.
-    // Uses eval::materialValue() for consistent piece values.
-    {
-      PieceType capType = m.isEP()
-          ? PieceType::PAWN
-          : pieceType(pos.mailbox()[m.to]);
-      int capturedValue = eval::materialValue(capType);
-      if (standPat + capturedValue + DELTA_MARGIN < alpha) continue;
+    // Delta and SEE pruning only apply to captures when NOT in check.
+    if (!inCheck && m.isCapture()) {
+      // --- Delta Pruning ---
+      // If the captured piece's value plus a safety margin cannot raise the
+      // score to alpha, this capture is hopeless — skip it.
+      // Uses eval::materialValue() for consistent piece values.
+      {
+        PieceType capType = m.isEP()
+            ? PieceType::PAWN
+            : pieceType(pos.mailbox()[m.to]);
+        int capturedValue = eval::materialValue(capType);
+        if (standPat + capturedValue + DELTA_MARGIN < alpha) continue;
+      }
+
+      // --- SEE Pruning ---
+      // Skip captures where the static exchange evaluation is negative
+      // (the capture sequence loses material after recaptures).
+      if (attacks::see(pos.bitboards(), pos.mailbox(), m) < 0) continue;
     }
 
-    // --- SEE Pruning ---
-    // Skip captures where the static exchange evaluation is negative
-    // (the capture sequence loses material after recaptures).
-    if (attacks::see(pos.bitboards(), pos.mailbox(), m) < 0) continue;
-
     UndoInfo undo = pos.make(m);
-    int score = -quiescence(pos, -beta, -alpha, state);
+    int score = -quiescence(pos, -beta, -alpha, ply + 1, state);
     pos.unmake(m, undo);
 
     if (state.stopped) return 0;
@@ -955,7 +1049,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   if (inCheck) ++depth;
 
   // --- Horizon: quiescence search ---
-  if (depth <= 0) return quiescence(pos, alpha, beta, state);
+  if (depth <= 0) return quiescence(pos, alpha, beta, ply, state);
 
   // PV node: the initial window is wider than a zero-window scout.
   // Non-PV nodes use a null window (beta == alpha + 1).
@@ -1015,7 +1109,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // Reference: https://www.chessprogramming.org/Razoring
   if (!pvNode && !inCheck && depth <= 2 && depth >= 1 &&
       staticEval + RAZOR_MARGIN[depth] <= alpha) {
-    return quiescence(pos, alpha, beta, state);
+    return quiescence(pos, alpha, beta, ply, state);
   }
 
   // --- Reverse Futility Pruning (Static Null Move Pruning) ---
@@ -1209,7 +1303,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     // quiet moves at low depth are unlikely to improve — skip them entirely.
     // Guards: not PV, not in check, shallow depth, not the first move,
     //         not a capture or promotion (those are always searched).
-    if (!pvNode && !inCheck && depth <= 3 && movesSearched > 0 &&
+    if (!pvNode && !inCheck && depth <= 5 && movesSearched > 0 &&
         movesSearched >= LMP_THRESHOLD[depth] + (improving ? 2 : 0) &&
         !m.isCapture() && !m.isPromotion()) {
       continue;
@@ -1306,7 +1400,8 @@ int negamax(Position& pos, int depth, int alpha, int beta,
         if (!improving)
           ++reduction;           // Not improving → reduce more
         if (reduction < 1) reduction = 1;
-        if (reduction > newDepth - 1) reduction = newDepth - 1;
+        if (reduction > newDepth - 2) reduction = newDepth - 2;
+        if (reduction < 1) reduction = 1;
 
         score = -negamax(pos, newDepth - reduction,
                          -alpha - 1, -alpha, ply + 1, state,
@@ -1354,6 +1449,8 @@ int negamax(Position& pos, int depth, int alpha, int beta,
         // Collect principal variation: this move + the child's PV line.
         state.pv[ply][0] = m;
         int childLen = (ply + 1 < MAX_PLY) ? state.pvLength[ply + 1] : 0;
+        if (childLen < 0) childLen = 0;
+        if (childLen > MAX_PLY - 1 - ply) childLen = MAX_PLY - 1 - ply;
         std::memcpy(&state.pv[ply][1], &state.pv[ply + 1][0],
                     childLen * sizeof(Move));
         state.pvLength[ply] = childLen + 1;
@@ -1363,13 +1460,24 @@ int negamax(Position& pos, int depth, int alpha, int beta,
           // Beta cutoff — update move ordering heuristics
           if (m.isCapture()) {
             // Capture history: reward the cutoff capture, penalize prior captures.
+            // Board is in pre-move state (unmake already called), so
+            // mailbox[to] still holds the victim piece for any capture.
             int chIdx = pieceZobristIndex(pos.mailbox()[m.from]);
-            if (chIdx >= 0)
-              updateHistory(state.captureHistory[chIdx][m.to], bonus);
+            if (chIdx >= 0) {
+              int vi = raw(m.isEP() ? PieceType::PAWN
+                                    : pieceType(pos.mailbox()[m.to])) - 1;
+              if (vi >= 0 && vi < 6)
+                updateHistory(state.captureHistory[chIdx][vi][m.to], bonus);
+            }
             for (int ci = 0; ci < captureCount - 1; ++ci) {
-              int prevIdx = pieceZobristIndex(pos.mailbox()[capturesSearched[ci].from]);
-              if (prevIdx >= 0)
-                updateHistory(state.captureHistory[prevIdx][capturesSearched[ci].to], -bonus);
+              const Move& cm = capturesSearched[ci];
+              int prevIdx = pieceZobristIndex(pos.mailbox()[cm.from]);
+              if (prevIdx >= 0) {
+                int vi = raw(cm.isEP() ? PieceType::PAWN
+                                       : pieceType(pos.mailbox()[cm.to])) - 1;
+                if (vi >= 0 && vi < 6)
+                  updateHistory(state.captureHistory[prevIdx][vi][cm.to], -bonus);
+              }
             }
           } else {
             // Quiet cutoff — update killers, history, countermoves.
@@ -1529,6 +1637,7 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
   //   https://www.chessprogramming.org/Time_Management
   Move prevIterBest = {};
   int stableCount = 0;
+  int bestMoveChanges = 0;  // total best-move changes across iterations
   uint32_t effectiveSoftTime = limits.softTimeMs;
 
   for (int depth = 1; depth <= maxDepth; ++depth) {
@@ -1575,6 +1684,8 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
           // Build root PV: this root move + child PV from ply 1.
           state.pv[0][0] = rootMoves.moves[i];
           int childLen = state.pvLength[1];
+          if (childLen < 0) childLen = 0;
+          if (childLen > MAX_PLY - 1) childLen = MAX_PLY - 1;
           std::memcpy(&state.pv[0][1], &state.pv[1][0],
                       childLen * sizeof(Move));
           state.pvLength[0] = childLen + 1;
@@ -1590,7 +1701,7 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
       // Fail-low: every root move scored at or below the aspiration lower
       // bound.  Widen the lower bound and re-search.
       if (iterBestScore <= aspAlpha) {
-        delta *= 2;
+        delta = (delta < INF_SCORE / 2) ? delta * 2 : INF_SCORE;
         alpha = prevScore - delta;
         if (alpha < -INF_SCORE) alpha = -INF_SCORE;
         continue;
@@ -1598,7 +1709,7 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
       // Fail-high: the best score met or exceeded the upper bound.
       // Widen the upper bound and re-search.
       if (iterBestScore >= aspBeta) {
-        delta *= 2;
+        delta = (delta < INF_SCORE / 2) ? delta * 2 : INF_SCORE;
         beta = prevScore + delta;
         if (beta > INF_SCORE) beta = INF_SCORE;
         continue;
@@ -1619,6 +1730,8 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
 
     // Copy principal variation from this iteration's PV table.
     result.pvLength = state.pvLength[0];
+    if (result.pvLength < 0) result.pvLength = 0;
+    if (result.pvLength > MAX_PLY) result.pvLength = MAX_PLY;
     std::memcpy(result.pv, state.pv[0], result.pvLength * sizeof(Move));
 
     // --- Root move reordering ---
@@ -1649,20 +1762,27 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
       ++stableCount;
     } else {
       // Move instability: when the best move changes at depth >= 4,
-      // extend the effective soft time to allow more search.
+      // scale the effective soft time by a dynamic factor that grows
+      // with accumulated instability (more changes → more time).
+      // Base factor: 1.5×, + 0.25× per prior change (capped at 2.5×).
+      // Reference: https://www.chessprogramming.org/Time_Management
       if (depth >= 4 && effectiveSoftTime > 0) {
-        effectiveSoftTime = effectiveSoftTime * 3 / 2;
+        int factor = 150 + bestMoveChanges * 25;
+        if (factor > 250) factor = 250;
+        effectiveSoftTime = effectiveSoftTime * factor / 100;
         if (limits.hardTimeMs > 0 && effectiveSoftTime > limits.hardTimeMs)
           effectiveSoftTime = limits.hardTimeMs;
       }
+      ++bestMoveChanges;
       stableCount = 1;
     }
     prevIterBest = iterBestMove;
 
     // --- Easy move detection ---
-    // If the best move has been stable for >= 5 iterations, leads the
+    // If the best move has been stable for >= 4 iterations, leads the
     // second-best by >= 100cp, and we're deep enough, stop early.
-    if (effectiveSoftTime > 0 && stableCount >= 5 && depth >= 6 &&
+    // Reference: https://www.chessprogramming.org/Time_Management#Easy_Move
+    if (effectiveSoftTime > 0 && stableCount >= 4 && depth >= 6 &&
         secondBestScore > -INF_SCORE &&
         iterBestScore - secondBestScore >= 100) {
       break;
@@ -1677,6 +1797,7 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
   }
 
   result.nodes = state.nodes;
+
   return result;
 }
 

@@ -188,6 +188,90 @@ static double findOptimalK(const std::vector<eval::TrainingPosition>& positions,
 }
 
 // ===========================================================================
+// Gradient validation — finite-difference check
+// ===========================================================================
+
+// Computes analytical gradient for a single parameter and compares against
+// central finite-difference approximation.  Catches chain-rule bugs in the
+// gradient computation before wasting time on training.
+//
+// Reference: https://www.chessprogramming.org/Texel%27s_Tuning_Method
+
+/// Compute the analytical gradient for a single parameter.
+static double analyticalGradient(
+    const std::vector<eval::TrainingPosition>& data,
+    const double* params, double K, int paramIdx) {
+  const int N = static_cast<int>(data.size());
+  double grad = 0.0;
+  for (int i = 0; i < N; ++i) {
+    double score = traceScore(data[i].trace, params);
+    double sig = sigmoid(score, K);
+    double factor = 2.0 * (sig - data[i].result)
+                   * sig * (1.0 - sig) * (K * log(10.0) / 400.0);
+    for (const auto& e : data[i].trace.entries) {
+      if (e.idx == paramIdx) {
+        grad += factor * e.coeff;
+        break;  // Each param appears at most once per trace.
+      }
+    }
+  }
+  return grad / N;
+}
+
+/// Validate analytical gradients against finite-difference for a sample
+/// of random parameters.  Returns true if all pass within tolerance.
+static bool validateGradients(
+    const std::vector<eval::TrainingPosition>& data,
+    const double* params, int nParams, double K) {
+  constexpr double EPSILON = 1e-4;
+  constexpr double REL_TOL = 1e-3;     // Relative tolerance.
+  constexpr int    SAMPLE  = 10;        // Number of params to check.
+
+  std::mt19937 rng(12345);
+  std::uniform_int_distribution<int> dist(0, nParams - 1);
+
+  // Copy params for perturbation.
+  std::vector<double> paramsCopy(params, params + nParams);
+
+  int failures = 0;
+  fprintf(stderr, "Gradient validation (%d random params, eps=%.0e):\n",
+          SAMPLE, EPSILON);
+
+  for (int s = 0; s < SAMPLE; ++s) {
+    int idx = dist(rng);
+
+    // Analytical.
+    double ag = analyticalGradient(data, paramsCopy.data(), K, idx);
+
+    // Numerical (central difference).
+    double origVal = paramsCopy[idx];
+    paramsCopy[idx] = origVal + EPSILON;
+    double errPlus = computeError(data, K, paramsCopy.data());
+    paramsCopy[idx] = origVal - EPSILON;
+    double errMinus = computeError(data, K, paramsCopy.data());
+    paramsCopy[idx] = origVal;  // Restore.
+    double ng = (errPlus - errMinus) / (2.0 * EPSILON);
+
+    double absDiff = fabs(ag - ng);
+    double denom = fmax(fabs(ag), fabs(ng)) + 1e-12;
+    double relErr = absDiff / denom;
+
+    const char* status = (relErr < REL_TOL) ? "OK" : "FAIL";
+    if (relErr >= REL_TOL) ++failures;
+
+    fprintf(stderr, "  [%s] param %4d (%-24s): analytical=%+.8e  numerical=%+.8e  relErr=%.2e\n",
+            status, idx, eval::tuning::getName(idx), ag, ng, relErr);
+  }
+
+  if (failures > 0)
+    fprintf(stderr, "WARNING: %d/%d gradient checks FAILED!\n", failures, SAMPLE);
+  else
+    fprintf(stderr, "All %d gradient checks passed.\n", SAMPLE);
+
+  return failures == 0;
+}
+
+// ===========================================================================
 // Adam gradient descent
 // ===========================================================================
 
@@ -204,7 +288,7 @@ static std::vector<bool> buildPstFlags() {
 
 static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
                          const std::vector<eval::TrainingPosition>& testSet,
-                         double K, int maxEpochs) {
+                         double& K, int maxEpochs) {
   const int N = static_cast<int>(trainSet.size());
   const int nParams = eval::tuning::paramCount();
   const int nThreads = std::max(1,
@@ -229,7 +313,35 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
   std::vector<std::vector<double>> threadGrads(nThreads,
       std::vector<double>(nParams, 0.0));
 
+  // --- K recalculation interval ---
+  // As parameters drift during training, the optimal sigmoid scaling
+  // constant K shifts.  Recalculate every 50 epochs.
+  // Reference: https://www.chessprogramming.org/Texel%27s_Tuning_Method
+  constexpr int K_RECALC_INTERVAL = 50;
+
+  // --- Early stopping ---
+  // Track best test MSE and stop if no improvement for 50 epochs.
+  // Saves the best parameters (lowest test MSE).
+  // Reference: https://www.chessprogramming.org/Texel%27s_Tuning_Method
+  constexpr int PATIENCE = 50;
+  double bestTestMSE = 1e30;
+  int epochsSinceImprove = 0;
+  std::vector<double> bestParams = params;
+
   for (int epoch = 1; epoch <= maxEpochs; ++epoch) {
+    // --- Cosine annealing learning rate schedule ---
+    // Gradually reduces LR from ADAM_LR to ~0, reducing oscillation in
+    // later epochs while maintaining aggressive early learning.
+    // Reference: Loshchilov & Hutter, "SGDR: Stochastic Gradient Descent
+    // with Warm Restarts", 2017.
+    double lr = ADAM_LR * 0.5 * (1.0 + cos(M_PI * epoch / maxEpochs));
+
+    // --- K recalculation ---
+    if (epoch > 1 && (epoch % K_RECALC_INTERVAL) == 0) {
+      K = findOptimalK(trainSet, params.data());
+      fprintf(stderr, "  Recalculated K = %.6f at epoch %d\n", K, epoch);
+    }
+
     // ----- Compute gradient (multi-threaded) -----
     for (auto& g : threadGrads) std::fill(g.begin(), g.end(), 0.0);
 
@@ -275,17 +387,33 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
       double mHat = m[i] / (1.0 - beta1t);
       double vHat = v[i] / (1.0 - beta2t);
 
-      params[i] -= ADAM_LR * mHat / (sqrt(vHat) + ADAM_EPS);
+      params[i] -= lr * mHat / (sqrt(vHat) + ADAM_EPS);
     }
 
-    // ----- Report -----
+    // ----- Report + early stopping -----
     if (epoch == 1 || epoch % 10 == 0 || epoch == maxEpochs) {
       double trainErr = computeError(trainSet, K, params.data());
       double testErr  = computeError(testSet, K, params.data());
-      fprintf(stderr, "Epoch %4d: train MSE = %.10f, test MSE = %.10f\n",
-              epoch, trainErr, testErr);
+      fprintf(stderr, "Epoch %4d: train MSE = %.10f, test MSE = %.10f  (lr=%.6f)\n",
+              epoch, trainErr, testErr, lr);
+
+      if (testErr < bestTestMSE) {
+        bestTestMSE = testErr;
+        bestParams = params;
+        epochsSinceImprove = 0;
+      } else {
+        epochsSinceImprove += (epoch == 1) ? 1 : 10;
+      }
+      if (epochsSinceImprove >= PATIENCE) {
+        fprintf(stderr, "Early stopping at epoch %d (no improvement for %d epochs)\n",
+                epoch, PATIENCE);
+        break;
+      }
     }
   }
+
+  // Use the best parameters found (lowest test MSE).
+  params = bestParams;
 
   // ----- Finalize: round to int, clamp to bounds, write to registry -----
   for (int i = 0; i < nParams; ++i) {
@@ -318,6 +446,28 @@ static void writeTunedValues(const char* filename) {
 static void printResults() {
   int n = eval::tuning::paramCount();
 
+  // --- Pre-build index maps (one-time O(n) lookups) ---
+  // Material indices (in MATERIAL[] order: knight, bishop, rook, queen).
+  const char* matNames[4] = {"MAT_KNIGHT", "MAT_BISHOP", "MAT_ROOK", "MAT_QUEEN"};
+  int matIdx[4];
+  for (int i = 0; i < 4; ++i) matIdx[i] = eval::findParam(matNames[i]);
+
+  // PST indices (12 tables × 64 squares).
+  const char* pstNames[12] = {
+    "PST_PAWN_MG", "PST_KNIGHT_MG", "PST_BISHOP_MG",
+    "PST_ROOK_MG", "PST_QUEEN_MG",  "PST_KING_MG",
+    "PST_PAWN_EG", "PST_KNIGHT_EG", "PST_BISHOP_EG",
+    "PST_ROOK_EG", "PST_QUEEN_EG",  "PST_KING_EG",
+  };
+  int pstIdx[12][64];
+  for (int tbl = 0; tbl < 12; ++tbl) {
+    for (int sq = 0; sq < 64; ++sq) {
+      char paramName[32];
+      std::snprintf(paramName, sizeof(paramName), "%s_%d", pstNames[tbl], sq);
+      pstIdx[tbl][sq] = eval::findParam(paramName);
+    }
+  }
+
   // --- Changed values ---
   printf("\n// --- Changed parameter values ---\n\n");
   int changed = 0;
@@ -335,31 +485,16 @@ static void printResults() {
   // --- C++ formatted MATERIAL array ---
   printf("// --- C++ Material array ---\n");
   printf("EVAL_CONST int MATERIAL[] = {100");
-  for (int i = 0; i < n; ++i) {
-    const char* name = eval::tuning::getName(i);
-    if (strcmp(name, "MAT_KNIGHT") == 0) printf(", %d", eval::tuning::getValue(i));
-    if (strcmp(name, "MAT_BISHOP") == 0) printf(", %d", eval::tuning::getValue(i));
-    if (strcmp(name, "MAT_ROOK") == 0)   printf(", %d", eval::tuning::getValue(i));
-    if (strcmp(name, "MAT_QUEEN") == 0)  printf(", %d", eval::tuning::getValue(i));
-  }
+  for (int i = 0; i < 4; ++i)
+    printf(", %d", eval::tuning::getValue(matIdx[i]));
   printf(", 0};\n\n");
 
   // --- C++ formatted PST arrays ---
-  const char* pstNames[12] = {
-    "PST_PAWN_MG", "PST_KNIGHT_MG", "PST_BISHOP_MG",
-    "PST_ROOK_MG", "PST_QUEEN_MG",  "PST_KING_MG",
-    "PST_PAWN_EG", "PST_KNIGHT_EG", "PST_BISHOP_EG",
-    "PST_ROOK_EG", "PST_QUEEN_EG",  "PST_KING_EG",
-  };
-
   for (int tbl = 0; tbl < 12; ++tbl) {
     printf("// --- %s ---\n", pstNames[tbl]);
     printf("EVAL_CONST int %s[64] = {\n", pstNames[tbl]);
     for (int sq = 0; sq < 64; ++sq) {
-      char paramName[32];
-      std::snprintf(paramName, sizeof(paramName), "%s_%d", pstNames[tbl], sq);
-      int idx = eval::findParam(paramName);
-      int val = (idx >= 0) ? eval::tuning::getValue(idx) : 0;
+      int val = (pstIdx[tbl][sq] >= 0) ? eval::tuning::getValue(pstIdx[tbl][sq]) : 0;
       if (sq % 8 == 0) printf("  ");
       printf("%4d", val);
       if (sq < 63) printf(",");
@@ -426,6 +561,43 @@ int main(int argc, char* argv[]) {
     if (i < splitIdx) trainSet.push_back(std::move(tp));
     else              testSet.push_back(std::move(tp));
   }
+
+  // ---- Trace/eval divergence validation ----------------------------------
+  // Verify that the trace dot product matches evaluatePosition() for a
+  // sample of positions.  Catches any drift between extractTrace() and
+  // evaluatePosition() early, before wasting time on optimization.
+  {
+    int n = eval::tuning::paramCount();
+    std::vector<double> params(n);
+    for (int i = 0; i < n; ++i)
+      params[i] = static_cast<double>(eval::tuning::getValue(i));
+
+    int checked = 0, mismatches = 0;
+    // Validate up to 5000 positions (enough to catch systematic errors).
+    int sampleSize = std::min(5000, static_cast<int>(rawEntries.size()));
+    for (int i = 0; i < sampleSize; ++i) {
+      int evalScore = eval::evaluatePosition(rawEntries[i].bb);
+      const auto& tp = (i < splitIdx) ? trainSet[i]
+                                      : testSet[i - splitIdx];
+      double traceVal = traceScore(tp.trace, params.data());
+      int tracei = static_cast<int>(std::round(traceVal));
+      if (std::abs(evalScore - tracei) > 1) {
+        if (mismatches < 10)
+          fprintf(stderr,
+                  "  MISMATCH pos %d: eval=%d trace=%d (diff=%d)\n",
+                  i, evalScore, tracei, evalScore - tracei);
+        ++mismatches;
+      }
+      ++checked;
+    }
+    if (mismatches > 0)
+      fprintf(stderr,
+              "WARNING: %d/%d positions have trace/eval divergence!\n",
+              mismatches, checked);
+    else
+      fprintf(stderr, "Trace validation: %d positions OK\n", checked);
+  }
+
   rawEntries.clear();
   rawEntries.shrink_to_fit();
 
@@ -441,6 +613,10 @@ int main(int argc, char* argv[]) {
     initParams[i] = static_cast<double>(eval::tuning::getValue(i));
   double K = findOptimalK(trainSet, initParams.data());
   fprintf(stderr, "Optimal K = %.6f\n", K);
+
+  // Validate analytical gradients before training.
+  validateGradients(trainSet, initParams.data(),
+                    eval::tuning::paramCount(), K);
 
   double initTrainErr = computeError(trainSet, K, initParams.data());
   double initTestErr  = computeError(testSet, K, initParams.data());

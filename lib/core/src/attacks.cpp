@@ -303,39 +303,33 @@ AttackInfo computeAll(const BitboardSet& bb) {
 // Square attack detection
 // ---------------------------------------------------------------------------
 
-bool isSquareUnderAttack(const BitboardSet& bb, Square sq, Color defendingColor) {
-  Color attackingColor = ~defendingColor;
+Bitboard attackersOfSquare(const BitboardSet& bb, Square sq,
+                          Color attackingColor) {
+  Color defending = ~attackingColor;
+  Bitboard attackers = 0;
 
-  // Pawn attacks: PAWN[defending][sq] gives squares from which an attacking
-  // pawn could reach sq.
   int pawnIdx = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::PAWN));
-  if (PAWN[piece::raw(defendingColor)][sq] & bb.byPiece[pawnIdx])
-    return true;
+  attackers |= PAWN[piece::raw(defending)][sq] & bb.byPiece[pawnIdx];
 
-  // Knight attacks
   int knightIdx = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::KNIGHT));
-  if (KNIGHT[sq] & bb.byPiece[knightIdx])
-    return true;
+  attackers |= KNIGHT[sq] & bb.byPiece[knightIdx];
 
-  // King attacks
   int kingIdx = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::KING));
-  if (KING[sq] & bb.byPiece[kingIdx])
-    return true;
+  attackers |= KING[sq] & bb.byPiece[kingIdx];
 
-  // Rook/Queen — orthogonal rays
-  int rookIdx = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::ROOK));
-  int queenIdx = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::QUEEN));
-  Bitboard rookQueens = bb.byPiece[rookIdx] | bb.byPiece[queenIdx];
-  if (rook(sq, bb.occupied) & rookQueens)
-    return true;
-
-  // Bishop/Queen — diagonal rays
+  int rookIdx   = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::ROOK));
+  int queenIdx  = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::QUEEN));
   int bishopIdx = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::BISHOP));
+  Bitboard rookQueens   = bb.byPiece[rookIdx]   | bb.byPiece[queenIdx];
   Bitboard bishopQueens = bb.byPiece[bishopIdx] | bb.byPiece[queenIdx];
-  if (bishop(sq, bb.occupied) & bishopQueens)
-    return true;
+  attackers |= rook(sq, bb.occupied)   & rookQueens;
+  attackers |= bishop(sq, bb.occupied) & bishopQueens;
 
-  return false;
+  return attackers;
+}
+
+bool isSquareUnderAttack(const BitboardSet& bb, Square sq, Color defendingColor) {
+  return attackersOfSquare(bb, sq, ~defendingColor) != 0;
 }
 
 // ---------------------------------------------------------------------------

@@ -102,8 +102,15 @@ Bitboard line(Square s1, Square s2);
 // Square attack detection
 // ---------------------------------------------------------------------------
 
-// Test whether any enemy piece attacks `sq`.  Uses precomputed leaper tables
-// and slider ray functions — early-returns on the first attacker found.
+// Returns a bitboard of ALL squares from which `attackingColor` pieces attack
+// `sq`.  Uses precomputed leaper tables and slider ray functions.  Useful for
+// check detection (popcount gives checker count, lsb gives checker square).
+// Reference: https://www.chessprogramming.org/Square_Attacked_By
+Bitboard attackersOfSquare(const LibreChess::BitboardSet& bb, Square sq,
+                           Color attackingColor);
+
+// Test whether any enemy piece attacks `sq`.  Thin wrapper around
+// attackersOfSquare() — returns true when the attacker set is non-empty.
 // `defendingColor` is the color of the piece ON the square (the "defender");
 // the attacker is the opposite color.
 bool isSquareUnderAttack(const LibreChess::BitboardSet& bb, Square sq,

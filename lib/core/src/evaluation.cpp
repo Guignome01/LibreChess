@@ -260,6 +260,46 @@ int materialValue(PieceType pt) {
   return MATERIAL[idx - 1];
 }
 
+// ---------------------------------------------------------------------------
+// Incremental material+PST helpers
+// ---------------------------------------------------------------------------
+
+int pieceSquareMG(int pieceIdx, Square sq) {
+  int type = pieceIdx < 6 ? pieceIdx : pieceIdx - 6;
+  int val = MATERIAL[type] + PST_MG[type][pieceIdx < 6 ? sq : (sq ^ 56)];
+  return pieceIdx < 6 ? val : -val;
+}
+
+int pieceSquareEG(int pieceIdx, Square sq) {
+  int type = pieceIdx < 6 ? pieceIdx : pieceIdx - 6;
+  int val = MATERIAL[type] + PST_EG[type][pieceIdx < 6 ? sq : (sq ^ 56)];
+  return pieceIdx < 6 ? val : -val;
+}
+
+int computeMaterialPST_MG(const BitboardSet& bb) {
+  int score = 0;
+  for (int i = 0; i < 6; ++i) {
+    Bitboard white = bb.byPiece[i];
+    while (white) { score += MATERIAL[i] + PST_MG[i][popLsb(white)]; }
+    Bitboard black = bb.byPiece[i + 6];
+    while (black) { score -= MATERIAL[i] + PST_MG[i][popLsb(black) ^ 56]; }
+  }
+  return score;
+}
+
+int computeMaterialPST_EG(const BitboardSet& bb) {
+  int score = 0;
+  for (int i = 0; i < 6; ++i) {
+    Bitboard white = bb.byPiece[i];
+    while (white) { score += MATERIAL[i] + PST_EG[i][popLsb(white)]; }
+    Bitboard black = bb.byPiece[i + 6];
+    while (black) { score -= MATERIAL[i] + PST_EG[i][popLsb(black) ^ 56]; }
+  }
+  return score;
+}
+
+// ---------------------------------------------------------------------------
+
 void initPawnMasks() { initPawnMasksImpl(); }
 
 bool isPassed(Square sq, Color color, Bitboard enemyPawns) {
@@ -319,7 +359,7 @@ EVAL_CONST int BACKWARD_PENALTY    =  0;
 // Protected passed pawn — extra bonus when a passer is defended by a pawn.
 // Reference: https://www.chessprogramming.org/Passed_Pawn#Protected
 EVAL_CONST int PROTECTED_PASSER_MG = 17;
-EVAL_CONST int PROTECTED_PASSER_EG = 0;
+EVAL_CONST int PROTECTED_PASSER_EG = 20;
 
 // Candidate passed pawn — bonus for a pawn that could become passed with
 // one favorable exchange (only one blocking enemy pawn).
@@ -332,6 +372,7 @@ EVAL_CONST int CANDIDATE_PASSER_EG = 41;
 // ---------------------------------------------------------------------------
 
 static void evalPawnStructure(const BitboardSet& bb,
+                              Bitboard whitePawnAtk, Bitboard blackPawnAtk,
                               int& mgScore, int& egScore,
                               PawnHashTable* pawnHash) {
   Bitboard whitePawns = bb.byPiece[0];   // pieceZobristIndex(W_PAWN) = 0
@@ -351,8 +392,8 @@ static void evalPawnStructure(const BitboardSet& bb,
     }
   }
 
-  Bitboard blackPawnAttacks = shiftSE(blackPawns) | shiftSW(blackPawns);
-  Bitboard whitePawnAttacks = shiftNE(whitePawns) | shiftNW(whitePawns);
+  Bitboard blackPawnAttacks = blackPawnAtk;
+  Bitboard whitePawnAttacks = whitePawnAtk;
 
   int mg = 0, eg = 0;
   uint8_t whitePassedFiles = 0;
@@ -587,7 +628,7 @@ EVAL_CONST int MOBILITY_KNIGHT_EG = 12;
 EVAL_CONST int MOBILITY_BISHOP_MG = 3;
 EVAL_CONST int MOBILITY_BISHOP_EG = 12;
 EVAL_CONST int MOBILITY_ROOK_MG   = 0;
-EVAL_CONST int MOBILITY_ROOK_EG   = 16;
+EVAL_CONST int MOBILITY_ROOK_EG   = 12;
 EVAL_CONST int MOBILITY_QUEEN_MG  = 4;
 EVAL_CONST int MOBILITY_QUEEN_EG  = 16;
 
@@ -746,6 +787,7 @@ EVAL_CONST int CENTER_OCCUPATION_BONUS = 3;
 EVAL_CONST int CENTER_ATTACK_BONUS     = 6;
 
 static void evalCenterControl(const BitboardSet& bb,
+                              Bitboard whitePawnAtk, Bitboard blackPawnAtk,
                               int& mgScore, int& egScore) {
   Bitboard whitePawns = bb.byPiece[0];
   Bitboard blackPawns = bb.byPiece[6];
@@ -755,8 +797,6 @@ static void evalCenterControl(const BitboardSet& bb,
   int blackOccupation = popcount(blackPawns & CENTER_MASK);
 
   // Attack bonus: centre squares attacked by friendly pawns.
-  Bitboard whitePawnAtk = shiftNE(whitePawns) | shiftNW(whitePawns);
-  Bitboard blackPawnAtk = shiftSE(blackPawns) | shiftSW(blackPawns);
   int whiteAttacks = popcount(whitePawnAtk & CENTER_MASK);
   int blackAttacks = popcount(blackPawnAtk & CENTER_MASK);
 
@@ -861,13 +901,8 @@ EVAL_FIXED Bitboard BLACK_SPACE_ZONE =
     (FILE_C | FILE_D | FILE_E | FILE_F) & (RANK_5 | RANK_6 | RANK_7);
 
 static void evalSpace(const BitboardSet& bb,
+                      Bitboard whitePawnAtk, Bitboard blackPawnAtk,
                       int& mgScore, int& egScore) {
-  Bitboard whitePawns = bb.byPiece[0];
-  Bitboard blackPawns = bb.byPiece[6];
-
-  // Pawn attack masks — squares attacked by enemy pawns are unsafe.
-  Bitboard blackPawnAtk = shiftSE(blackPawns) | shiftSW(blackPawns);
-  Bitboard whitePawnAtk = shiftNE(whitePawns) | shiftNW(whitePawns);
 
   int whiteSpace = popcount(WHITE_SPACE_ZONE & ~blackPawnAtk);
   int blackSpace = popcount(BLACK_SPACE_ZONE & ~whitePawnAtk);
@@ -893,15 +928,14 @@ static void evalSpace(const BitboardSet& bb,
 EVAL_CONST int OUTPOST_BONUS = 0;
 
 static void evalKnightOutposts(const BitboardSet& bb,
+                               Bitboard whitePawnAtk, Bitboard blackPawnAtk,
                                int& mgScore, int& egScore) {
 
   Bitboard whitePawns = bb.byPiece[0];
   Bitboard blackPawns = bb.byPiece[6];
 
-  // White pawn attacks (protect white knights)
-  Bitboard whitePawnAttacks = shiftNE(whitePawns) | shiftNW(whitePawns);
-  // Black pawn attacks (protect black knights)
-  Bitboard blackPawnAttacks = shiftSE(blackPawns) | shiftSW(blackPawns);
+  Bitboard whitePawnAttacks = whitePawnAtk;
+  Bitboard blackPawnAttacks = blackPawnAtk;
 
   // --- White knights (index 1) ---
   Bitboard wn = bb.byPiece[1];
@@ -1446,41 +1480,27 @@ static void evalRookBehindPasser(const BitboardSet& bb, int& egScore) {
 // Main evaluation entry point
 // ---------------------------------------------------------------------------
 
-int evaluatePosition(const BitboardSet& bb,
-                     PawnHashTable* pawnHash) {
-  // Lazy-init pawn structure masks on first call.
-  initPawnMasks();
+// Internal: shared evaluation body.  `mgScore` and `egScore` are initialized
+// by the caller — either from the per-piece material+PST loop or from
+// precomputed incremental accumulators.
+static int evaluateImpl(const BitboardSet& bb, int mgScore, int egScore,
+                        PawnHashTable* pawnHash) {
+  // Pre-compute pawn attacks once — shared by evalPawnStructure,
+  // evalKnightOutposts, evalCenterControl, and evalSpace.
+  Bitboard whitePawnAtk = shiftNE(bb.byPiece[0]) | shiftNW(bb.byPiece[0]);
+  Bitboard blackPawnAtk = shiftSE(bb.byPiece[6]) | shiftSW(bb.byPiece[6]);
 
-  int mgScore = 0;
-  int egScore = 0;
-
-  for (int i = 0; i < 6; ++i) {
-    Bitboard white = bb.byPiece[i];
-    while (white) {
-      Square sq = popLsb(white);
-      mgScore += MATERIAL[i] + PST_MG[i][sq];
-      egScore += MATERIAL[i] + PST_EG[i][sq];
-    }
-
-    Bitboard black = bb.byPiece[i + 6];
-    while (black) {
-      Square sq = popLsb(black);
-      mgScore -= MATERIAL[i] + PST_MG[i][sq ^ 56];
-      egScore -= MATERIAL[i] + PST_EG[i][sq ^ 56];
-    }
-  }
-
-  evalPawnStructure(bb, mgScore, egScore, pawnHash);
+  evalPawnStructure(bb, whitePawnAtk, blackPawnAtk, mgScore, egScore, pawnHash);
   evalPassedPawnKingDist(bb, egScore);
   evalBishopPair(bb, mgScore, egScore);
   evalBadBishop(bb, mgScore, egScore);
   evalRookFiles(bb, mgScore, egScore);
   evalRookOnSeventh(bb, mgScore, egScore);
   evalRookBehindPasser(bb, egScore);
-  evalKnightOutposts(bb, mgScore, egScore);
+  evalKnightOutposts(bb, whitePawnAtk, blackPawnAtk, mgScore, egScore);
   evalKingSafety(bb, mgScore, egScore);
-  evalCenterControl(bb, mgScore, egScore);
-  evalSpace(bb, mgScore, egScore);
+  evalCenterControl(bb, whitePawnAtk, blackPawnAtk, mgScore, egScore);
+  evalSpace(bb, whitePawnAtk, blackPawnAtk, mgScore, egScore);
   evalTrappedPieces(bb, mgScore, egScore);
 
   // Mobility, connectivity, threats, and king danger require full attack
@@ -1502,13 +1522,9 @@ int evaluatePosition(const BitboardSet& bb,
   int score = (mgScore * phase + egScore * (MAX_PHASE - phase)) / MAX_PHASE;
 
   // --- Opposite-color bishop scaling ---
-  // When each side has exactly one bishop and they are on opposite color
-  // complexes, the position has strong drawish tendencies.  Scale the
-  // score toward zero to reflect this.
-  // Reference: https://www.chessprogramming.org/Bishops_of_Opposite_Colors
-  if (phase <= 6) {  // endgame positions only
-    Bitboard wb = bb.byPiece[2];      // W_BISHOP (Zobrist index)
-    Bitboard bbish = bb.byPiece[8];  // B_BISHOP (Zobrist index)
+  if (phase <= 6) {
+    Bitboard wb = bb.byPiece[2];
+    Bitboard bbish = bb.byPiece[8];
     if (popcount(wb) == 1 && popcount(bbish) == 1) {
       bool whiteDark  = (wb & DARK_SQUARES) != 0;
       bool blackDark  = (bbish & DARK_SQUARES) != 0;
@@ -1519,6 +1535,38 @@ int evaluatePosition(const BitboardSet& bb,
   }
 
   return score;
+}
+
+int evaluatePosition(const BitboardSet& bb,
+                     PawnHashTable* pawnHash) {
+  initPawnMasks();
+
+  int mgScore = 0;
+  int egScore = 0;
+
+  for (int i = 0; i < 6; ++i) {
+    Bitboard white = bb.byPiece[i];
+    while (white) {
+      Square sq = popLsb(white);
+      mgScore += MATERIAL[i] + PST_MG[i][sq];
+      egScore += MATERIAL[i] + PST_EG[i][sq];
+    }
+
+    Bitboard black = bb.byPiece[i + 6];
+    while (black) {
+      Square sq = popLsb(black);
+      mgScore -= MATERIAL[i] + PST_MG[i][sq ^ 56];
+      egScore -= MATERIAL[i] + PST_EG[i][sq ^ 56];
+    }
+  }
+
+  return evaluateImpl(bb, mgScore, egScore, pawnHash);
+}
+
+int evaluatePosition(const BitboardSet& bb, int mgMatPST, int egMatPST,
+                     PawnHashTable* pawnHash) {
+  initPawnMasks();
+  return evaluateImpl(bb, mgMatPST, egMatPST, pawnHash);
 }
 
 }  // namespace eval

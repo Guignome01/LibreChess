@@ -45,6 +45,8 @@ struct UndoInfo {
   Piece captured;         // piece captured (Piece::NONE if quiet)
   Square capturedSquare;  // where the capture occurred (differs from `to` for EP)
   int historyCount;       // hashHistory_.count before the move
+  int mgPST;              // material+PST midgame before the move
+  int egPST;              // material+PST endgame before the move
 };
 
 // ---------------------------------------------------------------------------
@@ -110,6 +112,12 @@ class Position {
 
   uint64_t hash() const { return hash_; }
   bool isRepetition() const { return rules::isThreefoldRepetition(hashHistory_); }
+
+  // Incremental material+PST accumulators (white-relative centipawns).
+  // Updated on make/unmake; used by the search to skip the per-piece loop
+  // in evaluatePosition().
+  int mgPST() const { return mgPST_; }
+  int egPST() const { return egPST_; }
 
   // --- Convenience wrappers (delegate to movegen:: / utils::) ---
 
@@ -202,6 +210,8 @@ class Position {
   Square kingSquare_[2];
   uint64_t hash_;
   HashHistory hashHistory_;
+  int mgPST_;    // incremental material+PST midgame accumulator
+  int egPST_;    // incremental material+PST endgame accumulator
 
   void recordPosition();
   void applyMoveToBoard(int fromRow, int fromCol, int toRow, int toCol, char promotion, MoveResult& result);

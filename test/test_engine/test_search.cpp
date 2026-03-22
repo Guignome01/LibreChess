@@ -1085,6 +1085,42 @@ static void test_tt_depth_preferred_replacement(void) {
 }
 
 // ===========================================================================
+// Dynamic instability time extension — best-move changes allocate more time
+// ===========================================================================
+
+// When the best move changes frequently, the effective soft time should
+// extend dynamically, allowing the search to reach deeper.
+// Reference: https://www.chessprogramming.org/Time_Management
+static void test_instability_extends_time(void) {
+  // Complex middlegame — best move may change across iterations.
+  const char* fen =
+      "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4";
+  Position pos;
+  pos.loadFEN(fen);
+
+  // Short soft time: search with a generous hard limit.  If the best move
+  // is unstable, the dynamic multiplier should extend soft time and let
+  // the search go deeper.  If it were a fixed 1.5× multiplier (old code),
+  // the first change would set effectiveSoftTime to 60ms × 1.5 = 90ms.
+  // With best-move-change counting (new code), repeated changes give
+  // progressively more time, potentially reaching deeper.
+  static int callCount;
+  callCount = 0;
+  auto timer = []() -> uint32_t { return callCount++ * 5; };
+
+  search::SearchLimits limits;
+  limits.maxDepth = 20;
+  limits.softTimeMs = 60;
+  limits.hardTimeMs = 5000;
+  auto result = search::findBestMove(pos, limits, timer);
+
+  // Must complete multiple iterations.
+  TEST_ASSERT_TRUE(result.depth >= 2);
+  // Must return a legal move.
+  TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
+}
+
+// ===========================================================================
 // Soft time control — search stops between iterations
 // ===========================================================================
 
@@ -1223,7 +1259,8 @@ void register_search_tests() {
   // TT depth-preferred replacement
   RUN_TEST(test_tt_depth_preferred_replacement);
 
-  // Soft time / easy move
+  // Soft time / easy move / instability
+  RUN_TEST(test_instability_extends_time);
   RUN_TEST(test_soft_time_stops_search);
   RUN_TEST(test_easy_move_early_exit);
 }

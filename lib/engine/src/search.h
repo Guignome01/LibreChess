@@ -209,10 +209,11 @@ struct SearchState {
   // Reference: https://www.chessprogramming.org/History_Heuristic
   int16_t history[2][64][64];
 
-  // Capture history: [pieceZobristIndex][toSquare] — accumulated scores
-  // for captures.  Complements MVV-LVA + SEE ordering.
+  // Capture history: [pieceZobristIndex][victimType-1][toSquare] — scores
+  // for captures, distinguished by what piece is captured.  Indexed as
+  // captureHistory[attacker][raw(victimType)-1][to].  ~9 KiB.
   // Reference: https://www.chessprogramming.org/History_Heuristic#Capture_History
-  int16_t captureHistory[12][64];
+  int16_t captureHistory[12][6][64];
 
   // Countermove heuristic: for each (piece, toSquare) of the previous move,
   // stores the quiet move that caused a beta cutoff in response.  Used as a

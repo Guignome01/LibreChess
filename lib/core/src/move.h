@@ -27,7 +27,7 @@ static constexpr uint8_t MOVE_PROMOTION = 1 << 3;
 static constexpr int MOVE_PROMO_SHIFT = 4;
 
 // ---------------------------------------------------------------------------
-// Compact move: from-square, to-square, flags byte. 3 bytes + 1 padding.
+// Compact move: from-square, to-square, flags byte.  3 bytes total.
 // ---------------------------------------------------------------------------
 
 struct Move {

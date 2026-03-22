@@ -124,6 +124,7 @@ static int runSuite(const char* suiteName,
   for (int i = 0; i < static_cast<int>(records.size()); ++i) {
     const EPDRecord& rec = records[i];
 
+
     // Load position from the 4-field FEN
     Position pos;
     pos.loadFEN(rec.fen.c_str());

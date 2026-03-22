@@ -2,6 +2,7 @@
 
 #include <cstring>
 
+#include "evaluation.h"
 #include "fen.h"
 
 namespace LibreChess {
@@ -29,7 +30,9 @@ const Piece Position::INITIAL_BOARD[8][8] = {
 
 Position::Position()
     : currentTurn_(Color::WHITE),
-      hash_(0) {
+      hash_(0),
+      mgPST_(0),
+      egPST_(0) {
   attacks::init();
   bb_.clear();
   memset(mailbox_, 0, sizeof(mailbox_));
@@ -44,6 +47,8 @@ Position::Position()
     }
   kingSquare_[0] = squareOf(7, 4);  // White king at e1
   kingSquare_[1] = squareOf(0, 4);  // Black king at e8
+  mgPST_ = eval::computeMaterialPST_MG(bb_);
+  egPST_ = eval::computeMaterialPST_EG(bb_);
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +73,8 @@ void Position::newGame() {
   kingSquare_[0] = squareOf(7, 4);
   kingSquare_[1] = squareOf(0, 4);
   hash_ = zob::computeHash(bb_, mailbox_, currentTurn_, state_);
+  mgPST_ = eval::computeMaterialPST_MG(bb_);
+  egPST_ = eval::computeMaterialPST_EG(bb_);
   recordPosition();
 }
 
@@ -84,6 +91,8 @@ bool Position::loadFEN(const std::string& fen) {
   kingSquare_[1] = bb_.byPiece[bkIdx] ? lsb(bb_.byPiece[bkIdx]) : SQ_NONE;
 
   hash_ = zob::computeHash(bb_, mailbox_, currentTurn_, state_);
+  mgPST_ = eval::computeMaterialPST_MG(bb_);
+  egPST_ = eval::computeMaterialPST_EG(bb_);
   recordPosition();
   return true;
 }
@@ -174,6 +183,8 @@ void Position::reverseMove(const MoveEntry& entry) {
   if (hashHistory_.count > 0)
     hashHistory_.count--;
   hash_ = zob::computeHash(bb_, mailbox_, currentTurn_, state_);
+  mgPST_ = eval::computeMaterialPST_MG(bb_);
+  egPST_ = eval::computeMaterialPST_EG(bb_);
 }
 
 MoveResult Position::applyMoveEntry(const MoveEntry& entry) {
@@ -197,6 +208,8 @@ UndoInfo Position::make(Move m) {
   undo.captured = Piece::NONE;
   undo.capturedSquare = to;
   undo.historyCount = hashHistory_.count;
+  undo.mgPST = mgPST_;
+  undo.egPST = egPST_;
 
   int fromRow = rowOf(from), fromCol = colOf(from);
   int toRow = rowOf(to), toCol = colOf(to);
@@ -221,17 +234,26 @@ UndoInfo Position::make(Move m) {
     undo.captured = capturedPiece;
     undo.capturedSquare = epSq;
 
+    int capIdx = piece::pieceZobristIndex(capturedPiece);
+    mgPST_ -= eval::pieceSquareMG(capIdx, epSq);
+    egPST_ -= eval::pieceSquareEG(capIdx, epSq);
     bb_.removePiece(epSq, capturedPiece);
     mailbox_[epSq] = Piece::NONE;
   } else {
     capturedPiece = mailbox_[to];
     if (capturedPiece != Piece::NONE) {
       undo.captured = capturedPiece;
+      int capIdx = piece::pieceZobristIndex(capturedPiece);
+      mgPST_ -= eval::pieceSquareMG(capIdx, to);
+      egPST_ -= eval::pieceSquareEG(capIdx, to);
       bb_.removePiece(to, capturedPiece);
     }
   }
 
   // --- Move the piece ---
+  int pieceZIdx = piece::pieceZobristIndex(piece);
+  mgPST_ += eval::pieceSquareMG(pieceZIdx, to) - eval::pieceSquareMG(pieceZIdx, from);
+  egPST_ += eval::pieceSquareEG(pieceZIdx, to) - eval::pieceSquareEG(pieceZIdx, from);
   bb_.movePiece(from, to, piece);
   mailbox_[from] = Piece::NONE;
   mailbox_[to] = piece;
@@ -243,6 +265,9 @@ UndoInfo Position::make(Move m) {
     Piece rook = piece::makePiece(piece::pieceColor(piece), PieceType::ROOK);
     Square rookFrom = squareOf(fromRow, rookFromCol);
     Square rookTo = squareOf(fromRow, rookToCol);
+    int rookZIdx = piece::pieceZobristIndex(rook);
+    mgPST_ += eval::pieceSquareMG(rookZIdx, rookTo) - eval::pieceSquareMG(rookZIdx, rookFrom);
+    egPST_ += eval::pieceSquareEG(rookZIdx, rookTo) - eval::pieceSquareEG(rookZIdx, rookFrom);
     bb_.movePiece(rookFrom, rookTo, rook);
     mailbox_[rookFrom] = Piece::NONE;
     mailbox_[rookTo] = rook;
@@ -269,9 +294,8 @@ UndoInfo Position::make(Move m) {
     state_.halfmoveClock++;
 
   // --- Hash: piece movements ---
-  int pieceIdx = piece::pieceZobristIndex(piece);
-  hash_ ^= zob::KEYS.pieces[pieceIdx][from];
-  hash_ ^= zob::KEYS.pieces[pieceIdx][to];
+  hash_ ^= zob::KEYS.pieces[pieceZIdx][from];
+  hash_ ^= zob::KEYS.pieces[pieceZIdx][to];
 
   if (capturedPiece != Piece::NONE) {
     int capIdx = piece::pieceZobristIndex(capturedPiece);
@@ -287,13 +311,16 @@ UndoInfo Position::make(Move m) {
     PieceType promoType = Move::promoTypeFromIndex(m.promoIndex());
     Piece promotedTo = piece::makePiece(piece::pieceColor(piece), promoType);
 
+    int promoIdx = piece::pieceZobristIndex(promotedTo);
+    mgPST_ += eval::pieceSquareMG(promoIdx, to) - eval::pieceSquareMG(pieceZIdx, to);
+    egPST_ += eval::pieceSquareEG(promoIdx, to) - eval::pieceSquareEG(pieceZIdx, to);
     bb_.removePiece(to, piece);
     bb_.setPiece(to, promotedTo);
     mailbox_[to] = promotedTo;
 
     // Hash: swap pawn → promoted piece at destination
-    hash_ ^= zob::KEYS.pieces[pieceIdx][to];
-    hash_ ^= zob::KEYS.pieces[piece::pieceZobristIndex(promotedTo)][to];
+    hash_ ^= zob::KEYS.pieces[pieceZIdx][to];
+    hash_ ^= zob::KEYS.pieces[promoIdx][to];
   }
 
   // --- Hash: add new state keys ---
@@ -372,6 +399,8 @@ void Position::unmake(Move m, const UndoInfo& undo) {
   // Restore state and hash from undo (no recomputation!)
   state_ = undo.state;
   hash_ = undo.hash;
+  mgPST_ = undo.mgPST;
+  egPST_ = undo.egPST;
   hashHistory_.count = undo.historyCount;
 }
 
@@ -391,6 +420,8 @@ UndoInfo Position::makeNullMove() {
   undo.hash = hash_;
   undo.captured = Piece::NONE;
   undo.capturedSquare = SQ_NONE;
+  undo.mgPST = mgPST_;
+  undo.egPST = egPST_;
   undo.historyCount = hashHistory_.count;
 
   // Remove old EP key (if the current EP square is legal)
@@ -417,6 +448,8 @@ void Position::unmakeNullMove(const UndoInfo& undo) {
   currentTurn_ = ~currentTurn_;
   state_ = undo.state;
   hash_ = undo.hash;
+  mgPST_ = undo.mgPST;
+  egPST_ = undo.egPST;
   hashHistory_.count = undo.historyCount;
 }
 
@@ -548,6 +581,10 @@ void Position::applyMoveToBoard(int fromRow, int fromCol, int toRow, int toCol,
   // --- Update king cache ---
   if (piece::pieceType(piece) == PieceType::KING)
     kingSquare_[piece::raw(piece::pieceColor(piece))] = to;
+
+  // --- Recompute material+PST accumulators ---
+  mgPST_ = eval::computeMaterialPST_MG(bb_);
+  egPST_ = eval::computeMaterialPST_EG(bb_);
 }
 
 // ---------------------------------------------------------------------------

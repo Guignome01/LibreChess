@@ -53,17 +53,33 @@ Parameters accumulate in `double` throughout optimization. Integer rounding and 
 
 ### Sigmoid Scaling Constant K
 
-Found via ternary search over [0.1, 3.0] at startup. Never changed again during optimization (per CPW specification).
+Found via ternary search over [0.1, 3.0] at startup. Recalculated every 50 epochs during optimization to track parameter drift. As parameters change, the optimal scaling shifts — periodic recalculation keeps the sigmoid well-calibrated throughout training.
+
+### Cosine Annealing Learning Rate
+
+$\text{lr}(t) = \text{LR}_{\text{base}} \cdot 0.5 \cdot (1 + \cos(\pi \cdot t / T))$
+
+Gradually reduces LR from `ADAM_LR` to ~0 over the training run. Maintains aggressive early learning while reducing oscillation in later epochs. Reference: Loshchilov & Hutter, "SGDR: Stochastic Gradient Descent with Warm Restarts", 2017.
+
+### Early Stopping
+
+Tracks test MSE every 10 epochs. If no improvement for 50 epochs (patience), training stops and restores the best parameters (lowest test MSE). Prevents overfitting and saves time when convergence stalls.
+
+### Gradient Validation
+
+Before training starts, validates analytical gradients against central finite-difference approximation for 10 randomly sampled parameters (ε=1e-4, relative tolerance=1e-3). Catches chain-rule bugs in the gradient computation early.
 
 ## Hyperparameters
 
 | Constant | Value | Notes |
 |----------|-------|-------|
-| `ADAM_LR` | 0.1 | Learning rate. Conservative — gradients compound properly with float accumulators. |
+| `ADAM_LR` | 0.1 | Base learning rate (cosine-annealed during training). Conservative — gradients compound properly with float accumulators. |
 | `ADAM_BETA1` | 0.9 | First moment decay. |
 | `ADAM_BETA2` | 0.999 | Second moment decay. |
 | `ADAM_EPS` | 1e-8 | Numerical stability. |
 | `L2_LAMBDA` | 1e-7 | L2 regularization for PST parameters only (prevents PST drift). |
+| `K_RECALC_INTERVAL` | 50 | Recalculate sigmoid scaling K every N epochs. |
+| `PATIENCE` | 50 | Early stopping patience (epochs without test MSE improvement). |
 
 ## Corpus Format
 
@@ -103,7 +119,7 @@ make pipeline                      # Build + run in one step
 
 ### Output
 
-- **stderr**: Progress (epoch number, train/test MSE, K value)
+- **stderr**: Progress (epoch number, train/test MSE, learning rate), gradient validation results, K recalculation updates, early stopping notification
 - **stdout**: C++ formatted output for copy-paste into `evaluation.cpp`
 - **tune.txt**: Machine-readable log of all parameter values (key=value format)
 

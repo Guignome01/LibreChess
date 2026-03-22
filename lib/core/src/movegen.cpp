@@ -33,33 +33,7 @@ static Bitboard pinRayFor(const PinData& pinData, Square sq) {
   return ~0ULL;  // defensive fallback (should not be reached)
 }
 
-// Returns a bitboard of ALL squares from which `attackingColor` pieces attack `sq`.
-// Same logic as attacks::isSquareUnderAttack() but accumulates instead of
-// early-returning.  Used for check detection: popcount gives checker count,
-// lsb gives checker square.
-static Bitboard attackersOfSquare(const BitboardSet& bb, Square sq, Color attackingColor) {
-  Color defending = ~attackingColor;
-  Bitboard attackers = 0;
 
-  int pawnIdx = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::PAWN));
-  attackers |= atk::PAWN[piece::raw(defending)][sq] & bb.byPiece[pawnIdx];
-
-  int knightIdx = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::KNIGHT));
-  attackers |= atk::KNIGHT[sq] & bb.byPiece[knightIdx];
-
-  int kingIdx = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::KING));
-  attackers |= atk::KING[sq] & bb.byPiece[kingIdx];
-
-  int rookIdx   = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::ROOK));
-  int queenIdx  = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::QUEEN));
-  int bishopIdx = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::BISHOP));
-  Bitboard rookQueens   = bb.byPiece[rookIdx]   | bb.byPiece[queenIdx];
-  Bitboard bishopQueens = bb.byPiece[bishopIdx] | bb.byPiece[queenIdx];
-  attackers |= atk::rook(sq, bb.occupied)   & rookQueens;
-  attackers |= atk::bishop(sq, bb.occupied) & bishopQueens;
-
-  return attackers;
-}
 
 // Detects all absolute pins against `kingSq` for `sideToMove`.
 static PinData computePinData(const BitboardSet& bb, Square kingSq, Color sideToMove) {
@@ -104,7 +78,7 @@ struct LegalityContext {
 static LegalityContext buildLegalityContext(const BitboardSet& bb, Color color, Square kingSq) {
   LegalityContext ctx;
   ctx.kingSq = kingSq;
-  Bitboard checkers = attackersOfSquare(bb, kingSq, ~color);
+  Bitboard checkers = atk::attackersOfSquare(bb, kingSq, ~color);
   ctx.checkerCount = popcount(checkers);
   ctx.checkMask = ~0ULL;
   if (ctx.checkerCount == 1) {

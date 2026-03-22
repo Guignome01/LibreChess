@@ -110,6 +110,26 @@ struct EvalHashTable {
 int evaluatePosition(const BitboardSet& bb,
                      PawnHashTable* pawnHash = nullptr);
 
+// Evaluate with precomputed material+PST scores.
+// Skips the per-piece material+PST loop — uses `mgMatPST` / `egMatPST`
+// directly.  Used by the search engine where Position tracks these values
+// incrementally via make/unmake.
+// Reference: https://www.chessprogramming.org/Incremental_Updates
+int evaluatePosition(const BitboardSet& bb, int mgMatPST, int egMatPST,
+                     PawnHashTable* pawnHash = nullptr);
+
+// Material + PST contribution of a single piece at a given square.
+// White-relative: positive for white pieces, negative for black.
+// `pieceIdx` is the piece's Zobrist index (0–5 = white P..K, 6–11 = black).
+// Used by Position for incremental updates on make/unmake.
+int pieceSquareMG(int pieceIdx, Square sq);
+int pieceSquareEG(int pieceIdx, Square sq);
+
+// Full material+PST sum computed from scratch.  Used to initialize
+// Position's incremental accumulators.
+int computeMaterialPST_MG(const BitboardSet& bb);
+int computeMaterialPST_EG(const BitboardSet& bb);
+
 // Material value for a piece type, in centipawns.
 // Provides a single source of truth for piece values used by evaluation,
 // lazy evaluation, delta pruning, and SEE.
