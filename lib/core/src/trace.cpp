@@ -258,7 +258,11 @@ Trace extractTrace(const BitboardSet& bb) {
   float egWeight = static_cast<float>(MAX_PHASE - phase) / MAX_PHASE;
 
   // -----------------------------------------------------------------------
-  // OCB scaling detection (applies only to EG coefficients).
+  // OCB scaling detection — applies to the full tapered score.
+  //
+  // evaluatePosition() applies OCB as: score = score * 3/4 after tapering.
+  // To match, scale BOTH MG and EG weights by ocbScale so every trace
+  // coefficient receives the same uniform scaling.
   // -----------------------------------------------------------------------
   float ocbScale = 1.0f;
   if (phase <= 6) {
@@ -271,9 +275,20 @@ Trace extractTrace(const BitboardSet& bb) {
     }
   }
 
-  float mgW = mgWeight;
+  float mgW = mgWeight * ocbScale;
   float egW = egWeight * ocbScale;
-  float bothW = mgW + egW;  // For params using same value for MG and EG.
+  float bothW = mgW + egW;  // = ocbScale (since mgWeight + egWeight = 1.0).
+
+  // -----------------------------------------------------------------------
+  // Fixed pawn material bias.
+  //
+  // MAT_PAWN (MATERIAL[0] = 100) is pinned — it defines the centipawn
+  // unit and is not part of the tuning registry.  Its contribution must
+  // be captured as a fixed offset so traceScore matches evaluatePosition.
+  // -----------------------------------------------------------------------
+  int wPawnCount = popcount(bb.byPiece[0]);
+  int bPawnCount = popcount(bb.byPiece[6]);
+  t.bias = static_cast<float>((wPawnCount - bPawnCount) * MATERIAL[0]) * bothW;
 
   // -----------------------------------------------------------------------
   // Material (MATERIAL[1..4]).

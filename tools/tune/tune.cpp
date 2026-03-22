@@ -130,8 +130,9 @@ static double sigmoid(double score, double K) {
 }
 
 /// Compute the score from a trace using float parameter values.
+/// Includes the fixed bias (non-tunable contributions like pawn material).
 static double traceScore(const eval::Trace& t, const double* params) {
-  double score = 0.0;
+  double score = static_cast<double>(t.bias);
   for (const auto& e : t.entries)
     score += params[e.idx] * static_cast<double>(e.coeff);
   return score;
@@ -209,10 +210,8 @@ static double analyticalGradient(
     double factor = 2.0 * (sig - data[i].result)
                    * sig * (1.0 - sig) * (K * log(10.0) / 400.0);
     for (const auto& e : data[i].trace.entries) {
-      if (e.idx == paramIdx) {
+      if (e.idx == paramIdx)
         grad += factor * e.coeff;
-        break;  // Each param appears at most once per trace.
-      }
     }
   }
   return grad / N;

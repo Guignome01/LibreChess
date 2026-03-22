@@ -40,6 +40,7 @@ struct TraceEntry {
 
 struct Trace {
   std::vector<TraceEntry> entries;
+  float bias = 0.0f;  // Fixed (non-tunable) score offset (e.g. pawn material).
 
   void add(int idx, float coeff) {
     if (coeff == 0.0f) return;
