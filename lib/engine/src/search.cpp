@@ -474,6 +474,30 @@ inline void pickBest(MoveList& moves, int scores[], int start,
 }
 
 // ---------------------------------------------------------------------------
+// Safe access helpers for heuristic tables indexed by pieceZobristIndex.
+//
+// centralise the bounds check (isValidZobristIndex + victim range) so that
+// every callsite uses the same logic.  Returns 0 / no-op on invalid index.
+// ---------------------------------------------------------------------------
+
+// Read a captureHistory score with full bounds validation.
+inline int16_t safeCaptureHistScore(const SearchState& ss, int pieceIdx,
+                                    PieceType victim, int toSq) {
+  int vi = raw(victim) - 1;
+  if (isValidZobristIndex(pieceIdx) && vi >= 0 && vi < 6)
+    return ss.captureHistory[pieceIdx][vi][toSq];
+  return 0;
+}
+
+// Read a countermove entry with bounds validation.
+inline PackedMove safeCountermove(const SearchState& ss, int pieceIdx,
+                                  int toSq) {
+  if (isValidZobristIndex(pieceIdx))
+    return ss.countermoves[pieceIdx][toSq];
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
 // MovePicker — staged move generation for the negamax search.
 //
 // Lazily generates moves in priority order so that a beta cutoff from a
@@ -561,12 +585,10 @@ struct MovePicker {
     hasCounter = false;
     if (!isEmpty(prevPiece)) {
       int idx = pieceZobristIndex(prevPiece);
-      if (idx >= 0) {
-        PackedMove cpm = ssRef.countermoves[idx][prevTo];
-        if (cpm != 0) {
-          counterMove = unpackMove(cpm);
-          hasCounter  = true;
-        }
+      PackedMove cpm = safeCountermove(ssRef, idx, prevTo);
+      if (cpm != 0) {
+        counterMove = unpackMove(cpm);
+        hasCounter  = true;
       }
     }
 
@@ -738,10 +760,7 @@ private:
         int mvvlva = MVV_LVA_VALUE[raw(victim)] * 16 -
                      MVV_LVA_VALUE[raw(attacker)];
         int capHistIdx = pieceZobristIndex(mailbox[m.from]);
-        int victimIdx = raw(victim) - 1;
-        int capHist = (capHistIdx >= 0 && victimIdx >= 0 && victimIdx < 6)
-                          ? ss->captureHistory[capHistIdx][victimIdx][m.to]
-                          : 0;
+        int capHist = safeCaptureHistScore(*ss, capHistIdx, victim, m.to);
         scores[i] = mvvlva + capHist / 16;
       } else {
         scores[i] = seeVal;  // negative — sorted below all other moves
@@ -1383,6 +1402,8 @@ int negamax(Position& pos, int depth, int alpha, int beta,
         // Reduced-depth zero-window scout search.
         // Base reduction from logarithmic table, with history and
         // improving adjustments on top.
+        // depth < MAX_PLY is guaranteed by the ply overflow guard
+        // (ply >= MAX_PLY - 1 → return) which bounds recursion depth.
         int mi = movesSearched < LMR_MAX_MOVES ? movesSearched
                                                : LMR_MAX_MOVES - 1;
         int reduction = LMR_TABLE[depth][mi];
@@ -1463,21 +1484,19 @@ int negamax(Position& pos, int depth, int alpha, int beta,
             // Board is in pre-move state (unmake already called), so
             // mailbox[to] still holds the victim piece for any capture.
             int chIdx = pieceZobristIndex(pos.mailbox()[m.from]);
-            if (chIdx >= 0) {
-              int vi = raw(m.isEP() ? PieceType::PAWN
-                                    : pieceType(pos.mailbox()[m.to])) - 1;
-              if (vi >= 0 && vi < 6)
-                updateHistory(state.captureHistory[chIdx][vi][m.to], bonus);
-            }
+            PieceType victim = m.isEP() ? PieceType::PAWN
+                                        : pieceType(pos.mailbox()[m.to]);
+            int vi = raw(victim) - 1;
+            if (isValidZobristIndex(chIdx) && vi >= 0 && vi < 6)
+              updateHistory(state.captureHistory[chIdx][vi][m.to], bonus);
             for (int ci = 0; ci < captureCount - 1; ++ci) {
               const Move& cm = capturesSearched[ci];
               int prevIdx = pieceZobristIndex(pos.mailbox()[cm.from]);
-              if (prevIdx >= 0) {
-                int vi = raw(cm.isEP() ? PieceType::PAWN
-                                       : pieceType(pos.mailbox()[cm.to])) - 1;
-                if (vi >= 0 && vi < 6)
-                  updateHistory(state.captureHistory[prevIdx][vi][cm.to], -bonus);
-              }
+              PieceType prevVictim = cm.isEP() ? PieceType::PAWN
+                                               : pieceType(pos.mailbox()[cm.to]);
+              int pvi = raw(prevVictim) - 1;
+              if (isValidZobristIndex(prevIdx) && pvi >= 0 && pvi < 6)
+                updateHistory(state.captureHistory[prevIdx][pvi][cm.to], -bonus);
             }
           } else {
             // Quiet cutoff — update killers, history, countermoves.
@@ -1500,7 +1519,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
             // previous move is encountered.
             if (!isEmpty(prevPiece)) {
               int idx = pieceZobristIndex(prevPiece);
-              if (idx >= 0)
+              if (isValidZobristIndex(idx))
                 state.countermoves[idx][prevTo] = packMove(m);
             }
           }

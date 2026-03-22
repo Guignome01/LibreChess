@@ -54,9 +54,11 @@ inline bool somePiece(const BitboardSet& bb,
 
 // Find all instances of a specific piece.  Returns count found.
 // Fills positions[][2] with [row, col] pairs, up to maxPositions.
+// Returns 0 immediately if target is Piece::NONE.
 inline int findPiece(const BitboardSet& bb, Piece target,
                      int positions[][2], int maxPositions) {
   int idx = piece::pieceZobristIndex(target);
+  if (!piece::isValidZobristIndex(idx)) return 0;
   Bitboard pieces = bb.byPiece[idx];
   int found = 0;
   while (pieces && found < maxPositions) {

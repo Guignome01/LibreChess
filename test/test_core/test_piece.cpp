@@ -184,6 +184,21 @@ static void test_zobrist_index(void) {
   TEST_ASSERT_EQUAL_INT(-1, pieceZobristIndex(Piece::NONE));
 }
 
+static void test_zobrist_index_constants(void) {
+  // Named constant matches raw sentinel value.
+  TEST_ASSERT_EQUAL_INT(-1, ZOBRIST_IDX_NONE);
+
+  // isValidZobristIndex: valid range [0, 11].
+  TEST_ASSERT_TRUE(isValidZobristIndex(0));
+  TEST_ASSERT_TRUE(isValidZobristIndex(5));
+  TEST_ASSERT_TRUE(isValidZobristIndex(11));
+
+  // isValidZobristIndex: invalid values.
+  TEST_ASSERT_FALSE(isValidZobristIndex(-1));
+  TEST_ASSERT_FALSE(isValidZobristIndex(12));
+  TEST_ASSERT_FALSE(isValidZobristIndex(ZOBRIST_IDX_NONE));
+}
+
 // ===========================================================================
 // Piece — color helpers
 // ===========================================================================
@@ -352,6 +367,7 @@ void register_piece_tests() {
 
   // Piece — Zobrist index
   RUN_TEST(test_zobrist_index);
+  RUN_TEST(test_zobrist_index_constants);
 
   // Piece — color helpers
   RUN_TEST(test_color_helpers);

@@ -148,10 +148,10 @@ Round-trip: board → FEN → board. `boardToFEN()` output correctness. `fenToBo
 Coordinate notation output and parsing. SAN output (disambiguation, captures, castling, promotion). LAN output. Auto-format detection from input strings. Round-trip verification: format → parse → same move.
 
 ### Piece (`test_piece.cpp`)
-piece namespace: bit extraction (`pieceType()` for all 12 pieces + NONE, `pieceColor()`), construction (`makePiece()` round-trips), predicates (`isEmpty()`, `isWhite()`, `isBlack()`, `isColor()`), color flip (`~Color`, `~Piece` operator overloads), FEN char round-trip (`charToPiece()`/`pieceToChar()` for all valid chars, invalid chars, NONE), PieceType char conversion, material values (`pieceValue()`, `pieceTypeValue()` for all piece types), Zobrist index (`pieceZobristIndex()` for all pieces + NONE), color helpers (`pawnDirection()`, `homeRow()`, `promotionRow()`, `colorName()`, `charToColor()`/`colorToChar()`, `getPieceColor`, `opponentColor`), zero-initialization safety, `isPromotion()` edge cases.
+piece namespace: bit extraction (`pieceType()` for all 12 pieces + NONE, `pieceColor()`), construction (`makePiece()` round-trips), predicates (`isEmpty()`, `isWhite()`, `isBlack()`, `isColor()`), color flip (`~Color`, `~Piece` operator overloads), FEN char round-trip (`charToPiece()`/`pieceToChar()` for all valid chars, invalid chars, NONE), PieceType char conversion, material values (`pieceValue()`, `pieceTypeValue()` for all piece types), Zobrist index (`pieceZobristIndex()` for all pieces + NONE, `ZOBRIST_IDX_NONE` constant, `isValidZobristIndex()` bounds predicate), color helpers (`pawnDirection()`, `homeRow()`, `promotionRow()`, `colorName()`, `charToColor()`/`colorToChar()`, `getPieceColor`, `opponentColor`), zero-initialization safety, `isPromotion()` edge cases.
 
 ### Iterator (`test_iterator.cpp`)
-`forEachSquare` visits all 64 squares. `forEachPiece` skips empty. `somePiece` early-exit. `findPiece` locates specific pieces with max limit.
+`forEachSquare` visits all 64 squares. `forEachPiece` skips empty. `somePiece` early-exit. `findPiece` locates specific pieces with max limit; returns 0 for `Piece::NONE` (bounds-safe).
 
 ### Zobrist (`test_zobrist.cpp`)
 Zobrist key determinism. `pieceZobristIndex` mapping. `computeHash` stability. Hash changes with turn flip, castling rights, en passant. Hash equality for identical positions. `computePawnHash`: determinism, different pawn placements produce different hashes, ignores non-pawn pieces, no pawns yields zero.

@@ -81,6 +81,13 @@ void Position::newGame() {
 bool Position::loadFEN(const std::string& fen) {
   if (!fen::validateFEN(fen)) return false;
 
+  // Save state so we can restore on semantic rejection (e.g. missing king).
+  BitboardSet savedBB = bb_;
+  Piece savedMailbox[64];
+  std::memcpy(savedMailbox, mailbox_, sizeof(mailbox_));
+  Color savedTurn = currentTurn_;
+  PositionState savedState = state_;
+
   fen::fenToBoard(fen, bb_, mailbox_, currentTurn_, &state_);
   hashHistory_.count = 0;
 
@@ -89,6 +96,15 @@ bool Position::loadFEN(const std::string& fen) {
   int bkIdx = piece::pieceZobristIndex(Piece::B_KING);
   kingSquare_[0] = bb_.byPiece[wkIdx] ? lsb(bb_.byPiece[wkIdx]) : SQ_NONE;
   kingSquare_[1] = bb_.byPiece[bkIdx] ? lsb(bb_.byPiece[bkIdx]) : SQ_NONE;
+
+  // Both kings are mandatory — a FEN without either king is invalid.
+  if (kingSquare_[0] == SQ_NONE || kingSquare_[1] == SQ_NONE) {
+    bb_ = savedBB;
+    std::memcpy(mailbox_, savedMailbox, sizeof(mailbox_));
+    currentTurn_ = savedTurn;
+    state_ = savedState;
+    return false;
+  }
 
   hash_ = zob::computeHash(bb_, mailbox_, currentTurn_, state_);
   mgPST_ = eval::computeMaterialPST_MG(bb_);
@@ -226,6 +242,12 @@ UndoInfo Position::make(Move m) {
     hash_ ^= zob::KEYS.enPassant[state_.epCol];
 
   // --- Determine captured piece ---
+  // EP path safety contract: mailbox_[epSq] is guaranteed to hold a valid
+  // enemy pawn (never NONE). This is enforced by the caller chain:
+  //   • Game::makeMove() → Position::makeMove() → movegen::isValidMove()
+  //   • Search: isMoveValid() reconstructs flags from current position
+  // If this invariant were violated, pieceZobristIndex(NONE) would return
+  // ZOBRIST_IDX_NONE (-1), causing OOB in pieceSquareMG/EG.
   Piece capturedPiece = Piece::NONE;
   if (isEP) {
     int epPawnRow = toRow - piece::pawnDirection(piece::pieceColor(piece));

@@ -262,6 +262,11 @@ int materialValue(PieceType pt) {
 
 // ---------------------------------------------------------------------------
 // Incremental material+PST helpers
+//
+// Precondition: pieceIdx must be in [0, 11] (a valid pieceZobristIndex).
+// Callers obtaining pieceIdx from pieceZobristIndex() must ensure the
+// piece is not NONE before calling — ZOBRIST_IDX_NONE (-1) would cause
+// OOB access into MATERIAL[] and PST arrays.
 // ---------------------------------------------------------------------------
 
 int pieceSquareMG(int pieceIdx, Square sq) {

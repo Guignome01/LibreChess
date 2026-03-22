@@ -140,6 +140,7 @@ struct BitboardSet {
   Bitboard occupied = 0;
 
   // Place a piece on an empty square.
+  // Precondition: piece != NONE (idx must be 0–11).
   void setPiece(Square sq, Piece piece) {
     Bitboard bit = squareBB(sq);
     int idx = piece::pieceZobristIndex(piece);
@@ -150,6 +151,7 @@ struct BitboardSet {
   }
 
   // Remove a piece from an occupied square.
+  // Precondition: piece != NONE (idx must be 0–11).
   void removePiece(Square sq, Piece piece) {
     Bitboard bit = squareBB(sq);
     int idx = piece::pieceZobristIndex(piece);
@@ -161,6 +163,7 @@ struct BitboardSet {
 
   // Move a piece from one square to another (both must be consistent:
   // `from` occupied by `piece`, `to` empty).
+  // Precondition: piece != NONE (idx must be 0–11).
   void movePiece(Square from, Square to, Piece piece) {
     Bitboard fromTo = squareBB(from) | squareBB(to);
     int idx = piece::pieceZobristIndex(piece);

@@ -158,12 +158,26 @@ constexpr float pieceValue(Piece p) { return pieceTypeValue(pieceType(p)); }
 
 // ---------------------------------------------------------------------------
 // Zobrist index — maps Piece to 0..11 for the Zobrist key table.
+//
+// pieceZobristIndex() returns 0–11 for valid pieces, ZOBRIST_IDX_NONE
+// for Piece::NONE.  Callers that use the result as an array index MUST
+// check with isValidZobristIndex() first — otherwise bb.byPiece[-1] or
+// similar OOB access can occur.
+//
+// Internal hot-path callers (BitboardSet mutators, zobrist::computeHash)
+// are exempt — they operate only on non-NONE pieces by design.
 // ---------------------------------------------------------------------------
+
+static constexpr int ZOBRIST_IDX_NONE = -1;
+
+constexpr bool isValidZobristIndex(int idx) {
+  return idx >= 0 && idx < 12;
+}
 
 constexpr int pieceZobristIndex(Piece p) {
   // White pieces: PAWN=0 KNIGHT=1 BISHOP=2 ROOK=3 QUEEN=4 KING=5
   // Black pieces: PAWN=6 KNIGHT=7 BISHOP=8 ROOK=9 QUEEN=10 KING=11
-  if (isEmpty(p)) return -1;
+  if (isEmpty(p)) return ZOBRIST_IDX_NONE;
   int typeIdx = raw(pieceType(p)) - 1;  // PAWN=0..KING=5
   return (pieceColor(p) == Color::BLACK) ? typeIdx + 6 : typeIdx;
 }

@@ -141,6 +141,13 @@ static void test_findPiece_distinguishes_color(void) {
   TEST_ASSERT_EQUAL(1, countBlack);
 }
 
+static void test_findPiece_none_returns_zero(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  int positions[2][2];
+  int count = iterator::findPiece(bb, Piece::NONE, positions, 2);
+  TEST_ASSERT_EQUAL(0, count);
+}
+
 // ── Registration ─────────────────────────────────────────────────────────────
 
 void register_iterator_tests() {
@@ -165,4 +172,5 @@ void register_iterator_tests() {
   RUN_TEST(test_findPiece_multiple);
   RUN_TEST(test_findPiece_respects_max);
   RUN_TEST(test_findPiece_distinguishes_color);
+  RUN_TEST(test_findPiece_none_returns_zero);
 }

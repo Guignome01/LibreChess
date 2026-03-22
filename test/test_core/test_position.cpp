@@ -576,6 +576,15 @@ void test_position_load_fen_invalid_preserves_state(void) {
   TEST_ASSERT_EQUAL_STRING(fenBefore.c_str(), pos.getFen().c_str());
 }
 
+void test_position_load_fen_missing_king_returns_false(void) {
+  setUpPosition();
+  std::string fenBefore = pos.getFen();
+  // Structurally valid FEN but no kings — must be rejected.
+  TEST_ASSERT_FALSE(pos.loadFEN("8/8/8/8/8/8/8/8 w - - 0 1"));
+  // State must be preserved after rejection.
+  TEST_ASSERT_EQUAL_STRING(fenBefore.c_str(), pos.getFen().c_str());
+}
+
 // ---------------------------------------------------------------------------
 // FEN / evaluation cache
 // ---------------------------------------------------------------------------
@@ -1694,6 +1703,7 @@ void register_position_tests() {
   RUN_TEST(test_position_load_fen_rejects_invalid_turn);
   RUN_TEST(test_position_load_fen_valid_returns_true);
   RUN_TEST(test_position_load_fen_invalid_preserves_state);
+  RUN_TEST(test_position_load_fen_missing_king_returns_false);
 
   // FEN/eval cache
   RUN_TEST(test_position_fen_cache_consistent);
