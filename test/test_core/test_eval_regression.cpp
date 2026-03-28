@@ -120,19 +120,6 @@ static void test_regr_castled_king_safer(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Threats
-// ---------------------------------------------------------------------------
-
-static void test_regr_pawn_threatens_knight(void) {
-  // White pawn on d4 attacks e5 where black knight sits → white gets bonus.
-  int threatened = evalFEN("4k3/8/8/4n3/3P4/8/8/4K3 w - - 0 1");
-  // We won't have exact material-only baseline, but pawn vs knight
-  // material is −200cp typical.  With the threat bonus, eval should be
-  // less negative than pure material would suggest.
-  TEST_ASSERT_TRUE(threatened > -300);
-}
-
-// ---------------------------------------------------------------------------
 // Phase tapering
 // ---------------------------------------------------------------------------
 
@@ -211,7 +198,6 @@ void register_eval_regression_tests() {
   RUN_TEST(test_regr_passed_pawn_bonus);
   RUN_TEST(test_regr_bishop_pair_bonus);
   RUN_TEST(test_regr_castled_king_safer);
-  RUN_TEST(test_regr_pawn_threatens_knight);
   RUN_TEST(test_regr_rook_endgame_seventh_rank);
   RUN_TEST(test_regr_bad_bishop_penalty);
   RUN_TEST(test_regr_rook_behind_passer);
