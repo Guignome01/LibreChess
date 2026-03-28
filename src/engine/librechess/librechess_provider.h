@@ -14,6 +14,9 @@
 
 class LibreChessProvider : public EngineProvider {
  public:
+  /// Provider identity stored in GameMeta for game resume.
+  static constexpr uint8_t ENGINE_ID = 1;
+
   // `depth`: max search depth (0 = use time control instead).
   // `moveTimeMs`: time per move in ms (0 = use depth instead).
   // `playerColor`: 'w' or 'b' — reported through EngineInitResult.

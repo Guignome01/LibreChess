@@ -135,7 +135,7 @@ static MockLogger logger;
 static MockGameStorage storage;
 static History history(&storage, &logger);
 
-// Test meta byte convention: meta[0]=mode, meta[1]=difficulty
+// Test meta byte convention: meta[0]=mode, meta[1]=engineId, meta[2]=difficulty
 static constexpr uint8_t MODE_PLAYER  = 1;
 static constexpr uint8_t MODE_BOT     = 2;
 static constexpr uint8_t MODE_LICHESS = 3;
@@ -145,7 +145,6 @@ static GameHeader makeTestHeader(char playerColor = '?',
                                  const uint8_t* meta = nullptr) {
   GameHeader h;
   memset(&h, 0, sizeof(h));
-  h.version = FORMAT_VERSION;
   h.result = GameResult::IN_PROGRESS;
   h.winnerColor = '?';
   h.playerColor = playerColor;
@@ -165,7 +164,7 @@ static void setupRecorder() {
 
 void test_recorder_set_header(void) {
   setupRecorder();
-  const uint8_t meta[] = { MODE_PLAYER, 0 };
+  const uint8_t meta[] = { MODE_PLAYER, 0, 0 };
   history.setHeader(makeTestHeader('?', meta));
   TEST_ASSERT_TRUE(history.isRecording());
   TEST_ASSERT_TRUE(storage.gameActive);
@@ -225,7 +224,7 @@ void test_recorder_not_recording_noop(void) {
 void test_recorder_has_active_game(void) {
   setupRecorder();
   TEST_ASSERT_FALSE(history.hasActiveGame());
-  const uint8_t meta[] = { MODE_BOT, 5 };
+  const uint8_t meta[] = { MODE_BOT, 0, 5 };
   history.setHeader(makeTestHeader('w', meta));
   TEST_ASSERT_TRUE(history.hasActiveGame());
 }
@@ -233,10 +232,10 @@ void test_recorder_has_active_game(void) {
 void test_recorder_get_active_game_info(void) {
   setupRecorder();
   storage.gameActive = true;
-  storage.storedHeader.version = FORMAT_VERSION;
   storage.storedHeader.playerColor = 'b';
   storage.storedHeader.meta[0] = MODE_BOT;
-  storage.storedHeader.meta[1] = 3;
+  storage.storedHeader.meta[1] = 0;
+  storage.storedHeader.meta[2] = 3;
 
   History histWithLive(&storage, &logger);
   uint8_t color;
@@ -244,7 +243,7 @@ void test_recorder_get_active_game_info(void) {
   TEST_ASSERT_TRUE(histWithLive.getActiveGameInfo(color, metaBuf));
   TEST_ASSERT_EQUAL_CHAR('b', (char)color);
   TEST_ASSERT_EQUAL_UINT8(MODE_BOT, metaBuf[0]);
-  TEST_ASSERT_EQUAL_UINT8(3, metaBuf[1]);
+  TEST_ASSERT_EQUAL_UINT8(3, metaBuf[2]);
 }
 
 void test_recorder_replay_into_board(void) {
@@ -320,7 +319,7 @@ void test_recorder_replay_rejects_invalid_move(void) {
 
 void test_recorder_set_header_lichess_mode(void) {
   setupRecorder();
-  const uint8_t meta[] = { MODE_LICHESS, 0 };
+  const uint8_t meta[] = { MODE_LICHESS, 0, 0 };
   history.setHeader(makeTestHeader('w', meta));
   TEST_ASSERT_TRUE(history.isRecording());
   TEST_ASSERT_EQUAL_UINT8(MODE_LICHESS, storage.storedHeader.meta[0]);
@@ -333,11 +332,11 @@ void test_recorder_set_header_while_active(void) {
   TEST_ASSERT_TRUE(history.isRecording());
 
   // Set header again — previous game should be discarded
-  const uint8_t meta[] = { MODE_BOT, 5 };
+  const uint8_t meta[] = { MODE_BOT, 0, 5 };
   history.setHeader(makeTestHeader('w', meta));
   TEST_ASSERT_TRUE(history.isRecording());
   TEST_ASSERT_EQUAL_UINT8(MODE_BOT, storage.storedHeader.meta[0]);
-  TEST_ASSERT_EQUAL_UINT8(5, storage.storedHeader.meta[1]);
+  TEST_ASSERT_EQUAL_UINT8(5, storage.storedHeader.meta[2]);
   // Move data should be cleared (new game)
   TEST_ASSERT_EQUAL(0, (int)storage.moveData.size());
 }
@@ -357,24 +356,9 @@ void test_recorder_discard_not_recording(void) {
   TEST_ASSERT_FALSE(history.isRecording());
 }
 
-void test_recorder_replay_wrong_version(void) {
-  setupRecorder();
-  // Manually set up storage with a bad version header
-  storage.gameActive = true;
-  storage.storedHeader.version = 99;
-  storage.storedHeader.fenEntryCnt = 1;
-
-  Position board;
-  board.newGame();
-  bool ok = history.replayInto(board);
-  TEST_ASSERT_FALSE(ok);
-}
-
 void test_recorder_replay_no_fen_entry(void) {
   setupRecorder();
-  // Header has version=1 but fenEntryCnt=0
   storage.gameActive = true;
-  storage.storedHeader.version = FORMAT_VERSION;
   storage.storedHeader.fenEntryCnt = 0;
 
   Position board;
@@ -629,7 +613,7 @@ void test_game_end_game_idempotent(void) {
 
 void test_game_start_new_game(void) {
   setupGame();
-  const uint8_t meta[] = { MODE_BOT, 5 };
+  const uint8_t meta[] = { MODE_BOT, 0, 5 };
   game->startNewGame('w', meta);
 
   TEST_ASSERT_ENUM_EQ(Color::WHITE, game->currentTurn());
@@ -639,7 +623,7 @@ void test_game_start_new_game(void) {
   TEST_ASSERT_TRUE(storage.gameActive);
   TEST_ASSERT_EQUAL_UINT8(MODE_BOT, storage.storedHeader.meta[0]);
   TEST_ASSERT_EQUAL_CHAR('w', storage.storedHeader.playerColor);
-  TEST_ASSERT_EQUAL_UINT8(5, storage.storedHeader.meta[1]);
+  TEST_ASSERT_EQUAL_UINT8(5, storage.storedHeader.meta[2]);
 
   // Initial FEN should have been recorded
   TEST_ASSERT_EQUAL(1, (int)storage.fenEntries.size());
@@ -828,7 +812,6 @@ void register_history_persistence_tests() {
   RUN_TEST(test_recorder_set_header_while_active);
   RUN_TEST(test_recorder_save_not_recording);
   RUN_TEST(test_recorder_discard_not_recording);
-  RUN_TEST(test_recorder_replay_wrong_version);
   RUN_TEST(test_recorder_replay_no_fen_entry);
   RUN_TEST(test_recorder_replay_null_storage);
   RUN_TEST(test_recorder_replay_empty_after_fen);

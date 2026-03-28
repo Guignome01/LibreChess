@@ -180,7 +180,6 @@ bool History::getActiveGameInfo(uint8_t& playerColor, uint8_t* meta) {
 
   GameHeader hdr;
   if (!storage_->readHeader(hdr)) return false;
-  if (hdr.version != FORMAT_VERSION) return false;
 
   playerColor = hdr.playerColor;
   if (meta)
@@ -198,10 +197,6 @@ bool History::replayInto(Position& board) {
   // Read header from live file
   GameHeader hdr;
   if (!storage_->readHeader(hdr)) return false;
-  if (hdr.version != FORMAT_VERSION) {
-    logger_.error("History: incompatible format version");
-    return false;
-  }
   if (hdr.fenEntryCnt == 0) {
     logger_.error("History: no FEN in live game, cannot resume");
     return false;

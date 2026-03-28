@@ -27,12 +27,11 @@ namespace LibreChess {
 /// Number of opaque metadata bytes in GameHeader.
 /// Firmware defines semantic meaning (e.g. game mode, difficulty);
 /// the library stores and returns them without interpretation.
-static constexpr int GAME_META_SIZE = 2;
+static constexpr int GAME_META_SIZE = 3;
 
 // Binary file header for recorded games (on-disk format).
 #pragma pack(push, 1)
 struct GameHeader {
-  uint8_t version;                // Format version (currently 1)
   GameResult result;              // Game outcome
   uint8_t winnerColor;            // 'w', 'b', 'd' (draw), '?' (in-progress)
   uint8_t playerColor;            // Human's color ('w'/'b'), '?' if unset
@@ -46,7 +45,6 @@ struct GameHeader {
 static_assert(sizeof(GameHeader) == 16, "GameHeader must be 16 bytes");
 
 // Recording constants.
-static constexpr uint8_t FORMAT_VERSION = 1;
 static constexpr uint16_t FEN_MARKER = 0xFFFF;
 static constexpr int MAX_GAMES = 50;
 static constexpr float MAX_USAGE_PERCENT = 0.80f;

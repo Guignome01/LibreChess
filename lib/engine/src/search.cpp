@@ -113,6 +113,20 @@ namespace {
 constexpr uint32_t CHECK_INTERVAL = 512;
 
 // ---------------------------------------------------------------------------
+// Quiescence search depth limit.
+//
+// Check evasions in QS generate all moves (not just captures), which can
+// cause deep recursion in forcing lines with repeated checks.  On ESP32
+// with a bounded FreeRTOS task stack, unbounded QS depth causes a stack
+// overflow.  16 QS plies resolves all practical capture/check sequences
+// without exceeding the stack budget.
+//
+// Reference: https://www.chessprogramming.org/Quiescence_Search
+// ---------------------------------------------------------------------------
+
+static constexpr int MAX_QS_DEPTH = 16;
+
+// ---------------------------------------------------------------------------
 // Null Move Pruning constants.
 //
 // NMP_DEPTH_THRESHOLD: minimum remaining depth to attempt null move.
@@ -464,8 +478,8 @@ static bool isMoveValid(const BitboardSet& bb, const Piece mailbox[],
 // Partial selection sort: find the best-scored move in [start, end) and
 // swap it to position `start`.  If `seeCache` is non-null, its entries are
 // swapped in parallel (keeps SEE values aligned with their moves).
-inline void pickBestInRange(Move moves[], int scores[], int start, int end,
-                            int seeCache[] = nullptr) {
+inline void pickBestInRange(Move moves[], int16_t scores[], int start, int end,
+                            int16_t seeCache[] = nullptr) {
   int bestIdx = start;
   for (int i = start + 1; i < end; ++i) {
     if (scores[i] > scores[bestIdx]) bestIdx = i;
@@ -474,11 +488,11 @@ inline void pickBestInRange(Move moves[], int scores[], int start, int end,
     Move tmpM = moves[start];
     moves[start] = moves[bestIdx];
     moves[bestIdx] = tmpM;
-    int tmpS = scores[start];
+    int16_t tmpS = scores[start];
     scores[start] = scores[bestIdx];
     scores[bestIdx] = tmpS;
     if (seeCache) {
-      int tmpSee = seeCache[start];
+      int16_t tmpSee = seeCache[start];
       seeCache[start] = seeCache[bestIdx];
       seeCache[bestIdx] = tmpSee;
     }
@@ -486,8 +500,8 @@ inline void pickBestInRange(Move moves[], int scores[], int start, int end,
 }
 
 // Convenience: pick best in [start, moves.count).
-inline void pickBest(MoveList& moves, int scores[], int start,
-                    int seeCache[] = nullptr) {
+inline void pickBest(MoveList& moves, int16_t scores[], int start,
+                    int16_t seeCache[] = nullptr) {
   pickBestInRange(moves.moves, scores, start, moves.count, seeCache);
 }
 
@@ -568,9 +582,13 @@ struct MovePicker {
   //   [0, goodCapCount)           — good captures (SEE >= 0)
   //   [goodCapCount, totalCaps)   — bad captures  (SEE < 0)
   //   [totalCaps, moves.count)    — quiet moves
+  //
+  // Score and SEE arrays use int16_t (range ±32767) to reduce per-ply
+  // stack usage by ~1.7 KiB.  All stored values fit: MVV-LVA ≤ ~600,
+  // SEE ≤ ~900, history ≤ ±7000, SEE_NOT_COMPUTED = -32000.
   MoveList moves;
-  int scores[MAX_MOVES];
-  int seeValues[MAX_MOVES];
+  int16_t scores[MAX_MOVES];
+  int16_t seeValues[MAX_MOVES];
   int totalCaps;     // total captures generated
   int goodCapCount;  // good captures in [0, goodCapCount)
   int capIdx;        // next good capture index
@@ -578,7 +596,7 @@ struct MovePicker {
   int quietIdx;      // next quiet move index
 
   // SEE of the last move returned (SEE_NOT_COMPUTED for non-captures).
-  int lastSee;
+  int16_t lastSee;
 
   // -----------------------------------------------------------------------
   // Initialise the picker for a position.
@@ -769,7 +787,7 @@ private:
     for (int i = 0; i < totalCaps; ++i) {
       const Move& m = moves.moves[i];
       int seeVal = attacks::see(*bb, mailbox, m);
-      seeValues[i] = seeVal;
+      seeValues[i] = static_cast<int16_t>(seeVal);
 
       if (seeVal >= 0) {
         PieceType victim   = m.isEP() ? PieceType::PAWN
@@ -779,9 +797,9 @@ private:
                      MVV_LVA_VALUE[raw(attacker)];
         int capHistIdx = pieceZobristIndex(mailbox[m.from]);
         int capHist = safeCaptureHistScore(*ss, capHistIdx, victim, m.to);
-        scores[i] = mvvlva + capHist / 16;
+        scores[i] = static_cast<int16_t>(mvvlva + capHist / 16);
       } else {
-        scores[i] = seeVal;  // negative — sorted below all other moves
+        scores[i] = static_cast<int16_t>(seeVal);
       }
     }
 
@@ -925,16 +943,17 @@ bool hasNonPawnMaterial(const Position& pos) {
 // Reference: https://www.chessprogramming.org/Quiescence_Search
 // ---------------------------------------------------------------------------
 
-int quiescence(Position& pos, int alpha, int beta, int ply,
+int quiescence(Position& pos, int alpha, int beta, int ply, int qsPly,
                SearchState& state) {
   state.nodes++;
 
-  // --- Ply overflow guard ---
+  // --- Ply / QS depth overflow guard ---
   // Check evasions generate all moves (including quiets), which can cause
-  // unbounded recursion in positions with perpetual checks.  Bound the
-  // qsearch depth to the same MAX_PLY limit used by negamax.
+  // deep recursion in positions with repeated checks.  Bound QS depth
+  // independently to prevent stack overflow on the ESP32 FreeRTOS task.
   // Reference: https://www.chessprogramming.org/Quiescence_Search
-  if (ply >= MAX_PLY - 1) return evaluate(pos, state);
+  if (ply >= MAX_PLY - 1 || qsPly >= MAX_QS_DEPTH)
+    return evaluate(pos, state);
 
   // Periodic time / cancellation check
   if ((state.nodes & (CHECK_INTERVAL - 1)) == 0) state.checkTime();
@@ -969,19 +988,19 @@ int quiescence(Position& pos, int alpha, int beta, int ply,
                               pos.sideToMove(), pos.positionState(), moves);
 
   // --- MVV-LVA ordering for captures ---
-  // Score captures by Most Valuable Victim − Least Valuable Aggressor so
+  // Score captures by Most Valuable Victim - Least Valuable Aggressor so
   // the best trades are tried first, improving beta-cutoff rates.
   // Non-captures (evasions under check) get a neutral score.
   // Reference: https://www.chessprogramming.org/MVV-LVA
-  int capScores[MAX_MOVES];
+  int16_t capScores[MAX_MOVES];
   for (int j = 0; j < moves.count; ++j) {
     const Move& cm = moves.moves[j];
     if (cm.isCapture()) {
       PieceType victim   = cm.isEP() ? PieceType::PAWN
                                      : pieceType(pos.mailbox()[cm.to]);
       PieceType attacker = pieceType(pos.mailbox()[cm.from]);
-      capScores[j] = MVV_LVA_VALUE[raw(victim)] * 16 -
-                     MVV_LVA_VALUE[raw(attacker)];
+      capScores[j] = static_cast<int16_t>(
+          MVV_LVA_VALUE[raw(victim)] * 16 - MVV_LVA_VALUE[raw(attacker)]);
     } else {
       capScores[j] = 0;
     }
@@ -1034,7 +1053,7 @@ int quiescence(Position& pos, int alpha, int beta, int ply,
     }
 
     UndoInfo undo = pos.make(m);
-    int score = -quiescence(pos, -beta, -alpha, ply + 1, state);
+    int score = -quiescence(pos, -beta, -alpha, ply + 1, qsPly + 1, state);
     pos.unmake(m, undo);
 
     if (state.stopped) return 0;
@@ -1108,7 +1127,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   if (inCheck) ++depth;
 
   // --- Horizon: quiescence search ---
-  if (depth <= 0) return quiescence(pos, alpha, beta, ply, state);
+  if (depth <= 0) return quiescence(pos, alpha, beta, ply, 0, state);
 
   // PV node: the initial window is wider than a zero-window scout.
   // Non-PV nodes use a null window (beta == alpha + 1).
@@ -1168,7 +1187,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // Reference: https://www.chessprogramming.org/Razoring
   if (!pvNode && !inCheck && depth <= 2 && depth >= 1 &&
       staticEval + RAZOR_MARGIN[depth] <= alpha) {
-    return quiescence(pos, alpha, beta, ply, state);
+    return quiescence(pos, alpha, beta, ply, 0, state);
   }
 
   // --- Reverse Futility Pruning (Static Null Move Pruning) ---

@@ -16,6 +16,7 @@ struct EngineInitResult {
   char playerColor = 'w';       // Discovered at runtime (Lichess) or passed in (Stockfish)
   std::string fen;              // Empty = starting position; non-empty = load this FEN
   GameModeId mode;                // BOT, LICHESS, etc. (firmware-owned enum)
+  uint8_t engineId = 0;         // Provider-specific identifier (packed into GameMeta::mode high nibble)
   uint8_t difficulty = 0;       // Engine search depth for recording metadata; 0 = unused
   bool canResume = true;        // false = skip tryResumeGame (Lichess: state comes from server)
 };

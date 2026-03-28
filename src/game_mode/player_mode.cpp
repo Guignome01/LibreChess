@@ -7,7 +7,7 @@ PlayerMode::PlayerMode(BoardDriver* bd, WiFiManagerESP32* wm, Game* cg, ILogger*
 void PlayerMode::begin() {
   logger_.info("=== Starting Chess Moves Mode ===");
   if (!tryResumeGame()) {
-    GameMeta meta = { static_cast<uint8_t>(GameModeId::PLAYER), 0 };
+    GameMeta meta = { static_cast<uint8_t>(GameModeId::PLAYER), 0, 0 };
     chess_->startNewGame('?', metaBytes(meta));
   }
   waitForBoardSetup();

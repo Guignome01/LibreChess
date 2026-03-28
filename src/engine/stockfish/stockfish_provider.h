@@ -8,6 +8,9 @@
 // Spawns a FreeRTOS task per move request for non-blocking HTTP.
 class StockfishProvider : public EngineProvider {
  public:
+  /// Provider identity stored in GameMeta for game resume.
+  static constexpr uint8_t ENGINE_ID = 0;
+
   explicit StockfishProvider(const StockfishSettings& settings, char playerColor = 'w',
                              ILogger* logger = nullptr);
 

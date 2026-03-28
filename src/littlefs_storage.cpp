@@ -235,10 +235,11 @@ String LittleFSStorage::getGameListJSON() {
     JsonObject obj = arr.add<JsonObject>();
     obj["id"] = id;
     obj["mode"] = hdr.meta[0];
+    obj["engineId"] = hdr.meta[1];
     obj["result"] = static_cast<uint8_t>(hdr.result);
     obj["winner"] = String(static_cast<char>(hdr.winnerColor));
     obj["playerColor"] = hdr.playerColor ? String(static_cast<char>(hdr.playerColor)) : String("?");
-    obj["difficulty"] = hdr.meta[1];
+    obj["difficulty"] = hdr.meta[2];
     obj["moveCount"] = hdr.moveCount;
     obj["timestamp"] = hdr.timestamp;
   }

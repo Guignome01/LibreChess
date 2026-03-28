@@ -30,7 +30,8 @@ enum class GameModeId : uint8_t {
 /// Firmware-specific metadata packed into GameHeader::meta[GAME_META_SIZE].
 /// The lib stores these bytes without interpretation.
 struct GameMeta {
-  uint8_t mode;        // GameMode enum value
+  uint8_t mode;        // GameModeId enum value
+  uint8_t engineId;    // Provider identity (opaque, set by each EngineProvider)
   uint8_t difficulty;  // Engine search depth (0 = unused)
 };
 static_assert(sizeof(GameMeta) == GAME_META_SIZE, "GameMeta must match GAME_META_SIZE");

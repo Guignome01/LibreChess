@@ -370,8 +370,9 @@
         const FEN_MARKER = 0xFFFF;
 
         const RESULT_NAMES = ['In Progress', 'Checkmate', 'Stalemate', 'Draw (50-move)', 'Draw (3-fold)', 'Resignation', 'Draw (insufficient)', 'Draw (agreement)', 'Timeout', 'Aborted'];
-        const MODE_NAMES = { 1: 'Human vs Human', 2: 'vs Stockfish' };
-        const DEPTH_NAMES = { 3: 'Beginner', 5: 'Easy', 7: 'Intermediate', 9: 'Medium', 11: 'Advanced', 13: 'Hard', 15: 'Expert', 17: 'Master' };
+        const MODE_NAMES = { 1: 'Human vs Human', 2: 'vs Bot' };
+        const ENGINE_NAMES = { 0: 'Stockfish', 1: 'LibreChess' };
+        const DEPTH_NAMES = { 1: 'Beginner', 3: 'Easy', 5: 'Intermediate', 7: 'Medium', 9: 'Advanced', 11: 'Hard', 13: 'Expert', 15: 'Master' };
 
         function promoCodeToChar(code) {
             switch (code) {
@@ -431,16 +432,16 @@
 
         function parseGameHeader(dataView) {
             return {
-                version: dataView.getUint8(0),
-                result: dataView.getUint8(1),
-                winnerColor: String.fromCharCode(dataView.getUint8(2)),
-                playerColor: String.fromCharCode(dataView.getUint8(3)),
-                moveCount: dataView.getUint16(4, true),
-                fenEntryCnt: dataView.getUint16(6, true),
-                lastFenOffset: dataView.getUint16(8, true),
-                timestamp: dataView.getUint32(10, true),
-                // Meta overlay (firmware convention): meta[0]=mode, meta[1]=difficulty
-                mode: dataView.getUint8(14),
+                result: dataView.getUint8(0),
+                winnerColor: String.fromCharCode(dataView.getUint8(1)),
+                playerColor: String.fromCharCode(dataView.getUint8(2)),
+                moveCount: dataView.getUint16(3, true),
+                fenEntryCnt: dataView.getUint16(5, true),
+                lastFenOffset: dataView.getUint16(7, true),
+                timestamp: dataView.getUint32(9, true),
+                // Meta overlay (firmware convention): meta[0]=mode, meta[1]=engineId, meta[2]=difficulty
+                mode: dataView.getUint8(13),
+                engineId: dataView.getUint8(14),
                 difficulty: dataView.getUint8(15)
             };
         }
@@ -786,7 +787,8 @@
 
                         let subtitle = MODE_NAMES[game.mode] || 'Game';
                         if (game.mode === 2) {
-                            subtitle = 'vs Stockfish (' + (DEPTH_NAMES[game.difficulty] || 'D' + game.difficulty) + ')';
+                            const eng = ENGINE_NAMES[game.engineId] || 'Bot';
+                            subtitle = 'vs ' + eng + ' (' + (DEPTH_NAMES[game.difficulty] || 'D' + game.difficulty) + ')';
                         }
 
                         const card = $('<div class=\"game-card\" data-id=\"' + game.id + '\"></div>');
@@ -889,8 +891,9 @@
         function formatOpponent(meta) {
             if (meta.mode === 2) {
                 const diff = DEPTH_NAMES[meta.difficulty] || ('Depth ' + meta.difficulty);
+                const eng = ENGINE_NAMES[meta.engineId] || 'Bot';
                 const color = meta.playerColor === 'w' ? 'White' : 'Black';
-                return 'vs Stockfish (' + diff + ') as ' + color;
+                return 'vs ' + eng + ' (' + diff + ') as ' + color;
             }
             return MODE_NAMES[meta.mode] || ('Mode ' + meta.mode);
         }

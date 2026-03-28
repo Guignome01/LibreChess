@@ -92,32 +92,43 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 
 | Task | Stack Size | Purpose |
 |------|-----------|---------|
-| lcTask (LibreChess engine) | 16 KiB | Search: Engine + per-ply recursion |
+| lcTask (LibreChess engine) | 64 KiB | Search: Engine + per-ply recursion |
 | AnimWorker | 4 KiB | LED animation queue processing |
 | WiFi connect | default | ESP-IDF WiFi connection |
 | OTA reboot | 2 KiB | Short-lived reboot task |
 
-### Engine Stack Budget (lcTask, 16 KiB)
+### Engine Stack Budget (lcTask, 64 KiB)
 
 | Component | Size | Location |
 |-----------|------|----------|
-| Engine (Position w/ HashHistory 256) | ~2,350 B | stack |
-| MoveList rootMoves | 876 B | stack |
-| Per-ply recursion (MoveList + scores + UndoInfo) | ~1,844 B × depth | stack |
-| At depth 6 | ~11,064 B | stack |
+| Engine (Position w/ HashHistory 256) | ~2,350 B | **heap** (`std::unique_ptr`) |
+| MoveList rootMoves | 658 B | stack |
+| Per-ply negamax (MovePicker w/ int16_t arrays + locals) | ~2,200 B × depth | stack |
+| Per-ply quiescence (MoveList + int16_t scores + locals) | ~1,200 B × QS depth | stack |
+| At depth 15 + 6 ext + 8 QS | ~57 KiB | stack |
 | SearchState (history + killers + countermoves + PV table) | ~39 KiB | **heap** (`std::unique_ptr`) |
 | Transposition table | varies | **heap** (`new[]`) |
-| **Estimated total at depth 6** | **~14,290 B** | fits in 16 KiB |
 
 ### Per-Ply Recursion Breakdown
 
+**negamax** (≈2,200 B per ply):
+
 | Component | Size |
 |-----------|------|
-| MoveList (Move[218] + count) | 876 B |
-| scores[218] (int array) | 872 B |
-| UndoInfo (PositionState + hash + piece + sq + int) | ~36 B |
-| Local variables | ~60 B |
-| **Total per ply** | **~1,844 B** |
+| MovePicker.MoveList (Move[218] + count) | 658 B |
+| MovePicker.scores[218] (int16_t) | 436 B |
+| MovePicker.seeValues[218] (int16_t) | 436 B |
+| MovePicker other fields | ~100 B |
+| quietsSearched[64] + capturesSearched[64] | 384 B |
+| UndoInfo + local variables | ~186 B |
+
+**quiescence** (≈1,200 B per ply):
+
+| Component | Size |
+|-----------|------|
+| MoveList (Move[218] + count) | 658 B |
+| capScores[218] (int16_t) | 436 B |
+| UndoInfo + local variables | ~106 B |
 
 ### Position Size (on stack inside Engine)
 

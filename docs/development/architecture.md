@@ -208,7 +208,6 @@ Game recording and crash recovery follow a layered architecture with clean separ
 The `GameHeader` struct (exactly 16 bytes, `#pragma pack(push, 1)`) contains:
 | Field | Type | Description |
 |-------|------|-------------|
-| `version` | `uint8_t` | Format version (currently 1) |
 | `result` | `GameResult` | Game outcome enum class (0 = IN_PROGRESS, 1 = CHECKMATE, 2 = STALEMATE, 3 = DRAW_50, 4 = DRAW_3FOLD, 5 = RESIGNATION, 6 = DRAW_INSUFFICIENT, 7 = DRAW_AGREEMENT, 8 = TIMEOUT, 9 = ABORTED) |
 | `winnerColor` | `uint8_t` | `'w'`, `'b'`, `'d'` (draw), or `'?'` (in-progress) |
 | `playerColor` | `uint8_t` | Human's color (`'w'`/`'b'`), `'?'` if unset |
@@ -216,7 +215,7 @@ The `GameHeader` struct (exactly 16 bytes, `#pragma pack(push, 1)`) contains:
 | `fenEntryCnt` | `uint16_t` | Number of FEN table entries |
 | `lastFenOffset` | `uint16_t` | Byte offset of last FEN entry within the FEN table |
 | `timestamp` | `uint32_t` | Unix epoch from NTP (0 if unavailable) |
-| `meta` | `uint8_t[2]` | Opaque firmware metadata (mode + difficulty, interpreted by game_mode.h) |
+| `meta` | `uint8_t[3]` | Opaque firmware metadata (mode + engineId + difficulty, interpreted by game_mode.h) |
 
 **Move encoding** — each move is packed into 2 bytes: `[from_square(6 bits)][to_square(6 bits)][promotion(4 bits)]`. Square index = `row * 8 + col`. Promotion codes: 0 = none, 1 = queen, 2 = rook, 3 = bishop, 4 = knight. The special marker `0xFFFF` (`FEN_MARKER`) indicates that a FEN snapshot was recorded at this point in the move sequence.
 

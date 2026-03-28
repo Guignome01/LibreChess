@@ -50,6 +50,7 @@ void BotMode::begin() {
   } else {
     chess_->startNewGame(initResult.playerColor,
                           metaBytes(GameMeta{ static_cast<uint8_t>(initResult.mode),
+                                              initResult.engineId,
                                               initResult.difficulty }));
     if (!initResult.fen.empty())
       setBoardStateFromFEN(initResult.fen);

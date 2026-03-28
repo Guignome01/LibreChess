@@ -74,8 +74,7 @@ constexpr Piece operator~(Piece p) {
 // ---------------------------------------------------------------------------
 
 // Game result codes — stored in game recording binary format.
-// Values 0–5 match the existing on-disk header (FORMAT_VERSION 1).
-// New values are appended so older files remain readable.
+// New values must be appended so older recording files remain readable.
 enum class GameResult : uint8_t {
   IN_PROGRESS = 0,
   CHECKMATE = 1,

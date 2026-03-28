@@ -67,16 +67,17 @@ API modules handle raw HTTP + TLS. Providers handle chess-domain logic and FreeR
 
 ## Memory
 
-`LibreChessProvider` runs the search in a FreeRTOS task (`lcTask`) with a 16 KiB stack. The major allocations:
+`LibreChessProvider` runs the search in a FreeRTOS task (`lcTask`) with a 64 KiB stack. The Engine is heap-allocated via `std::unique_ptr` with explicit `reset()` before `vTaskDelete(nullptr)` to ensure destructor runs (releases TT, pawn hash, eval hash). Major allocations:
 
-- **SearchState** (~39 KiB: `history[2][64][64]` = 16 KiB, `killers[64][2]` = 384 B, `countermoves[12][64]` = 1.5 KiB, `staticEvals[64]` = 128 B, PV table 64×64×3 = 12 KiB) — **heap-allocated** via `std::unique_ptr` in `findBestMove()`. Too large for the 16 KiB task stack.
+- **SearchState** (~39 KiB: `history[2][64][64]` = 16 KiB, `killers[64][2]` = 384 B, `countermoves[12][64]` = 1.5 KiB, `staticEvals[64]` = 128 B, PV table 64×64×3 = 12 KiB) — **heap-allocated** via `std::unique_ptr` in `findBestMove()`.
 - **Transposition table** — heap-allocated (`new TTEntry[]`), dynamically sized to available heap (reserves extra 16 KiB for eval hash tables), capped at 128 KiB.
 - **Pawn hash table** — 8 KiB (1024 entries × 8B `PawnEntry`), heap-allocated by `Engine`. Caches pawn structure MG/EG scores; ~95%+ hit rate.
 - **Eval hash table** — 8 KiB (1024 entries × 8B `EvalEntry`), heap-allocated by `Engine`. Caches full `evaluatePosition()` results.
-- **Engine** (owns Position + TT + pawn/eval hash tables) — stack-allocated in `taskFunction()`. Position contains `HashHistory` (256 × 8B = 2 KiB) plus board state (~300B).
-- **Per-ply recursion** — ~1.8 KiB per ply (MoveList 876B + scores[218] 872B + UndoInfo ~36B). At depth 6: ~11 KiB on the task stack.
+- **Engine** (owns Position + TT + pawn/eval hash tables) — **heap-allocated** via `std::unique_ptr` in `taskFunction()`. Position contains `HashHistory` (256 × 8B = 2 KiB) plus board state (~300B).
+- **Per-ply negamax** — ~2.2 KiB per ply (MovePicker with MoveList 658B + int16_t scores[218] 436B + int16_t seeValues[218] 436B + other fields + quietsSearched[64] + capturesSearched[64] + UndoInfo + locals). Uses `int16_t` arrays to reduce per-ply stack footprint (all score values fit: MVV-LVA ≤ 600, SEE ≤ 900, history ≤ ±7000).
+- **Per-ply quiescence** — ~1.2 KiB per ply (MoveList 658B + int16_t capScores[218] 436B + UndoInfo + locals).
 
-Estimated total stack usage at depth 6: ~14.3 KiB (fits in the 16 KiB stack with ~1.7 KiB headroom). See `docs/development/additional-topics.md` for the full budget breakdown.
+Estimated worst-case stack at depth 15 + extensions: 21 negamax plies + 8 QS plies ≈ 57 KiB (fits in 64 KiB). See `docs/development/additional-topics.md` for the full budget breakdown.
 
 ## Design Decisions
 

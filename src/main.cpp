@@ -121,7 +121,8 @@ void checkForResumableGame() {
       indicatorColor = LedColors::Green;
       modeName = "Bot";
       flipped = (resumePlayerColor == 'b');
-      Serial.printf("  Mode: Bot (player=%c, difficulty=%d)\n", (char)resumePlayerColor, meta.difficulty);
+      Serial.printf("  Mode: Bot (player=%c, difficulty=%d, engineId=%d)\n",
+                     (char)resumePlayerColor, meta.difficulty, meta.engineId);
       break;
     case GameModeId::LICHESS:
       Serial.println("  Lichess game found — cannot resume locally, discarding");
@@ -152,6 +153,7 @@ void checkForResumableGame() {
         resumingGame = true;
         playerColor = (char)resumePlayerColor;
         stockfishSettings = StockfishSettings(meta.difficulty);
+        botEngine = (meta.engineId == LibreChessProvider::ENGINE_ID) ? "librechess" : "stockfish";
         break;
     }
   } else {

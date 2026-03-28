@@ -35,7 +35,6 @@ void Game::startNewGame(uint8_t playerColor, const uint8_t* meta) {
   // Build header and start recording
   GameHeader header;
   memset(&header, 0, sizeof(header));
-  header.version = FORMAT_VERSION;
   header.result = GameResult::IN_PROGRESS;
   header.winnerColor = '?';
   header.playerColor = playerColor;

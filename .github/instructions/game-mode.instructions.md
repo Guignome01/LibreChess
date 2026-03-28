@@ -55,7 +55,7 @@ Composes an `EngineProvider*` (strategy pattern, owned — deleted in destructor
 1. Check WiFi → abort if disconnected.
 2. Show waiting animation → `provider_->initialize()` (may block for HTTP).
 3. Stop animation → check init result.
-4. Resume or start new game with `initResult.playerColor`, packed `GameMeta` (mode + difficulty).
+4. Resume or start new game with `initResult.playerColor`, `GameMeta` (mode + engineId + difficulty).
 5. `waitForBoardSetup()`.
 6. If engine's turn first → immediately `requestMove()` + enter `ENGINE_THINKING`.
 

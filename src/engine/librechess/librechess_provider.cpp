@@ -3,6 +3,7 @@
 #include "game_mode/game_mode.h"
 #include <Arduino.h>
 #include <esp_heap_caps.h>
+#include <memory>
 
 #include "notation.h"
 #include "square.h"
@@ -32,6 +33,7 @@ bool LibreChessProvider::initialize(EngineInitResult& result) {
   result.playerColor = playerColor_;
   result.fen = "";  // Starting position
   result.mode = GameModeId::BOT;
+  result.engineId = ENGINE_ID;
   result.difficulty = static_cast<uint8_t>(depth_);
   result.canResume = true;
   return true;
@@ -42,16 +44,15 @@ void LibreChessProvider::requestMove(const std::string& fen) {
   ctx->fen = fen;
   ctx->depth = depth_;
   ctx->moveTimeMs = moveTimeMs_;
-  // Stack budget for lcTask (16 KiB = 16384 bytes):
-  //   Engine (Position w/ HashHistory 256) ............. ~2,350 B
-  //   MoveList rootMoves (findBestMove local) .......... ~  876 B
-  //   Per-ply recursion (MovePicker + locals + UndoInfo) ~2,050 B × depth
-  //   At depth 6: ..................................... ~12,300 B
-  //   SearchState (history + killers + countermoves) ... heap (std::unique_ptr)
-  //   Transposition table .............................. heap (new[])
-  //   Estimated total at depth 6: ..................... ~15,526 B
-  //   Headroom: ....................................... ~   858 B
-  spawnTask(ctx, "lcTask", taskFunction, 16384);
+  // Stack budget for lcTask (64 KiB = 65536 bytes):
+  //   findBestMove frame (MoveList + SearchResult) .... ~1,200 B
+  //   Per negamax ply (MovePicker with int16_t arrays) . ~2,200 B × depth
+  //   Per quiescence ply (MoveList + int16_t scores) .. ~1,200 B × QS depth
+  //   Extensions (check, singular, recapture) push effective depth
+  //   4-8 plies beyond nominal → depth 15 + 8 ext + 16 QS ≈ 39 plies.
+  //   Estimated worst case: 23 × 2,200 + 16 × 1,200 + 3,000 ≈ 72 KiB.
+  //   64 KiB provides comfortable headroom for all difficulty levels.
+  spawnTask(ctx, "lcTask", taskFunction, 65536);
 }
 
 bool LibreChessProvider::checkResult(EngineResult& result) {
@@ -94,10 +95,13 @@ void LibreChessProvider::taskFunction(void* param) {
   ctx->logger.infof("LibreChess: TT %d entries (%u bytes), free heap %u",
                      ttEntries, ttEntries * ENTRY_SIZE, freeHeap);
 
-  // Create Engine and configure stop/time
-  LibreChess::Engine engine(ttEntries);
-  engine.setTimeFunc([]() -> uint32_t { return millis(); });
-  engine.setExternalStop(&ctx->cancel);
+  // Heap-allocate the Engine to keep the task stack small and ensure
+  // cleanup via unique_ptr — vTaskDelete() does not unwind the C++ stack,
+  // so stack-local objects would leak their heap allocations (TT, pawn
+  // hash, eval hash).
+  auto engine = std::make_unique<LibreChess::Engine>(ttEntries);
+  engine->setTimeFunc([]() -> uint32_t { return millis(); });
+  engine->setExternalStop(&ctx->cancel);
 
   // Build search limits
   LibreChess::search::SearchLimits limits;
@@ -106,7 +110,10 @@ void LibreChessProvider::taskFunction(void* param) {
   if (ctx->depth <= 0 && ctx->moveTimeMs <= 0) limits.maxDepth = 6;
 
   // Run the search — returns structured result, no string parsing needed
-  auto result = engine.calculateMove(ctx->fen, limits);
+  auto result = engine->calculateMove(ctx->fen, limits);
+
+  // Release engine resources before task termination
+  engine.reset();
 
   // Convert SearchResult → EngineResult
   if (result.bestMove.from != 0 || result.bestMove.to != 0) {
