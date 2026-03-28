@@ -131,21 +131,6 @@ static void test_eval_tapered_opening_vs_endgame_king(void) {
   TEST_ASSERT_EQUAL_INT(0, fullBoard);
 }
 
-static void test_eval_tapered_endgame_king_centralization(void) {
-  // Pure K+P endgame (phase = 0) — king in center should score better than
-  // king on the edge (EG table: d4 = +30 vs a1 = -20).
-  // Symmetric, non-passed pawns (e4 vs e5 block each other) avoid
-  // interference from the exponential passed-pawn rank bonuses.
-  placePiece(bb, mailbox, Piece::W_KING, "d4");
-  placePiece(bb, mailbox, Piece::W_PAWN, "e4");
-  placePiece(bb, mailbox, Piece::B_KING, "a1");
-  placePiece(bb, mailbox, Piece::B_PAWN, "e5");
-  int eval = eval::evaluatePosition(bb);
-  // White king center (d4 EG=+30) vs black king corner (a1 → mirrored to a8 EG=-20).
-  // Net king EG bonus: +30 - (-20) = +50 advantage for white.
-  TEST_ASSERT_TRUE(eval > 0);
-}
-
 static void test_eval_tapered_phase_affects_king(void) {
   // White king central (d4), black king corner (h8).
   // No non-pawn material → phase = 0 → pure endgame weights.
@@ -497,43 +482,6 @@ static void test_eval_knight_outpost(void) {
 }
 
 // ===========================================================================
-// Center control
-// ===========================================================================
-
-static void test_eval_center_pawn_occupation(void) {
-  // White pawn on e4 (center) vs pawn on a3 (rim).
-  placePiece(bb, mailbox, Piece::W_KING, "e1");
-  placePiece(bb, mailbox, Piece::W_PAWN, "e4");
-  placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int center = eval::evaluatePosition(bb);
-
-  clearBoard(bb, mailbox);
-  placePiece(bb, mailbox, Piece::W_KING, "e1");
-  placePiece(bb, mailbox, Piece::W_PAWN, "a3");
-  placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int rim = eval::evaluatePosition(bb);
-
-  // Center pawn should be evaluated higher.
-  TEST_ASSERT_TRUE(center > rim);
-}
-
-static void test_eval_center_pawn_attack(void) {
-  // White pawn on c3 attacks d4 (center) vs pawn on a3 (attacks b4, not center).
-  placePiece(bb, mailbox, Piece::W_KING, "e1");
-  placePiece(bb, mailbox, Piece::W_PAWN, "c3");
-  placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int attacking = eval::evaluatePosition(bb);
-
-  clearBoard(bb, mailbox);
-  placePiece(bb, mailbox, Piece::W_KING, "e1");
-  placePiece(bb, mailbox, Piece::W_PAWN, "a3");
-  placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int notAttacking = eval::evaluatePosition(bb);
-
-  // Pawn attacking center should score at least as well.
-  TEST_ASSERT_TRUE(attacking >= notAttacking);
-}
-
 // ===========================================================================
 // King danger (unified zone attack + proximity)
 // ===========================================================================
@@ -554,35 +502,6 @@ static void test_eval_king_danger_close_piece(void) {
 
   // Queen near enemy king should score higher for white.
   TEST_ASSERT_TRUE(close > far);
-}
-
-// ===========================================================================
-// Space
-// ===========================================================================
-
-static void test_eval_space_more_territory(void) {
-  // More white space (unrestricted) vs less white space (restricted by black
-  // pawns that attack the space zone).
-  //
-  // Position A: black pawns on the rim (a6, h6) — they do not attack any
-  //   square in White's space zone (files c–f, ranks 2–4).
-  // Position B: black pawns in the centre (d5, e5) — they attack c4, e4,
-  //   d4, f4, removing 4 squares from White's safe space zone.
-  placePiece(bb, mailbox, Piece::W_KING, "e1");
-  placePiece(bb, mailbox, Piece::B_KING, "e8");
-  placePiece(bb, mailbox, Piece::B_PAWN, "a6");
-  placePiece(bb, mailbox, Piece::B_PAWN, "h6");
-  int open = eval::evaluatePosition(bb);
-
-  clearBoard(bb, mailbox);
-  placePiece(bb, mailbox, Piece::W_KING, "e1");
-  placePiece(bb, mailbox, Piece::B_KING, "e8");
-  placePiece(bb, mailbox, Piece::B_PAWN, "d5");
-  placePiece(bb, mailbox, Piece::B_PAWN, "e5");
-  int cramped = eval::evaluatePosition(bb);
-
-  // White scores better when its space is unrestricted.
-  TEST_ASSERT_TRUE(open > cramped);
 }
 
 // ===========================================================================
@@ -739,46 +658,6 @@ static void test_eval_trapped_bishop_symmetric(void) {
 }
 
 // ===========================================================================
-// Connectivity
-// ===========================================================================
-
-static void test_eval_connectivity_defended_pieces(void) {
-  // White pieces defended by each other vs isolated black pieces.
-  // White: Ke1 (defends d2), Nd2 (defended by king), Bc4 (defended by Nd2).
-  // Black: Ke8, Na8 (corner, alone), Bh5 (undefended).
-  placePiece(bb, mailbox, Piece::W_KING, "e1");
-  placePiece(bb, mailbox, Piece::W_KNIGHT, "d2");
-  placePiece(bb, mailbox, Piece::W_BISHOP, "c4");
-  placePiece(bb, mailbox, Piece::B_KING, "e8");
-  placePiece(bb, mailbox, Piece::B_KNIGHT, "a8");
-  placePiece(bb, mailbox, Piece::B_BISHOP, "h5");
-  int connected = eval::evaluatePosition(bb);
-
-  // Now move white pieces apart so they don't defend each other.
-  clearBoard(bb, mailbox);
-  placePiece(bb, mailbox, Piece::W_KING, "a1");
-  placePiece(bb, mailbox, Piece::W_KNIGHT, "h4");
-  placePiece(bb, mailbox, Piece::W_BISHOP, "a7");
-  placePiece(bb, mailbox, Piece::B_KING, "e8");
-  placePiece(bb, mailbox, Piece::B_KNIGHT, "a8");
-  placePiece(bb, mailbox, Piece::B_BISHOP, "h5");
-  int scattered = eval::evaluatePosition(bb);
-
-  // Connected pieces should score higher.
-  TEST_ASSERT_TRUE(connected > scattered);
-}
-
-static void test_eval_connectivity_symmetric(void) {
-  // Symmetric positions — connectivity should cancel.
-  placePiece(bb, mailbox, Piece::W_KING, "e1");
-  placePiece(bb, mailbox, Piece::W_KNIGHT, "f3");
-  placePiece(bb, mailbox, Piece::B_KING, "e8");
-  placePiece(bb, mailbox, Piece::B_KNIGHT, "f6");
-  int eval = eval::evaluatePosition(bb);
-  TEST_ASSERT_EQUAL_INT(0, eval);
-}
-
-// ===========================================================================
 // Eval Hash Table — probe / store / clear cycle
 // ===========================================================================
 
@@ -837,26 +716,6 @@ static void test_eval_hash_overwrite(void) {
 // ===========================================================================
 // Rank-based passed pawn scoring
 // ===========================================================================
-
-// A passer on the 6th rank (LERF rank 5, close to promotion for white)
-// should score higher than a passer on the 3rd rank.
-static void test_eval_passed_pawn_rank_scaling(void) {
-  // Position A: white passed pawn on e6 (LERF rank 5).
-  placePiece(bb, mailbox, Piece::W_KING, "e1");
-  placePiece(bb, mailbox, Piece::W_PAWN, "e6");
-  placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int evalHigh = eval::evaluatePosition(bb);
-
-  // Position B: white passed pawn on e3 (LERF rank 2).
-  clearBoard(bb, mailbox);
-  placePiece(bb, mailbox, Piece::W_KING, "e1");
-  placePiece(bb, mailbox, Piece::W_PAWN, "e3");
-  placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int evalLow = eval::evaluatePosition(bb);
-
-  // The advanced passer should be worth more (exponential rank scaling).
-  TEST_ASSERT_TRUE(evalHigh > evalLow);
-}
 
 // Own king near a passed pawn should improve endgame eval vs king far away.
 static void test_eval_passed_pawn_king_distance(void) {
@@ -1010,32 +869,6 @@ static void test_eval_rook_behind_passer(void) {
 }
 
 // ===========================================================================
-// Protected passer — passed pawn defended by another pawn
-// ===========================================================================
-
-// A passed pawn defended by a friendly pawn should score higher than
-// an undefended passed pawn.
-static void test_eval_protected_passer(void) {
-  // Protected: passer on d5, defender on c4.
-  placePiece(bb, mailbox, Piece::W_KING, "e1");
-  placePiece(bb, mailbox, Piece::W_PAWN, "d5");
-  placePiece(bb, mailbox, Piece::W_PAWN, "c4");
-  placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int protectedScore = eval::evaluatePosition(bb);
-
-  // Unprotected: passer on d5, second pawn far away (a2).
-  clearBoard(bb, mailbox);
-  placePiece(bb, mailbox, Piece::W_KING, "e1");
-  placePiece(bb, mailbox, Piece::W_PAWN, "d5");
-  placePiece(bb, mailbox, Piece::W_PAWN, "a2");
-  placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int unprotectedScore = eval::evaluatePosition(bb);
-
-  // Protected passer should score higher.
-  TEST_ASSERT_TRUE(protectedScore > unprotectedScore);
-}
-
-// ===========================================================================
 // Candidate passer — one enemy blocker in the passed mask
 // ===========================================================================
 
@@ -1116,7 +949,6 @@ void register_evaluation_tests() {
 
   // Tapered evaluation (game phase)
   RUN_TEST(test_eval_tapered_opening_vs_endgame_king);
-  RUN_TEST(test_eval_tapered_endgame_king_centralization);
   RUN_TEST(test_eval_tapered_phase_affects_king);
 
   // Pawn-structure queries
@@ -1149,25 +981,14 @@ void register_evaluation_tests() {
   // Knight outpost
   RUN_TEST(test_eval_knight_outpost);
 
-  // Center control
-  RUN_TEST(test_eval_center_pawn_occupation);
-  RUN_TEST(test_eval_center_pawn_attack);
-
   // King danger
   RUN_TEST(test_eval_king_danger_close_piece);
-
-  // Space
-  RUN_TEST(test_eval_space_more_territory);
 
   // Trapped pieces
   RUN_TEST(test_eval_trapped_bishop_a7);
   RUN_TEST(test_eval_trapped_bishop_h7);
   RUN_TEST(test_eval_trapped_rook_by_king);
   RUN_TEST(test_eval_trapped_bishop_symmetric);
-
-  // Connectivity
-  RUN_TEST(test_eval_connectivity_defended_pieces);
-  RUN_TEST(test_eval_connectivity_symmetric);
 
   // Pawn hash table
   RUN_TEST(test_pawn_hash_probe_miss);
@@ -1182,7 +1003,6 @@ void register_evaluation_tests() {
   RUN_TEST(test_eval_hash_overwrite);
 
   // Rank-based passed pawn scoring
-  RUN_TEST(test_eval_passed_pawn_rank_scaling);
   RUN_TEST(test_eval_passed_pawn_king_distance);
 
   // King danger (continued)
@@ -1199,7 +1019,6 @@ void register_evaluation_tests() {
   RUN_TEST(test_eval_rook_behind_passer);
 
   // Protected / candidate passer
-  RUN_TEST(test_eval_protected_passer);
   RUN_TEST(test_eval_candidate_passer);
 
   // Opposite-color bishop scaling

@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 
+#include <evaluation.h>
 #include <fen.h>
 #include <movegen.h>
 #include <notation.h>
@@ -26,6 +27,36 @@
 #include "epd.h"
 
 using namespace LibreChess;
+
+// ---------------------------------------------------------------------------
+// Shared hash tables — allocated once and reused across all suites.
+// Cleared between suites so results are independent.
+// ---------------------------------------------------------------------------
+
+static search::TranspositionTable sharedTT;
+static eval::PawnHashTable sharedPawnHash;
+static eval::EvalHashTable sharedEvalHash;
+
+/// Allocate shared hash tables (called once at startup).
+static void initSharedTables() {
+  sharedTT.resize(search::DEFAULT_TT_SIZE);
+  sharedPawnHash.resize(eval::DEFAULT_PAWN_HASH_SIZE);
+  sharedEvalHash.resize(eval::DEFAULT_EVAL_HASH_SIZE);
+}
+
+/// Clear all shared hash tables between suites.
+static void clearSharedTables() {
+  sharedTT.clear();
+  sharedPawnHash.clear();
+  sharedEvalHash.clear();
+}
+
+/// Free shared hash tables at shutdown.
+static void freeSharedTables() {
+  sharedTT.free();
+  sharedPawnHash.free();
+  sharedEvalHash.free();
+}
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -131,7 +162,9 @@ static int runSuite(const char* suiteName,
     // Search — time-only, no depth cap
     search::SearchLimits limits;
     limits.hardTimeMs = TACTICS_TIME_MS;
-    search::SearchResult result = search::findBestMove(pos, limits, chronoMillis);
+    search::SearchResult result = search::findBestMove(
+        pos, limits, chronoMillis, nullptr,
+        &sharedTT, &sharedPawnHash, &sharedEvalHash);
     std::string engineMove = moveToStr(result.bestMove);
 
     // Determine expected move list and whether it's bm or am
@@ -203,6 +236,7 @@ static int runSuite(const char* suiteName,
 // ===========================================================================
 
 static void test_wac_suite(void) {
+  clearSharedTables();
   std::vector<EPDRecord> records = loadEPD("wac.epd");
   int count = static_cast<int>(records.size());
   TEST_ASSERT_MESSAGE(count > 0, "Failed to load wac.epd");
@@ -215,6 +249,7 @@ static void test_wac_suite(void) {
 }
 
 static void test_bk_suite(void) {
+  clearSharedTables();
   std::vector<EPDRecord> records = loadEPD("bk.epd");
   int count = static_cast<int>(records.size());
   TEST_ASSERT_MESSAGE(count > 0, "Failed to load bk.epd");
@@ -227,6 +262,7 @@ static void test_bk_suite(void) {
 }
 
 static void test_eret_suite(void) {
+  clearSharedTables();
   std::vector<EPDRecord> records = loadEPD("eret.epd");
   int count = static_cast<int>(records.size());
   TEST_ASSERT_MESSAGE(count > 0, "Failed to load eret.epd");
@@ -243,9 +279,12 @@ static void test_eret_suite(void) {
 // ===========================================================================
 
 int main(int argc, char** argv) {
+  initSharedTables();
   UNITY_BEGIN();
   RUN_TEST(test_wac_suite);
   RUN_TEST(test_bk_suite);
   RUN_TEST(test_eret_suite);
-  return UNITY_END();
+  int result = UNITY_END();
+  freeSharedTables();
+  return result;
 }

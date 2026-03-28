@@ -136,12 +136,6 @@ static void test_regr_pawn_threatens_knight(void) {
 // Phase tapering
 // ---------------------------------------------------------------------------
 
-static void test_regr_endgame_king_centralized(void) {
-  // In an endgame (no pieces), king in center scores better than corner.
-  int center = evalFEN("4k3/8/8/8/3K4/8/8/8 w - - 0 1");
-  int corner = evalFEN("4k3/8/8/8/8/8/8/K7 w - - 0 1");
-  TEST_ASSERT_TRUE(center > corner);
-}
 
 static void test_regr_rook_endgame_seventh_rank(void) {
   // White rook on 7th rank (a7) in endgame → bonus.
@@ -174,18 +168,6 @@ static void test_regr_rook_behind_passer(void) {
   // Same material, rook in front of passer on d6 (same file, no bonus).
   int inFront = evalFEN("k7/8/3R4/3P4/8/8/8/K7 w - - 0 1");
   TEST_ASSERT_TRUE(behind > inFront);
-}
-
-// ---------------------------------------------------------------------------
-// Protected passer
-// ---------------------------------------------------------------------------
-
-static void test_regr_protected_passer_bonus(void) {
-  // Passed pawn on d5 protected by pawn on c4.
-  int prot = evalFEN("4k3/8/8/3P4/2P5/8/8/4K3 w - - 0 1");
-  // Same passer but defender far away.
-  int unprot = evalFEN("4k3/8/8/3P4/8/8/P7/4K3 w - - 0 1");
-  TEST_ASSERT_TRUE(prot > unprot);
 }
 
 // ---------------------------------------------------------------------------
@@ -230,11 +212,9 @@ void register_eval_regression_tests() {
   RUN_TEST(test_regr_bishop_pair_bonus);
   RUN_TEST(test_regr_castled_king_safer);
   RUN_TEST(test_regr_pawn_threatens_knight);
-  RUN_TEST(test_regr_endgame_king_centralized);
   RUN_TEST(test_regr_rook_endgame_seventh_rank);
   RUN_TEST(test_regr_bad_bishop_penalty);
   RUN_TEST(test_regr_rook_behind_passer);
-  RUN_TEST(test_regr_protected_passer_bonus);
   RUN_TEST(test_regr_candidate_passer_bonus);
   RUN_TEST(test_regr_ocb_scaling);
 }

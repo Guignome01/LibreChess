@@ -85,7 +85,7 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 | Transposition table | up to 128 KiB | Dynamic: `(freeHeap - 48KB) / 4`, capped, 16B/entry |
 | Pawn hash table | 8 KiB | 1024 entries × 8B, owned by Engine |
 | Eval hash table | 8 KiB | 1024 entries × 8B, owned by Engine |
-| SearchState | ~19 KiB | `std::unique_ptr` in `findBestMove()` |
+| SearchState | ~39 KiB | `std::unique_ptr` in `findBestMove()` |
 | **Free after persistent allocs** | **~80–100 KiB** | Available for TT + hash tables + SearchState |
 
 ### FreeRTOS Task Stacks
@@ -105,7 +105,7 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 | MoveList rootMoves | 876 B | stack |
 | Per-ply recursion (MoveList + scores + UndoInfo) | ~1,844 B × depth | stack |
 | At depth 6 | ~11,064 B | stack |
-| SearchState (history + killers + countermoves) | ~19 KiB | **heap** (`std::unique_ptr`) |
+| SearchState (history + killers + countermoves + PV table) | ~39 KiB | **heap** (`std::unique_ptr`) |
 | Transposition table | varies | **heap** (`new[]`) |
 | **Estimated total at depth 6** | **~14,290 B** | fits in 16 KiB |
 
@@ -141,11 +141,14 @@ Features from the [Chess Programming Wiki](https://www.chessprogramming.org/Main
 
 | Feature | Status | Description | Reference |
 |---------|--------|-------------|-----------|
-| Singular Extensions | Not implemented | Extend search for moves that are significantly better than all alternatives at a node. Requires a verification re-search per node, making it the most compute-intensive search enhancement. | [CPW — Singular Extensions](https://www.chessprogramming.org/Singular_Extensions) |
+| Singular Extensions | Implemented | Extend search by 1 ply for TT moves that are significantly better than all alternatives. Uses a reduced-depth exclusion search at TT-hit nodes with depth ≥ 6 to verify singularity. | [CPW — Singular Extensions](https://www.chessprogramming.org/Singular_Extensions) |
 | Reverse Futility Pruning | Implemented | Static pruning: if staticEval - RFP_MARGIN*depth/(1+improving) >= beta at depth ≤ 6, prune the node. Margin halved when position is improving. | [CPW — Reverse Futility Pruning](https://www.chessprogramming.org/Reverse_Futility_Pruning) |
 | ProbCut | Not implemented | Uses a shallow search with reduced bounds to predict whether a deeper search would cause a beta cutoff. | [CPW — ProbCut](https://www.chessprogramming.org/ProbCut) |
-| Staged Move Generation | Not implemented | Generate moves lazily (TT move first, then captures, then quiets) instead of generating all moves upfront. Saves move generation work when early moves cause cutoffs. | [CPW — Move Generation](https://www.chessprogramming.org/Move_Generation#Staged_Move_Generation) |
-| History-Informed LMR | Implemented | Logarithmic LMR table (`LMR_TABLE[depth][moveIndex]` via `0.75 + ln(d)*ln(m)/2.5`) with history adjustments (hist < -500 → +1, hist > 1500 → -1) and improving flag (+1 when not improving). | [CPW — Late Move Reductions](https://www.chessprogramming.org/Late_Move_Reductions) |
+| Staged Move Generation | Implemented | Moves generated lazily via `MovePicker` in priority order: TT move → good captures → killers → countermove → quiets → bad captures. A beta cutoff in an early stage skips generating later stages. | [CPW — Move Generation](https://www.chessprogramming.org/Move_Generation#Staged_Move_Generation) |
+| History-Informed LMR | Implemented | Logarithmic LMR table (`LMR_TABLE[depth][moveIndex]` via `0.75 + ln(d)*ln(m)/2.0`) with history adjustments (hist < -500 → +1, hist > 1500 → -1), improving flag (+1 when not improving), and non-PV adjustment (+1 when not PV node). | [CPW — Late Move Reductions](https://www.chessprogramming.org/Late_Move_Reductions) |
+| History Pruning | Implemented | Pre-make skip of quiet moves with deeply negative history scores at shallow depths (depth ≤ 4, hist < -1024×depth). Avoids the make/unmake overhead for moves the engine has consistently found to be bad. | [CPW — History Leaf Pruning](https://www.chessprogramming.org/History_Leaf_Pruning) |
+| Internal Iterative Reductions | Implemented | When no TT move exists at sufficient depth (≥ 4), reduce depth by 1 ply instead of running a full IID search. Cheaper than IID with equivalent effect (the reduced iteration populates the TT). | [CPW — Internal Iterative Reductions](https://www.chessprogramming.org/Internal_Iterative_Reductions) |
+| Pawn-Defended-Pawn QS Pruning | Implemented | In quiescence search, skip captures where a non-pawn piece captures a pawn defended by another enemy pawn. These exchanges are almost always losing. | [CPW — Quiescence Search](https://www.chessprogramming.org/Quiescence_Search) |
 | Continuation History | Not implemented | Two-ply history heuristic (previous move + current move) for better quiet move ordering. | [CPW — Continuation History](https://www.chessprogramming.org/History_Heuristic#Continuation_History) |
 
 ### Evaluation

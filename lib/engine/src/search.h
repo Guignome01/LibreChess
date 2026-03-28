@@ -39,7 +39,7 @@ namespace search {
 static constexpr int MATE_SCORE = 30000;
 static constexpr int INF_SCORE  = 31000;
 static constexpr int DRAW_SCORE = 0;
-static constexpr int MAX_PLY    = 128;
+static constexpr int MAX_PLY    = 64;
 
 // ---------------------------------------------------------------------------
 // Platform-agnostic time function — returns milliseconds.
@@ -145,8 +145,14 @@ struct TTEntry {
 
 static_assert(sizeof(TTEntry) <= 16, "TTEntry should fit in 16 bytes");
 
-// Default TT size: 8192 entries × 12 bytes = 96 KiB.
+// Default TT size.  On memory-constrained targets (ESP32) the flag
+// HARDWARE_LIMITATION selects a compact 8192-entry table (96 KiB).
+// Unconstrained builds use 131072 entries (~1.5 MiB) for stronger play.
+#ifdef HARDWARE_LIMITATION
 static constexpr int DEFAULT_TT_SIZE = 8192;
+#else
+static constexpr int DEFAULT_TT_SIZE = 131072;
+#endif
 
 // The transposition table — a power-of-2 array with index = key & mask.
 struct TranspositionTable {
@@ -232,7 +238,7 @@ struct SearchState {
   // pv[ply] holds the PV line starting at that ply; pvLength[ply] holds
   // the number of moves in that line.  Updated in negamax when alpha
   // improves; copied to SearchResult after each completed iteration.
-  // Memory: MAX_PLY × MAX_PLY × sizeof(Move) ≈ 48 KiB (heap-allocated).
+  // Memory: MAX_PLY × MAX_PLY × sizeof(Move) ≈ 12 KiB (heap-allocated).
   // Reference: https://www.chessprogramming.org/Triangular_PV-Table
   Move pv[MAX_PLY][MAX_PLY];
   int pvLength[MAX_PLY];

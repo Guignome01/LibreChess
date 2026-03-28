@@ -178,8 +178,9 @@ int getStep(int idx);
 // Only available in tuning builds; production builds keep them file-local.
 // ---------------------------------------------------------------------------
 
-// Material.
+// Material (MG = MATERIAL[], defines centipawn unit; EG separate).
 extern int MATERIAL[6];
+extern int MATERIAL_EG[6];
 
 // Piece-square tables (12 arrays × 64 squares).
 extern int PST_PAWN_MG[64],   PST_KNIGHT_MG[64], PST_BISHOP_MG[64];
@@ -190,18 +191,21 @@ extern int PST_ROOK_EG[64],   PST_QUEEN_EG[64],   PST_KING_EG[64];
 // Passed pawn rank bonuses.
 extern int PASSED_RANK_BONUS_MG[8], PASSED_RANK_BONUS_EG[8];
 
-// Pawn structure.
-extern int CONNECTED_PASSED, ISOLATED_PENALTY, DOUBLED_PENALTY, BACKWARD_PENALTY;
-extern int PROTECTED_PASSER_MG, PROTECTED_PASSER_EG;
-extern int CANDIDATE_PASSER_MG, CANDIDATE_PASSER_EG;
+// Pawn structure (separate MG/EG).
+extern int CONNECTED_PASSED_MG, CONNECTED_PASSED_EG;
+extern int ISOLATED_PENALTY_MG, ISOLATED_PENALTY_EG;
+extern int DOUBLED_PENALTY_MG, DOUBLED_PENALTY_EG;
+extern int BACKWARD_PENALTY_MG, BACKWARD_PENALTY_EG;
+extern int PROTECTED_PASSER_MG;
 
 // Piece bonuses.
 extern int BISHOP_PAIR_MG, BISHOP_PAIR_EG;
-extern int ROOK_OPEN_FILE, ROOK_SEMI_OPEN_FILE;
+extern int ROOK_OPEN_FILE_MG, ROOK_OPEN_FILE_EG;
+extern int ROOK_SEMI_OPEN_FILE_MG, ROOK_SEMI_OPEN_FILE_EG;
 extern int ROOK_7TH_MG, ROOK_7TH_EG;
 extern int ROOK_BEHIND_OWN_PASSER_EG, ROOK_BEHIND_ENEMY_PASSER_EG;
 extern int BAD_BISHOP_MG, BAD_BISHOP_EG;
-extern int OUTPOST_BONUS;
+extern int OUTPOST_BONUS_MG, OUTPOST_BONUS_EG;
 extern int TRAPPED_BISHOP_PENALTY, TRAPPED_ROOK_PENALTY;
 
 // Mobility.
@@ -211,26 +215,23 @@ extern int MOBILITY_ROOK_MG, MOBILITY_ROOK_EG;
 extern int MOBILITY_QUEEN_MG, MOBILITY_QUEEN_EG;
 
 // King safety.
-extern int SHIELD_MISSING_PAWN, SHIELD_ADVANCED_PAWN, SHIELD_OPEN_FILE;
+extern int SHIELD_MISSING_PAWN, SHIELD_ADV_RANK3, SHIELD_ADV_RANK4PLUS, SHIELD_OPEN_FILE;
 extern int KING_DANGER_TABLE[13];
 extern const int KING_DANGER_WEIGHT[4];
 
-// Center, space, king distance.
-extern int CENTER_OCCUPATION_BONUS, CENTER_ATTACK_BONUS;
-extern int SPACE_BONUS;
+// Space, king distance.
+extern int SPACE_BONUS_MG;
 extern int PASSER_OWN_KING, PASSER_ENEMY_KING;
 
-// Threats.
-extern int THREAT_PAWN_VS_MINOR_MG, THREAT_PAWN_VS_MINOR_EG;
-extern int THREAT_PAWN_VS_ROOK_MG, THREAT_PAWN_VS_ROOK_EG;
-extern int THREAT_PAWN_VS_QUEEN_MG, THREAT_PAWN_VS_QUEEN_EG;
-extern int THREAT_MINOR_VS_ROOK_MG, THREAT_MINOR_VS_ROOK_EG;
-extern int THREAT_MINOR_VS_QUEEN_MG, THREAT_MINOR_VS_QUEEN_EG;
-extern int THREAT_ROOK_VS_QUEEN_MG, THREAT_ROOK_VS_QUEEN_EG;
-extern int CONNECTIVITY_BONUS;
+// Threats (MG only).
+extern int THREAT_PAWN_VS_MINOR_MG;
+extern int THREAT_PAWN_VS_ROOK_MG;
+extern int THREAT_PAWN_VS_QUEEN_MG;
+extern int THREAT_MINOR_VS_ROOK_MG;
+extern int THREAT_MINOR_VS_QUEEN_MG;
+extern int THREAT_ROOK_VS_QUEEN_MG;
 
 // Non-tunable constants.
-extern const Bitboard CENTER_MASK;
 extern const Bitboard WHITE_SPACE_ZONE, BLACK_SPACE_ZONE;
 
 // Chebyshev (king) distance between two LERF squares.

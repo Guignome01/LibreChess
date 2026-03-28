@@ -36,7 +36,7 @@ corpus.epd ─┬─ loadCorpus()       → RawEntry[]  (bitboards + results)
 |-----------|---------|
 | `EVAL_CONST` macro | Expands to empty under `-DTUNING`, `constexpr` in production |
 | `TuneEntry` | `{name, ptr, defaultVal, min, max, step}` — one tunable parameter |
-| `buildRegistry()` | Constructs 830 entries: 78 scalar + 752 PST (12 tables × 64 squares minus 16 frozen pawn squares) |
+| `buildRegistry()` | Constructs 843 entries: 91 scalar + 752 PST (12 tables × 64 squares minus 16 frozen pawn squares) |
 | `namespace tuning` | API: `paramCount()`, `getName(i)`, `getValue(i)`, `setValue(i, v)`, `getDefault(i)`, `getMin(i)`, `getMax(i)` |
 
 ## Core Algorithm

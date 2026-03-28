@@ -158,7 +158,7 @@ static void initLMR() {
         LMR_TABLE[d][m] = 0;
       else
         LMR_TABLE[d][m] = std::max(
-            1, static_cast<int>(0.75 + std::log(d) * std::log(m) / 2.5));
+            1, static_cast<int>(0.75 + std::log(d) * std::log(m) / 2.0));
     }
   }
   lmrInitialized = true;
@@ -226,6 +226,23 @@ static constexpr int FUTILITY_MARGIN[] = {0, 200, 500};  // indexed by depth
 static constexpr int LMP_THRESHOLD[] = {0, 5, 12, 20, 30, 42};  // indexed by depth
 
 // ---------------------------------------------------------------------------
+// History Pruning constants.
+//
+// At shallow depths, quiet moves with very poor history scores are pruned
+// before make_move, avoiding the overhead of making and unmaking a move
+// the engine has consistently found to be bad.
+//
+// HISTORY_PRUNE_DEPTH: maximum depth at which history pruning applies.
+// HISTORY_PRUNE_THRESHOLD: the per-depth scaling factor.  A move is pruned
+// if history[color][from][to] < -THRESHOLD * depth.
+//
+// Reference: https://www.chessprogramming.org/History_Leaf_Pruning
+// ---------------------------------------------------------------------------
+
+static constexpr int HISTORY_PRUNE_DEPTH     = 4;
+static constexpr int HISTORY_PRUNE_THRESHOLD = 1024;
+
+// ---------------------------------------------------------------------------
 // Razoring margins.
 //
 // At shallow depths (depth 1-2) in non-PV, non-check nodes, if the static
@@ -258,20 +275,21 @@ static constexpr int RFP_MARGIN = 120;  // per depth
 // ---------------------------------------------------------------------------
 // Internal Iterative Deepening (IID) constants.
 //
+// Internal Iterative Reductions (IIR) constants.
+//
 // At PV nodes without a TT move, move ordering is essentially blind —
-// the first move searched is arbitrary.  IID runs a shallow search first
-// to deposit a best-move entry in the TT, then re-probes to get a hash
-// move for ordering.  This dramatically improves cutoff rates at PV nodes.
+// the first move searched is arbitrary.  IIR reduces depth by one ply
+// instead of running a full shallow search (IID), saving the overhead
+// of a recursive search while still allowing the TT to be populated
+// by the reduced-depth iteration.
 //
-// IID_DEPTH_THRESHOLD: minimum remaining depth to trigger IID (shallow
-// nodes don't benefit enough to justify the extra work).
-// IID_REDUCTION: depth reduction for the preliminary search.
+// IID_DEPTH_THRESHOLD: minimum remaining depth to trigger IIR (shallow
+// nodes don't benefit enough to justify the reduction).
 //
-// Reference: https://www.chessprogramming.org/Internal_Iterative_Deepening
+// Reference: https://www.chessprogramming.org/Internal_Iterative_Reductions
 // ---------------------------------------------------------------------------
 
 static constexpr int IID_DEPTH_THRESHOLD = 4;
-static constexpr int IID_REDUCTION       = 2;
 
 // ---------------------------------------------------------------------------
 // Singular Extensions constants.
@@ -987,6 +1005,28 @@ int quiescence(Position& pos, int alpha, int beta, int ply,
         if (standPat + capturedValue + DELTA_MARGIN < alpha) continue;
       }
 
+      // --- Pawn-defended-pawn pruning ---
+      // When a non-pawn captures a pawn that is defended by an enemy pawn,
+      // the exchange is almost always losing (trade a piece for a pawn).
+      // Skip it without the cost of a full SEE computation.
+      //
+      // To find defender pawns that attack m.to: the squares from which an
+      // enemy pawn can reach m.to are PAWN[sideToMove][m.to] (reversed
+      // direction of enemy pawn attacks).
+      //
+      // Reference: https://www.chessprogramming.org/Quiescence_Search
+      if (!m.isEP()) {
+        PieceType attacker = pieceType(pos.mailbox()[m.from]);
+        PieceType victim   = pieceType(pos.mailbox()[m.to]);
+        if (attacker != PieceType::PAWN && victim == PieceType::PAWN) {
+          Color defender = ~pos.sideToMove();
+          Bitboard defenderPawns = pos.bitboards().byPiece[raw(
+              makePiece(defender, PieceType::PAWN))];
+          if (attacks::PAWN[raw(pos.sideToMove())][m.to] & defenderPawns)
+            continue;
+        }
+      }
+
       // --- SEE Pruning ---
       // Skip captures where the static exchange evaluation is negative
       // (the capture sequence loses material after recaptures).
@@ -1175,23 +1215,19 @@ int negamax(Position& pos, int depth, int alpha, int beta,
       ttMove = unpackMove(entry->bestMove);
   }
 
-  // --- Internal Iterative Deepening (IID) ---
-  // At PV nodes with sufficient depth but no TT move, move ordering is
-  // blind — the first move searched is whatever the generator produces.
-  // IID runs a reduced-depth search to populate the TT with a best move,
-  // then re-probes to get a hash move for ordering the full-depth search.
+  // --- Internal Iterative Reductions (IIR) ---
+  // When no TT move is available at sufficient depth, the move ordering is
+  // blind — the first move searched is arbitrary.  Rather than running a
+  // full shallow search (IID), we simply reduce depth by one ply.  This is
+  // cheaper and achieves the same effect: the reduced search will populate
+  // the TT, so the next iteration's full-depth search will have a hash move.
   //
-  // Guards: PV node, TT available, no hash move found, sufficient depth.
+  // Guards: TT available, no hash move found, sufficient depth.
   //
-  // Reference: https://www.chessprogramming.org/Internal_Iterative_Deepening
-  if (pvNode && state.tt && depth >= IID_DEPTH_THRESHOLD &&
+  // Reference: https://www.chessprogramming.org/Internal_Iterative_Reductions
+  if (state.tt && depth >= IID_DEPTH_THRESHOLD &&
       ttMove.from == 0 && ttMove.to == 0) {
-    negamax(pos, depth - IID_REDUCTION, alpha, beta, ply, state,
-            prevPiece, prevTo);
-    // Re-probe TT — the shallow search will have stored a best move.
-    const TTEntry* iidEntry = state.tt->probe(pos.hash());
-    if (iidEntry)
-      ttMove = unpackMove(iidEntry->bestMove);
+    --depth;
   }
 
   // --- Singular Extensions ---
@@ -1328,6 +1364,21 @@ int negamax(Position& pos, int depth, int alpha, int beta,
       continue;
     }
 
+    // --- History Pruning: skip quiet moves with terrible history ---
+    // Before making a move, if the history score is deeply negative the
+    // engine has consistently found this move to be bad.  Skip it entirely,
+    // saving the make/unmake overhead.
+    // Guards: not PV, not in check, shallow depth, not first move,
+    //         quiet move only.
+    //
+    // Reference: https://www.chessprogramming.org/History_Leaf_Pruning
+    if (!pvNode && !inCheck && depth <= HISTORY_PRUNE_DEPTH &&
+        movesSearched > 0 && !m.isCapture() && !m.isPromotion()) {
+      uint8_t mc = raw(pos.sideToMove());
+      int16_t hist = state.history[mc][m.from][m.to];
+      if (hist < -HISTORY_PRUNE_THRESHOLD * depth) continue;
+    }
+
     // Capture the moving piece identity before make() alters the mailbox.
     // Used to index the countermove table in child nodes.
     Piece movingPiece = pos.mailbox()[m.from];
@@ -1420,6 +1471,8 @@ int negamax(Position& pos, int depth, int alpha, int beta,
           --reduction;           // Good history → reduce less
         if (!improving)
           ++reduction;           // Not improving → reduce more
+        if (!pvNode)
+          ++reduction;           // Non-PV nodes → reduce more
         if (reduction < 1) reduction = 1;
         if (reduction > newDepth - 2) reduction = newDepth - 2;
         if (reduction < 1) reduction = 1;
@@ -1598,9 +1651,9 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
   // replaced cheaply by the depth-preferred replacement policy.
   if (tt) tt->newGeneration();
 
-  // Heap-allocate SearchState (~67 KiB) to avoid overflowing the 16 KiB
+  // Heap-allocate SearchState (~39 KiB) to avoid overflowing the 16 KiB
   // FreeRTOS task stack.  Contains history[2][64][64] (16 KiB), killers
-  // (1 KiB), countermoves (1.5 KiB), and triangular PV table (~48 KiB).
+  // (384 B), countermoves (1.5 KiB), and triangular PV table (~12 KiB).
   auto statePtr = std::make_unique<SearchState>();
   SearchState& state = *statePtr;
   state.timeFunc     = timeFunc;

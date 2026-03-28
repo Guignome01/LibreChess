@@ -85,9 +85,17 @@ namespace eval {
 
 // ---------------------------------------------------------------------------
 // Material values indexed by piece type offset (P=0 N=1 B=2 R=3 Q=4 K=5).
-// In centipawns to avoid mixing float/int arithmetic in the inner loop.
+// Separate MG and EG tables allow the tuner to find phase-optimal piece
+// values independently.  Pawns gain value in endgames (promotion proximity),
+// knights lose value (fewer targets), rooks gain (open board).
+//
+// MATERIAL (= MATERIAL_MG) defines the centipawn unit (PAWN MG = 100 fixed).
+// materialValue() returns MATERIAL[idx] for SEE, lazy eval, delta pruning.
+//
+// Reference: https://www.chessprogramming.org/Material
 // ---------------------------------------------------------------------------
-EVAL_CONST int MATERIAL[] = {100, 274, 292, 436, 872, 0};
+EVAL_CONST int MATERIAL[] = {87, 386, 419, 549, 1093, 0};
+EVAL_CONST int MATERIAL_EG[] = {80, 230, 250, 468, 956, 0};
 
 // ---------------------------------------------------------------------------
 // Piece-square tables — centipawns, LERF order (a1=0, h8=63).
@@ -105,65 +113,66 @@ EVAL_CONST int MATERIAL[] = {100, 274, 292, 436, 872, 0};
 
 EVAL_CONST int PST_PAWN_MG[64] = {
      0,   0,   0,   0,   0,   0,   0,   0,
-    -3,  -2, -11,  -3,  -2,  12,  17,   3,
-    -3,  -6,  -1,  -4,   4,  -6,   7,  -1,
-    -7,  -5,  -4,   5,   0,  -5,  -9, -17,
-     1,   2,  -2,   4,   7,   1,   0,  -1,
-     1,   0,   2,   0,   1,   2,   0,   0,
+    -4,  -5,  -6,   0,   2,  18,  15,   4,
+    -3,  -9,   3,   0,   8,  -4,   6,   0,
+    -7,  -9,  -4,   4,   3,  -2, -11, -13,
+     2,   0,  -1,   1,   5,   2,   0,  -1,
+     1,   0,   1,  -1,   0,   2,   0,   0,
      0,   0,   0,   0,   0,   0,   0,   0,
      0,   0,   0,   0,   0,   0,   0,   0
 };
 
 EVAL_CONST int PST_KNIGHT_MG[64] = {
-     0,  -2,  -1,  -1,  -2,   0,  -4,   0,
-     0,  -1,  -1,   9,   7,   0,   0,   1,
-    -5,  -2,   2,   2,   2,   7,   2,  -3,
-    -2,   0,   3,  -1,   6,   1,   0,  -3,
-     0,   2,  -1,   4,  -2,   1,  -2,   0,
+     0,  -8,  -1,  -1,  -2,   0,  -8,   0,
+    -1,   0,   0,   7,   6,   0,   0,   0,
+    -5,  -1,   3,   2,   2,   9,   2,  -3,
+    -3,   0,   2,   0,   5,   1,   0,  -4,
+     0,   2,  -1,   4,  -3,   1,  -4,   0,
      0,   0,   0,   1,   1,   1,   0,   0,
-    -3,  -1,   0,   0,   1,   0,   0,  -1,
+    -2,  -1,   1,   0,   0,   0,   0,  -1,
     -2,   0,   0,   0,   0,  -1,   0,  -1
 };
 
 EVAL_CONST int PST_BISHOP_MG[64] = {
-     0,  -1,   2,  -1,   0, -10,   0,  -1,
-     0,  10,   0,   0,   4,   1,  19,   0,
-     1,   1,   3,  -3,   2,   3,   0,   0,
-    -1,  -1,  -2,   1,   2,  -4,  -1,  -2,
-    -1,  -4,   0,   0,   1,  -1,  -1,  -1,
-    -1,   0,   1,   0,   1,   1,   0,   1,
-    -2,  -2,  -1,   0,   0,   0,   0,  -2,
+     0,  -1,  -3,  -1,   0, -13,   0,  -1,
+     0,   9,   0,   1,   4,   1,  19,   0,
+     0,   1,   3,  -2,   3,   4,   1,  -1,
+    -1,  -1,  -3,   2,   2,  -3,   0,  -2,
+    -1,  -4,  -1,   0,   1,  -1,  -1,  -1,
+    -1,   0,   0,   0,   1,   1,   0,   0,
+    -2,  -2,  -1,   0,  -1,   0,  -1,  -2,
     -1,   0,   0,   0,   0,   0,   0,   0
 };
 
 EVAL_CONST int PST_ROOK_MG[64] = {
-    -1,  -1,   4,   4,   6,  10,  -6,  -5,
-    -2,  -1,  -1,  -1,   0,   0,   0,  -2,
-    -2,  -1,  -1,   0,   0,   0,   0,   0,
-    -1,  -1,  -1,  -1,  -1,   0,   0,  -1,
+     0,   1,   3,   5,   6,  15,  -5,  -8,
+    -2,  -1,  -1,  -1,  -1,   0,   0,  -2,
+    -2,   0,  -1,   0,   0,   0,   0,   0,
+    -1,  -1,  -1,  -1,  -1,   0,   0,   0,
     -1,   0,   0,   0,   0,   0,   0,   0,
      0,   0,   0,   0,   0,   0,   0,   0,
-     0,   0,   0,   0,   0,   0,   0,   0,
+    -1,  -2,   0,   0,  -1,   0,   0,   0,
      0,   0,   0,   0,   0,   0,   0,   0
 };
 
 EVAL_CONST int PST_QUEEN_MG[64] = {
-     0,  -2,  -1,   7,   0,  -1,   0,   0,
-    -1,   0,   4,   6,   8,   1,   0,   0,
-    -2,   0,   0,   1,   0,   2,   1,   0,
-    -3,  -1,  -1,  -2,   0,   0,   1,   0,
-    -1,  -2,  -1,  -4,  -1,  -1,  -1,  -1,
-    -1,  -1,   0,  -1,   1,   1,   1,   2,
+     0,  -1,   0,  13,   1,  -1,   0,   0,
+    -1,   0,   3,   6,   8,   1,   0,   0,
+    -2,   0,   0,   1,   1,   2,   1,  -1,
+    -5,  -1,  -2,  -2,   0,   0,   0,   0,
+    -1,  -2,  -1,  -3,  -1,   0,  -1,  -2,
+    -1,  -1,   0,   0,   1,   1,   1,   2,
     -2,  -7,  -1,   0,  -1,   1,   0,   1,
     -1,   0,   0,   0,   0,   0,   0,   0
 };
+
 EVAL_CONST int PST_KING_MG[64] = {
-    -1,   2,   1,  -7,  -4,  -1,  18,   0,
-     0,   0,   0,  -6,  -7,  -1,   3,   2,
-     0,   0,   0,  -1,  -1,   0,   1,   0,
-     0,   0,   0,  -1,   0,   0,   0,   0,
+    -1,   2,   1,  -8,  -8,  -1,  19,  -1,
+     0,   0,   0,  -5,  -6,  -1,   4,   2,
+     0,   0,   0,  -1,  -1,   1,   1,   0,
      0,   0,   0,   0,   0,   0,   0,   0,
      0,   0,   0,   0,   0,   0,   0,   0,
+     0,   0,   0,   0,   0,   0,   1,   0,
      0,   0,   0,   0,   0,   0,   0,   0,
      0,   0,   0,   0,   0,   0,   0,   0
 };
@@ -172,66 +181,66 @@ EVAL_CONST int PST_KING_MG[64] = {
 
 EVAL_CONST int PST_PAWN_EG[64] = {
      0,   0,   0,   0,   0,   0,   0,   0,
-    -1,   0,   3,  -1,   0,   3,  -1,  -6,
-    -4,  -1,  -1,   1,   2,   0,  -2,  -4,
-     0,   2,  -2,  -4,  -4,  -3,   0,  -3,
-     5,   3,   2,  -4,  -4,   0,   2,   2,
-     4,   2,   1,  -2,  -2,   0,   1,   1,
-     1,   0,   0,  -1,  -1,  -1,   1,   0,
+    -2,  -1,   2,   0,   1,   3,  -2,  -6,
+    -5,  -3,  -1,   0,   2,   0,  -3,  -5,
+     1,   1,  -2,  -2,  -1,  -2,   0,  -2,
+     6,   3,   1,  -3,  -1,   0,   2,   2,
+     5,   2,   1,  -2,  -2,   0,   0,   1,
+     1,   1,   0,  -1,  -1,  -1,   0,   0,
      0,   0,   0,   0,   0,   0,   0,   0
 };
 
 EVAL_CONST int PST_KNIGHT_EG[64] = {
-     0,  -2,  -1,   0,  -1,   0,  -2,   0,
-     0,  -1,  -1,   0,   1,   0,   0,   0,
+     0,  -1,   0,   0,   0,   0,  -2,   0,
+     0,   0,  -1,   1,   1,   0,   0,   0,
     -1,   0,  -1,   1,   1,  -1,   0,  -1,
     -1,   0,   2,   1,   3,   0,   0,  -1,
-     0,   1,   1,   2,   2,   1,   0,  -1,
-    -1,  -1,   1,   1,   0,   0,   0,  -1,
-    -2,  -1,   0,   0,   0,   0,  -1,  -1,
-    -1,  -1,   0,   0,   0,  -1,   0,  -1
+     0,   1,   1,   2,   1,   1,   0,   0,
+     0,   0,   1,   1,   0,   0,   0,   0,
+    -1,  -1,   0,   0,   0,   0,   0,  -1,
+    -1,   0,   0,   0,   0,  -1,   0,  -1
 };
 
 EVAL_CONST int PST_BISHOP_EG[64] = {
-    -1,  -1,  -2,  -1,   0,  -2,   0,  -1,
-     0,   0,  -1,   1,   1,   0,   0,  -1,
-     0,   0,   1,   1,   2,   1,  -1,   0,
-     0,   0,   1,   0,   1,   1,  -1,  -1,
-     0,   0,   0,   1,   1,  -1,   0,  -1,
+    -1,   0,  -2,   0,   0,  -2,   0,  -1,
+     0,   0,  -1,   1,   1,   0,   2,   0,
+     0,   1,   1,   1,   3,   1,   0,   0,
+     0,   0,   0,   0,   0,   1,   0,  -1,
+     0,   0,   0,   0,   0,  -1,   0,  -1,
      0,   0,   0,   0,   0,   1,   0,   0,
-    -1,  -1,  -1,  -1,   0,   0,   0,  -1,
-     0,  -1,  -1,   0,  -1,   0,   0,   0
+    -1,  -1,  -1,   0,   0,   0,   0,  -1,
+     0,   0,   0,   0,   0,   0,   0,   0
 };
 
 EVAL_CONST int PST_ROOK_EG[64] = {
-     4,   1,   1,   1,   1,   3,  -1,  -3,
+     2,   1,   1,   2,   1,   4,  -1,  -3,
     -1,   0,   0,   0,   0,   0,   0,  -1,
-    -1,   0,  -1,  -1,  -1,   0,   0,   0,
-     0,   0,   0,  -1,   0,   0,   0,  -1,
-     0,   0,   0,   0,  -1,   0,   0,   0,
-     1,   1,   0,   0,   0,   0,   1,   0,
-     0,   1,   0,   0,  -1,   1,   1,  -1,
-     2,   1,   1,   0,   0,   0,   0,   0
+    -1,   0,  -1,   0,   0,   0,   0,   0,
+     0,   0,   0,   0,   0,   0,   0,  -1,
+     0,   0,   1,   0,   0,   0,   0,   0,
+     1,   1,   0,   0,   0,   0,   0,  -1,
+    -1,   0,   0,   0,  -1,   0,   0,  -1,
+     1,   1,   1,   0,   0,   0,   0,   0
 };
 
 EVAL_CONST int PST_QUEEN_EG[64] = {
-     0,   0,   0,  -2,   0,   0,   0,   0,
+     0,   0,   0,  -1,   0,   0,   0,   0,
      0,   0,   0,   1,   1,   0,   0,   0,
     -1,  -1,   0,   0,   0,   1,   1,   0,
-     0,   0,   0,   0,   0,   0,   1,   0,
-    -1,   0,  -1,  -1,   0,   0,   0,   0,
+    -1,   0,   0,   0,   0,   0,   0,   0,
+    -1,   0,   0,   0,   0,   0,   0,   0,
     -1,   0,   0,   0,   1,   0,   1,   1,
-    -1,  -1,   0,   0,   0,   1,   1,   0,
+    -1,  -1,   0,   0,   0,   1,   0,   0,
      0,   0,   0,   0,   0,   0,   0,   0
 };
 
 EVAL_CONST int PST_KING_EG[64] = {
-    -1,   0,   1,  -4,  -3,   0,  -2,  -4,
-    -1,   0,   1,  -1,   0,   4,   5,   0,
-    -1,   0,   1,  -1,  -1,   4,   2,  -1,
-    -1,  -1,   0,  -1,   0,   2,   1,  -1,
-    -1,   0,   0,  -1,  -1,   2,   1,   0,
-     0,   1,   0,  -1,   0,   2,   2,   0,
+    -1,   0,   0,  -5,  -5,  -2,  -5,  -7,
+    -1,   0,   1,  -1,   0,   5,   4,  -2,
+    -1,   0,   2,   0,   1,   5,   2,  -1,
+    -1,   0,   1,   0,   1,   3,   1,  -1,
+    -1,   0,   1,   0,   0,   3,   2,   0,
+     0,   1,   1,   0,   0,   2,   2,   0,
      0,   0,   0,  -1,   0,   1,   1,   0,
      0,   0,   0,   0,   0,   0,   0,   0
 };
@@ -276,7 +285,7 @@ int pieceSquareMG(int pieceIdx, Square sq) {
 
 int pieceSquareEG(int pieceIdx, Square sq) {
   int type = pieceIdx < 6 ? pieceIdx : pieceIdx - 6;
-  int val = MATERIAL[type] + PST_EG[type][pieceIdx < 6 ? sq : (sq ^ 56)];
+  int val = MATERIAL_EG[type] + PST_EG[type][pieceIdx < 6 ? sq : (sq ^ 56)];
   return pieceIdx < 6 ? val : -val;
 }
 
@@ -295,9 +304,9 @@ int computeMaterialPST_EG(const BitboardSet& bb) {
   int score = 0;
   for (int i = 0; i < 6; ++i) {
     Bitboard white = bb.byPiece[i];
-    while (white) { score += MATERIAL[i] + PST_EG[i][popLsb(white)]; }
+    while (white) { score += MATERIAL_EG[i] + PST_EG[i][popLsb(white)]; }
     Bitboard black = bb.byPiece[i + 6];
-    while (black) { score -= MATERIAL[i] + PST_EG[i][popLsb(black) ^ 56]; }
+    while (black) { score -= MATERIAL_EG[i] + PST_EG[i][popLsb(black) ^ 56]; }
   }
   return score;
 }
@@ -353,23 +362,20 @@ bool isBackward(Square sq, Color color, Bitboard friendlyPawns, Bitboard enemyPa
 // Reference: https://www.chessprogramming.org/Passed_Pawn
 // ---------------------------------------------------------------------------
 
-EVAL_CONST int PASSED_RANK_BONUS_MG[] = {0, 0, 0, 0, 0, 0, 20, 0};
-EVAL_CONST int PASSED_RANK_BONUS_EG[] = {0, 0, 0, 0, 0, 36, 106, 0};
-EVAL_CONST int CONNECTED_PASSED    =   1;
-EVAL_CONST int ISOLATED_PENALTY    = -10;
-EVAL_CONST int DOUBLED_PENALTY     = -12;
-EVAL_CONST int BACKWARD_PENALTY    =  -5;
+EVAL_CONST int PASSED_RANK_BONUS_MG[] = {0, 0, 0, 0, 5, 10, 20, 0};
+EVAL_CONST int PASSED_RANK_BONUS_EG[] = {0, 0, 0, 8, 43, 117, 187, 0};
+EVAL_CONST int CONNECTED_PASSED_MG =   0;
+EVAL_CONST int CONNECTED_PASSED_EG =   0;
+EVAL_CONST int ISOLATED_PENALTY_MG = -19;
+EVAL_CONST int ISOLATED_PENALTY_EG =  -8;
+EVAL_CONST int DOUBLED_PENALTY_MG  =  -1;
+EVAL_CONST int DOUBLED_PENALTY_EG  = -10;
+EVAL_CONST int BACKWARD_PENALTY_MG =  -5;
+EVAL_CONST int BACKWARD_PENALTY_EG =  -1;
 
 // Protected passed pawn — extra bonus when a passer is defended by a pawn.
 // Reference: https://www.chessprogramming.org/Passed_Pawn#Protected
-EVAL_CONST int PROTECTED_PASSER_MG = 25;
-EVAL_CONST int PROTECTED_PASSER_EG = 0;
-
-// Candidate passed pawn — bonus for a pawn that could become passed with
-// one favorable exchange (only one blocking enemy pawn).
-// Reference: https://www.chessprogramming.org/Candidate_Passed_Pawn
-EVAL_CONST int CANDIDATE_PASSER_MG = 0;
-EVAL_CONST int CANDIDATE_PASSER_EG = 0;
+EVAL_CONST int PROTECTED_PASSER_MG = 7;
 
 // ---------------------------------------------------------------------------
 // Pawn structure scoring — centipawns, white-relative.
@@ -416,27 +422,19 @@ static void evalPawnStructure(const BitboardSet& bb,
       // Protected passer — defended by another pawn
       if (squareBB(sq) & whitePawnAttacks) {
         mg += PROTECTED_PASSER_MG;
-        eg += PROTECTED_PASSER_EG;
-      }
-    } else {
-      // Candidate passer — only one enemy pawn blocks it
-      Bitboard blockers = blackPawns & pawnPassedMask[raw(Color::WHITE)][sq];
-      if (popcount(blockers) == 1) {
-        mg += CANDIDATE_PASSER_MG;
-        eg += CANDIDATE_PASSER_EG;
       }
     }
     if (isIsolated(sq, whitePawns)) {
-      mg += ISOLATED_PENALTY;
-      eg += ISOLATED_PENALTY;
+      mg += ISOLATED_PENALTY_MG;
+      eg += ISOLATED_PENALTY_EG;
     }
     if (isDoubled(sq, Color::WHITE, whitePawns)) {
-      mg += DOUBLED_PENALTY;
-      eg += DOUBLED_PENALTY;
+      mg += DOUBLED_PENALTY_MG;
+      eg += DOUBLED_PENALTY_EG;
     }
     if (isBackward(sq, Color::WHITE, whitePawns, blackPawnAttacks)) {
-      mg += BACKWARD_PENALTY;
-      eg += BACKWARD_PENALTY;
+      mg += BACKWARD_PENALTY_MG;
+      eg += BACKWARD_PENALTY_EG;
     }
   }
 
@@ -453,39 +451,31 @@ static void evalPawnStructure(const BitboardSet& bb,
       // Protected passer — defended by another pawn
       if (squareBB(sq) & blackPawnAttacks) {
         mg -= PROTECTED_PASSER_MG;
-        eg -= PROTECTED_PASSER_EG;
-      }
-    } else {
-      // Candidate passer — only one enemy pawn blocks it
-      Bitboard blockers = whitePawns & pawnPassedMask[raw(Color::BLACK)][sq];
-      if (popcount(blockers) == 1) {
-        mg -= CANDIDATE_PASSER_MG;
-        eg -= CANDIDATE_PASSER_EG;
       }
     }
     if (isIsolated(sq, blackPawns)) {
-      mg -= ISOLATED_PENALTY;
-      eg -= ISOLATED_PENALTY;
+      mg -= ISOLATED_PENALTY_MG;
+      eg -= ISOLATED_PENALTY_EG;
     }
     if (isDoubled(sq, Color::BLACK, blackPawns)) {
-      mg -= DOUBLED_PENALTY;
-      eg -= DOUBLED_PENALTY;
+      mg -= DOUBLED_PENALTY_MG;
+      eg -= DOUBLED_PENALTY_EG;
     }
     if (isBackward(sq, Color::BLACK, blackPawns, whitePawnAttacks)) {
-      mg -= BACKWARD_PENALTY;
-      eg -= BACKWARD_PENALTY;
+      mg -= BACKWARD_PENALTY_MG;
+      eg -= BACKWARD_PENALTY_EG;
     }
   }
 
   // Connected passed pawns — bonus per adjacent-file pair of passed pawns.
   for (int f = 0; f < 7; ++f) {
     if ((whitePassedFiles >> f & 1) && (whitePassedFiles >> (f + 1) & 1)) {
-      mg += CONNECTED_PASSED;
-      eg += CONNECTED_PASSED;
+      mg += CONNECTED_PASSED_MG;
+      eg += CONNECTED_PASSED_EG;
     }
     if ((blackPassedFiles >> f & 1) && (blackPassedFiles >> (f + 1) & 1)) {
-      mg -= CONNECTED_PASSED;
-      eg -= CONNECTED_PASSED;
+      mg -= CONNECTED_PASSED_MG;
+      eg -= CONNECTED_PASSED_EG;
     }
   }
 
@@ -509,8 +499,8 @@ static void evalPawnStructure(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Bishop_Pair
 // ---------------------------------------------------------------------------
 
-EVAL_CONST int BISHOP_PAIR_MG = 39;
-EVAL_CONST int BISHOP_PAIR_EG = 41;
+EVAL_CONST int BISHOP_PAIR_MG = 33;
+EVAL_CONST int BISHOP_PAIR_EG = 46;
 
 static void evalBishopPair(const BitboardSet& bb,
                            int& mgScore, int& egScore) {
@@ -534,8 +524,10 @@ static void evalBishopPair(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Rook_on_Open_File
 // ---------------------------------------------------------------------------
 
-EVAL_CONST int ROOK_OPEN_FILE      = 15;
-EVAL_CONST int ROOK_SEMI_OPEN_FILE = 11;
+EVAL_CONST int ROOK_OPEN_FILE_MG      = 41;
+EVAL_CONST int ROOK_OPEN_FILE_EG      =  0;
+EVAL_CONST int ROOK_SEMI_OPEN_FILE_MG = 17;
+EVAL_CONST int ROOK_SEMI_OPEN_FILE_EG =  4;
 
 static void evalRookFiles(const BitboardSet& bb,
                           int& mgScore, int& egScore) {
@@ -549,11 +541,11 @@ static void evalRookFiles(const BitboardSet& bb,
     Square sq = popLsb(wr);
     Bitboard file = fileBB(colOf(sq));
     if (!(file & allPawns)) {
-      mgScore += ROOK_OPEN_FILE;
-      egScore += ROOK_OPEN_FILE;
+      mgScore += ROOK_OPEN_FILE_MG;
+      egScore += ROOK_OPEN_FILE_EG;
     } else if (!(file & whitePawns)) {
-      mgScore += ROOK_SEMI_OPEN_FILE;
-      egScore += ROOK_SEMI_OPEN_FILE;
+      mgScore += ROOK_SEMI_OPEN_FILE_MG;
+      egScore += ROOK_SEMI_OPEN_FILE_EG;
     }
   }
 
@@ -563,11 +555,11 @@ static void evalRookFiles(const BitboardSet& bb,
     Square sq = popLsb(br);
     Bitboard file = fileBB(colOf(sq));
     if (!(file & allPawns)) {
-      mgScore -= ROOK_OPEN_FILE;
-      egScore -= ROOK_OPEN_FILE;
+      mgScore -= ROOK_OPEN_FILE_MG;
+      egScore -= ROOK_OPEN_FILE_EG;
     } else if (!(file & blackPawns)) {
-      mgScore -= ROOK_SEMI_OPEN_FILE;
-      egScore -= ROOK_SEMI_OPEN_FILE;
+      mgScore -= ROOK_SEMI_OPEN_FILE_MG;
+      egScore -= ROOK_SEMI_OPEN_FILE_EG;
     }
   }
 }
@@ -582,8 +574,8 @@ static void evalRookFiles(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Rook_on_Seventh
 // ---------------------------------------------------------------------------
 
-EVAL_CONST int ROOK_7TH_MG = 0;
-EVAL_CONST int ROOK_7TH_EG = 45;
+EVAL_CONST int ROOK_7TH_MG = 5;
+EVAL_CONST int ROOK_7TH_EG = 26;
 
 static void evalRookOnSeventh(const BitboardSet& bb,
                               int& mgScore, int& egScore) {
@@ -595,16 +587,20 @@ static void evalRookOnSeventh(const BitboardSet& bb,
   Bitboard rank2 = rankBB(1);
   Bitboard rank1 = rankBB(0);
 
-  // White rooks on rank 7 with black king on rank 8
-  if ((bb.byPiece[3] & rank7) && (bb.byPiece[11] & rank8)) {
-    int count = popcount(bb.byPiece[3] & rank7);
+  // White rooks on rank 7: bonus when enemy king is on rank 8 OR enemy
+  // pawns remain on rank 7 (rook cuts through the pawn chain).
+  Bitboard whiteR7 = bb.byPiece[3] & rank7;
+  if (whiteR7 && ((bb.byPiece[11] & rank8) || (bb.byPiece[6] & rank7))) {
+    int count = popcount(whiteR7);
     mgScore += ROOK_7TH_MG * count;
     egScore += ROOK_7TH_EG * count;
   }
 
-  // Black rooks on rank 2 with white king on rank 1
-  if ((bb.byPiece[9] & rank2) && (bb.byPiece[5] & rank1)) {
-    int count = popcount(bb.byPiece[9] & rank2);
+  // Black rooks on rank 2: bonus when enemy king is on rank 1 OR enemy
+  // pawns remain on rank 2.
+  Bitboard blackR2 = bb.byPiece[9] & rank2;
+  if (blackR2 && ((bb.byPiece[5] & rank1) || (bb.byPiece[0] & rank2))) {
+    int count = popcount(blackR2);
     mgScore -= ROOK_7TH_MG * count;
     egScore -= ROOK_7TH_EG * count;
   }
@@ -627,14 +623,14 @@ static void evalRookOnSeventh(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Mobility
 // ---------------------------------------------------------------------------
 
-EVAL_CONST int MOBILITY_KNIGHT_MG = 8;
-EVAL_CONST int MOBILITY_KNIGHT_EG = 0;
+EVAL_CONST int MOBILITY_KNIGHT_MG = 7;
+EVAL_CONST int MOBILITY_KNIGHT_EG = 5;
 EVAL_CONST int MOBILITY_BISHOP_MG = 4;
-EVAL_CONST int MOBILITY_BISHOP_EG = 1;
-EVAL_CONST int MOBILITY_ROOK_MG   = 3;
+EVAL_CONST int MOBILITY_BISHOP_EG = 4;
+EVAL_CONST int MOBILITY_ROOK_MG   = 2;
 EVAL_CONST int MOBILITY_ROOK_EG   = 3;
 EVAL_CONST int MOBILITY_QUEEN_MG  = 1;
-EVAL_CONST int MOBILITY_QUEEN_EG  = 6;
+EVAL_CONST int MOBILITY_QUEEN_EG  = 4;
 
 static void evalMobility(const BitboardSet& bb,
                          const attacks::AttackInfo& info,
@@ -681,8 +677,9 @@ static void evalMobility(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/King_Safety
 // ---------------------------------------------------------------------------
 
-EVAL_CONST int SHIELD_MISSING_PAWN  = -14;
-EVAL_CONST int SHIELD_ADVANCED_PAWN = 0;
+EVAL_CONST int SHIELD_MISSING_PAWN  = -24;
+EVAL_CONST int SHIELD_ADV_RANK3     =   0;
+EVAL_CONST int SHIELD_ADV_RANK4PLUS =  -9;
 EVAL_CONST int SHIELD_OPEN_FILE     = -42;
 
 // Evaluate pawn shield for one side. Returns MG bonus (positive = good).
@@ -696,7 +693,6 @@ static int evalShieldOneSide(const BitboardSet& bb, Color color) {
   kingSq = lsb(king);
 
   int kingFile = colOf(kingSq);
-  int kingRank = rowOf(kingSq);  // 0-based from white's perspective
 
   // Only apply if king is on a flank (files 0-2 or 5-7)
   if (kingFile >= 3 && kingFile <= 4) return 0;
@@ -724,26 +720,25 @@ static int evalShieldOneSide(const BitboardSet& bb, Color color) {
       // Missing pawn in the shield
       score += SHIELD_MISSING_PAWN;
     } else {
-      // Check if the pawn is advanced (beyond rank 3 for white, rank 6 for black)
-      // In LERF: white rank 3 = index 2, black rank 6 = index 5
+      // Check if the pawn is advanced — rank-indexed penalty.
+      // Pawns one square forward (rank 3 for white / rank 6 for black) get a
+      // mild penalty; pawns two or more squares forward get a heavier one.
+      // Reference: https://www.chessprogramming.org/King_Safety
       if (color == Color::WHITE) {
-        // White pawns should be on ranks 1-2 (LERF rank 0-1). If on rank >= 2
-        // (i.e. rank 3+), it's advanced. Check the frontmost pawn.
-        // Rank in LERF: sq/8. Rank 2 = 16-23 → rank index 2 → board rank 3.
         Bitboard copy = shieldPawns;
         while (copy) {
           Square sq = popLsb(copy);
-          int rank = sq / 8;
-          if (rank >= 2) score += SHIELD_ADVANCED_PAWN;
+          int rank = sq / 8;  // LERF: 0=rank1
+          if (rank == 2)      score += SHIELD_ADV_RANK3;
+          else if (rank >= 3) score += SHIELD_ADV_RANK4PLUS;
         }
       } else {
-        // Black pawns should be on ranks 6-7 (LERF rank 5-6). If on rank <= 5
-        // (i.e. rank 6+), it's advanced.
         Bitboard copy = shieldPawns;
         while (copy) {
           Square sq = popLsb(copy);
           int rank = sq / 8;
-          if (rank <= 5) score += SHIELD_ADVANCED_PAWN;
+          if (rank == 5)      score += SHIELD_ADV_RANK3;
+          else if (rank <= 4) score += SHIELD_ADV_RANK4PLUS;
         }
       }
     }
@@ -761,53 +756,6 @@ static void evalKingSafety(const BitboardSet& bb,
                            int& mgScore, int& /* egScore */) {
   mgScore += evalShieldOneSide(bb, Color::WHITE);
   mgScore -= evalShieldOneSide(bb, Color::BLACK);
-}
-
-// ---------------------------------------------------------------------------
-// Central square constants (LERF) — used by center control and outposts.
-// ---------------------------------------------------------------------------
-
-constexpr Square SQ_D4 = 27, SQ_D5 = 35, SQ_E4 = 28, SQ_E5 = 36;
-
-// Center mask: the four central squares {d4, d5, e4, e5}.
-EVAL_FIXED Bitboard CENTER_MASK =
-    squareBB(SQ_D4) | squareBB(SQ_D5) | squareBB(SQ_E4) | squareBB(SQ_E5);
-
-// ---------------------------------------------------------------------------
-// Center Control — bonus for pawns occupying or attacking centre squares.
-//
-// Controlling the centre (d4/d5/e4/e5) is a fundamental positional goal.
-// Pawns in the centre provide a stable presence, while pawns that attack
-// centre squares exert influence without committing.
-//
-// Values: +15cp per pawn occupying a centre square,
-//         +5cp  per centre square attacked by a friendly pawn.
-// Applied to both MG and EG.
-//
-// Reference: https://www.chessprogramming.org/Center_Control
-// ---------------------------------------------------------------------------
-
-EVAL_CONST int CENTER_OCCUPATION_BONUS = 6;
-EVAL_CONST int CENTER_ATTACK_BONUS     = 0;
-
-static void evalCenterControl(const BitboardSet& bb,
-                              Bitboard whitePawnAtk, Bitboard blackPawnAtk,
-                              int& mgScore, int& egScore) {
-  Bitboard whitePawns = bb.byPiece[0];
-  Bitboard blackPawns = bb.byPiece[6];
-
-  // Occupation bonus: pawns standing on centre squares.
-  int whiteOccupation = popcount(whitePawns & CENTER_MASK);
-  int blackOccupation = popcount(blackPawns & CENTER_MASK);
-
-  // Attack bonus: centre squares attacked by friendly pawns.
-  int whiteAttacks = popcount(whitePawnAtk & CENTER_MASK);
-  int blackAttacks = popcount(blackPawnAtk & CENTER_MASK);
-
-  int bonus = (whiteOccupation - blackOccupation) * CENTER_OCCUPATION_BONUS
-            + (whiteAttacks - blackAttacks)       * CENTER_ATTACK_BONUS;
-  mgScore += bonus;
-  egScore += bonus;
 }
 
 // ---------------------------------------------------------------------------
@@ -846,8 +794,8 @@ static int chebyshevDist(Square a, Square b) {
 // Reference: https://www.chessprogramming.org/King_Distance#Passed_Pawn
 // ---------------------------------------------------------------------------
 
-EVAL_CONST int PASSER_OWN_KING   = 6;
-EVAL_CONST int PASSER_ENEMY_KING = 16;
+EVAL_CONST int PASSER_OWN_KING   = 0;
+EVAL_CONST int PASSER_ENEMY_KING = 7;
 
 static void evalPassedPawnKingDist(const BitboardSet& bb, int& egScore) {
   Bitboard whitePawns = bb.byPiece[0];
@@ -894,7 +842,7 @@ static void evalPassedPawnKingDist(const BitboardSet& bb, int& egScore) {
 // Reference: https://www.chessprogramming.org/Space
 // ---------------------------------------------------------------------------
 
-EVAL_CONST int SPACE_BONUS = 0;
+EVAL_CONST int SPACE_BONUS_MG = 8;
 
 // Files c–f, ranks 2–4 (LERF ranks 1–3) for White.
 EVAL_FIXED Bitboard WHITE_SPACE_ZONE =
@@ -904,16 +852,15 @@ EVAL_FIXED Bitboard WHITE_SPACE_ZONE =
 EVAL_FIXED Bitboard BLACK_SPACE_ZONE =
     (FILE_C | FILE_D | FILE_E | FILE_F) & (RANK_5 | RANK_6 | RANK_7);
 
-static void evalSpace(const BitboardSet& bb,
+static void evalSpace(const BitboardSet& /* bb */,
                       Bitboard whitePawnAtk, Bitboard blackPawnAtk,
-                      int& mgScore, int& egScore) {
+                      int& mgScore, int& /* egScore */) {
 
   int whiteSpace = popcount(WHITE_SPACE_ZONE & ~blackPawnAtk);
   int blackSpace = popcount(BLACK_SPACE_ZONE & ~whitePawnAtk);
 
-  int bonus = (whiteSpace - blackSpace) * SPACE_BONUS;
-  mgScore += bonus;
-  egScore += bonus;
+  int diff = whiteSpace - blackSpace;
+  mgScore += diff * SPACE_BONUS_MG;
 }
 
 // ---------------------------------------------------------------------------
@@ -929,11 +876,15 @@ static void evalSpace(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Outposts
 // ---------------------------------------------------------------------------
 
-EVAL_CONST int OUTPOST_BONUS = 12;
+EVAL_CONST int OUTPOST_BONUS_MG = 15;
+EVAL_CONST int OUTPOST_BONUS_EG = 14;
 
 static void evalKnightOutposts(const BitboardSet& bb,
                                Bitboard whitePawnAtk, Bitboard blackPawnAtk,
                                int& mgScore, int& egScore) {
+
+  // Central square constants (LERF) — used by outpost evaluation.
+  constexpr Square SQ_D4 = 27, SQ_D5 = 35, SQ_E4 = 28, SQ_E5 = 36;
 
   Bitboard whitePawns = bb.byPiece[0];
   Bitboard blackPawns = bb.byPiece[6];
@@ -963,12 +914,15 @@ static void evalKnightOutposts(const BitboardSet& bb,
     Bitboard aboveMask = ~((static_cast<Bitboard>(1) << (8 * (rank + 1))) - 1);
     if (blackPawns & adjFiles & aboveMask) continue;
 
-    int bonus = OUTPOST_BONUS;
-    if (sq == SQ_D4 || sq == SQ_D5 || sq == SQ_E4 || sq == SQ_E5)
-      bonus *= 2;
+    int bonusMg = OUTPOST_BONUS_MG;
+    int bonusEg = OUTPOST_BONUS_EG;
+    if (sq == SQ_D4 || sq == SQ_D5 || sq == SQ_E4 || sq == SQ_E5) {
+      bonusMg *= 2;
+      bonusEg *= 2;
+    }
 
-    mgScore += bonus;
-    egScore += bonus;
+    mgScore += bonusMg;
+    egScore += bonusEg;
   }
 
   // --- Black knights (index 7) ---
@@ -994,12 +948,15 @@ static void evalKnightOutposts(const BitboardSet& bb,
         : 0;
     if (whitePawns & adjFiles & belowMask) continue;
 
-    int bonus = OUTPOST_BONUS;
-    if (sq == SQ_D4 || sq == SQ_D5 || sq == SQ_E4 || sq == SQ_E5)
-      bonus *= 2;
+    int bonusMg = OUTPOST_BONUS_MG;
+    int bonusEg = OUTPOST_BONUS_EG;
+    if (sq == SQ_D4 || sq == SQ_D5 || sq == SQ_E4 || sq == SQ_E5) {
+      bonusMg *= 2;
+      bonusEg *= 2;
+    }
 
-    mgScore -= bonus;
-    egScore -= bonus;
+    mgScore -= bonusMg;
+    egScore -= bonusEg;
   }
 }
 
@@ -1019,7 +976,7 @@ static void evalKnightOutposts(const BitboardSet& bb,
 // ---------------------------------------------------------------------------
 
 EVAL_CONST int TRAPPED_BISHOP_PENALTY = -120;
-EVAL_CONST int TRAPPED_ROOK_PENALTY   = -28;
+EVAL_CONST int TRAPPED_ROOK_PENALTY   =  -34;
 
 static void evalTrappedPieces(const BitboardSet& bb,
                               int& mgScore, int& /* egScore */) {
@@ -1093,47 +1050,6 @@ static void evalTrappedPieces(const BitboardSet& bb,
 }
 
 // ---------------------------------------------------------------------------
-// Connectivity — bonus for pieces defended by friendly pieces.
-//
-// A piece that is defended (attacked by at least one friendly piece) is
-// more resilient in exchanges.  This is a simple measure of piece
-// coordination: count the number of non-pawn friendly pieces that are
-// defended by any friendly piece (including pawns).
-//
-// Pawns are excluded as targets because their structure is already
-// evaluated separately.  Kings are excluded because they are never
-// captured.
-//
-// Value: +3cp per defended non-pawn piece (MG+EG).
-//
-// Reference: https://www.chessprogramming.org/Connectivity
-// ---------------------------------------------------------------------------
-
-EVAL_CONST int CONNECTIVITY_BONUS = 8;
-
-static void evalConnectivity(const BitboardSet& bb,
-                             const attacks::AttackInfo& info,
-                             int& mgScore, int& egScore) {
-  for (int c = 0; c < 2; ++c) {
-    int sign = (c == 0) ? 1 : -1;
-    Bitboard friendly = bb.byColor[c];
-    Bitboard friendlyAttacks = info.byColor[c];
-
-    // Non-pawn, non-king friendly pieces.
-    int pawnIdx  = c * 6;      // W_PAWN=0, B_PAWN=6
-    int kingIdx  = c * 6 + 5;  // W_KING=5, B_KING=11
-    Bitboard targets = friendly & ~bb.byPiece[pawnIdx] & ~bb.byPiece[kingIdx];
-
-    // Count how many of those pieces are defended by any friendly piece.
-    int defended = popcount(targets & friendlyAttacks);
-
-    int bonus = defended * CONNECTIVITY_BONUS;
-    mgScore += sign * bonus;
-    egScore += sign * bonus;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Threats — bonus for lower-value pieces attacking higher-value enemy pieces.
 //
 // Uses the pre-computed AttackInfo to detect piece-level pressure: pawns
@@ -1145,22 +1061,16 @@ static void evalConnectivity(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Evaluation#Threats
 // ---------------------------------------------------------------------------
 
-EVAL_CONST int THREAT_PAWN_VS_MINOR_MG  =  8;
-EVAL_CONST int THREAT_PAWN_VS_MINOR_EG  =  6;
-EVAL_CONST int THREAT_PAWN_VS_ROOK_MG   = 12;
-EVAL_CONST int THREAT_PAWN_VS_ROOK_EG   =  8;
+EVAL_CONST int THREAT_PAWN_VS_MINOR_MG  = 23;
+EVAL_CONST int THREAT_PAWN_VS_ROOK_MG   = 13;
 EVAL_CONST int THREAT_PAWN_VS_QUEEN_MG  = 15;
-EVAL_CONST int THREAT_PAWN_VS_QUEEN_EG  = 10;
-EVAL_CONST int THREAT_MINOR_VS_ROOK_MG  = 45;
-EVAL_CONST int THREAT_MINOR_VS_ROOK_EG  =  0;
-EVAL_CONST int THREAT_MINOR_VS_QUEEN_MG = 10;
-EVAL_CONST int THREAT_MINOR_VS_QUEEN_EG =  0;
-EVAL_CONST int THREAT_ROOK_VS_QUEEN_MG  = 14;
-EVAL_CONST int THREAT_ROOK_VS_QUEEN_EG  =  0;
+EVAL_CONST int THREAT_MINOR_VS_ROOK_MG  = 22;
+EVAL_CONST int THREAT_MINOR_VS_QUEEN_MG = 13;
+EVAL_CONST int THREAT_ROOK_VS_QUEEN_MG  = 24;
 
 static void evalThreats(const BitboardSet& bb,
                         const attacks::AttackInfo& info,
-                        int& mgScore, int& egScore) {
+                        int& mgScore, int& /* egScore */) {
   for (int c = 0; c < 2; ++c) {
     int sign = (c == 0) ? 1 : -1;
     int enemy = 1 - c;
@@ -1171,31 +1081,24 @@ static void evalThreats(const BitboardSet& bb,
     Bitboard enemyRooks  = bb.byPiece[eo + 3];
     Bitboard enemyQueens = bb.byPiece[eo + 4];
 
-    // Friendly pawn attacks.
-    Bitboard pawnAtk = info.byPiece[c][0];
-    int mg = 0, eg = 0;
+    // Friendly pawn attacks (PieceType::PAWN = 1).
+    Bitboard pawnAtk = info.byPiece[c][1];
+    int mg = 0;
 
     mg += popcount(pawnAtk & enemyMinors) * THREAT_PAWN_VS_MINOR_MG;
-    eg += popcount(pawnAtk & enemyMinors) * THREAT_PAWN_VS_MINOR_EG;
     mg += popcount(pawnAtk & enemyRooks)  * THREAT_PAWN_VS_ROOK_MG;
-    eg += popcount(pawnAtk & enemyRooks)  * THREAT_PAWN_VS_ROOK_EG;
     mg += popcount(pawnAtk & enemyQueens) * THREAT_PAWN_VS_QUEEN_MG;
-    eg += popcount(pawnAtk & enemyQueens) * THREAT_PAWN_VS_QUEEN_EG;
 
-    // Friendly minor attacks (N + B).
-    Bitboard minorAtk = info.byPiece[c][1] | info.byPiece[c][2];
+    // Friendly minor attacks (KNIGHT=2, BISHOP=3).
+    Bitboard minorAtk = info.byPiece[c][2] | info.byPiece[c][3];
     mg += popcount(minorAtk & enemyRooks)  * THREAT_MINOR_VS_ROOK_MG;
-    eg += popcount(minorAtk & enemyRooks)  * THREAT_MINOR_VS_ROOK_EG;
     mg += popcount(minorAtk & enemyQueens) * THREAT_MINOR_VS_QUEEN_MG;
-    eg += popcount(minorAtk & enemyQueens) * THREAT_MINOR_VS_QUEEN_EG;
 
-    // Friendly rook attacks.
-    Bitboard rookAtk = info.byPiece[c][3];
+    // Friendly rook attacks (PieceType::ROOK = 4).
+    Bitboard rookAtk = info.byPiece[c][4];
     mg += popcount(rookAtk & enemyQueens) * THREAT_ROOK_VS_QUEEN_MG;
-    eg += popcount(rookAtk & enemyQueens) * THREAT_ROOK_VS_QUEEN_EG;
 
     mgScore += sign * mg;
-    egScore += sign * eg;
   }
 }
 
@@ -1231,7 +1134,7 @@ EVAL_FIXED int KING_DANGER_WEIGHT[] = {2, 2, 3, 5};
 // Nonlinear danger table — maps total attacker weight to MG penalty (cp).
 // Index = sum of attacker weights (0..max).  Clamped at the last entry.
 // TABLE[0] stays fixed at 0; entries 1..12 are tunable.
-EVAL_CONST int KING_DANGER_TABLE[] = {0, 0, 5, 0, 10, 10, 20, 40, 60, 87, 138, 120, 189};
+EVAL_CONST int KING_DANGER_TABLE[] = {0, 0, 8, 8, 11, 11, 26, 40, 60, 105, 167, 167, 231};
 
 static void evalKingDanger(const BitboardSet& bb,
                            const attacks::AttackInfo& info,
@@ -1389,8 +1292,8 @@ void EvalHashTable::store(uint64_t hash, int16_t s) {
 // Reference: https://www.chessprogramming.org/Bad_Bishop
 // ---------------------------------------------------------------------------
 
-EVAL_CONST int BAD_BISHOP_MG = -1;
-EVAL_CONST int BAD_BISHOP_EG = -7;
+EVAL_CONST int BAD_BISHOP_MG = -5;
+EVAL_CONST int BAD_BISHOP_EG = -3;
 
 static void evalBadBishop(const BitboardSet& bb,
                           int& mgScore, int& egScore) {
@@ -1426,8 +1329,8 @@ static void evalBadBishop(const BitboardSet& bb,
 // Reference: https://www.chessprogramming.org/Tarrasch_Rule
 // ---------------------------------------------------------------------------
 
-EVAL_CONST int ROOK_BEHIND_OWN_PASSER_EG   =  15;
-EVAL_CONST int ROOK_BEHIND_ENEMY_PASSER_EG  = -42;
+EVAL_CONST int ROOK_BEHIND_OWN_PASSER_EG   =  5;
+EVAL_CONST int ROOK_BEHIND_ENEMY_PASSER_EG  = -40;
 
 static void evalRookBehindPasser(const BitboardSet& bb, int& egScore) {
   Bitboard whitePawns = bb.byPiece[0];
@@ -1490,7 +1393,7 @@ static void evalRookBehindPasser(const BitboardSet& bb, int& egScore) {
 static int evaluateImpl(const BitboardSet& bb, int mgScore, int egScore,
                         PawnHashTable* pawnHash) {
   // Pre-compute pawn attacks once — shared by evalPawnStructure,
-  // evalKnightOutposts, evalCenterControl, and evalSpace.
+  // evalKnightOutposts, and evalSpace.
   Bitboard whitePawnAtk = shiftNE(bb.byPiece[0]) | shiftNW(bb.byPiece[0]);
   Bitboard blackPawnAtk = shiftSE(bb.byPiece[6]) | shiftSW(bb.byPiece[6]);
 
@@ -1503,7 +1406,6 @@ static int evaluateImpl(const BitboardSet& bb, int mgScore, int egScore,
   evalRookBehindPasser(bb, egScore);
   evalKnightOutposts(bb, whitePawnAtk, blackPawnAtk, mgScore, egScore);
   evalKingSafety(bb, mgScore, egScore);
-  evalCenterControl(bb, whitePawnAtk, blackPawnAtk, mgScore, egScore);
   evalSpace(bb, whitePawnAtk, blackPawnAtk, mgScore, egScore);
   evalTrappedPieces(bb, mgScore, egScore);
 
@@ -1512,7 +1414,6 @@ static int evaluateImpl(const BitboardSet& bb, int mgScore, int egScore,
   // called before first evaluation (guaranteed by Position constructor).
   attacks::AttackInfo info = attacks::computeAll(bb);
   evalMobility(bb, info, mgScore, egScore);
-  evalConnectivity(bb, info, mgScore, egScore);
   evalThreats(bb, info, mgScore, egScore);
   evalKingDanger(bb, info, mgScore);
 

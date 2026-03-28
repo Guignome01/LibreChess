@@ -285,6 +285,26 @@ static std::vector<bool> buildPstFlags() {
   return isPst;
 }
 
+/// Collect ordered indices of KD_TABLE_1 .. KD_TABLE_12 for monotonicity
+/// enforcement.  Returns indices sorted by table slot (1..12).
+/// Reference: https://www.chessprogramming.org/King_Safety#Attacking_King_Zone
+static std::vector<int> buildKdTableIndices() {
+  int n = eval::tuning::paramCount();
+  std::vector<int> indices;
+  for (int i = 0; i < n; ++i) {
+    if (strncmp(eval::tuning::getName(i), "KD_TABLE_", 9) == 0)
+      indices.push_back(i);
+  }
+  // Indices are already in registry order (slot 1..12), but sort by slot
+  // number to be safe.
+  std::sort(indices.begin(), indices.end(), [](int a, int b) {
+    int slotA = atoi(eval::tuning::getName(a) + 9);
+    int slotB = atoi(eval::tuning::getName(b) + 9);
+    return slotA < slotB;
+  });
+  return indices;
+}
+
 static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
                          const std::vector<eval::TrainingPosition>& testSet,
                          double& K, int maxEpochs) {
@@ -295,6 +315,7 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
   const int chunkSize = (N + nThreads - 1) / nThreads;
 
   std::vector<bool> isPst = buildPstFlags();
+  std::vector<int> kdIndices = buildKdTableIndices();
 
   // Float accumulators — accumulate Adam updates in double precision.
   // Parameters are only rounded to int at the very end after all epochs,
@@ -329,11 +350,14 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
 
   for (int epoch = 1; epoch <= maxEpochs; ++epoch) {
     // --- Cosine annealing learning rate schedule ---
-    // Gradually reduces LR from ADAM_LR to ~0, reducing oscillation in
-    // later epochs while maintaining aggressive early learning.
+    // Gradually reduces LR from ADAM_LR toward a minimum floor, reducing
+    // oscillation in later epochs while maintaining aggressive early
+    // learning.  The floor at 1% of initial LR prevents late-epoch
+    // stagnation — without it, LR drops to ~0.001 by epoch 400 and
+    // parameters can barely move in the final 100 epochs.
     // Reference: Loshchilov & Hutter, "SGDR: Stochastic Gradient Descent
     // with Warm Restarts", 2017.
-    double lr = ADAM_LR * 0.5 * (1.0 + cos(M_PI * epoch / maxEpochs));
+    double lr = ADAM_LR * std::max(0.01, 0.5 * (1.0 + cos(M_PI * epoch / maxEpochs)));
 
     // --- K recalculation ---
     if (epoch > 1 && (epoch % K_RECALC_INTERVAL) == 0) {
@@ -389,8 +413,32 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
       params[i] -= lr * mHat / (sqrt(vHat) + ADAM_EPS);
     }
 
+    // --- King danger table monotonicity enforcement ---
+    // The king danger table must be non-decreasing: more attackers should
+    // never produce less danger.  After each Adam step, clamp any dip up
+    // to the previous slot's value.  TABLE[0] = 0 is fixed (not tuned).
+    // Reference: https://www.chessprogramming.org/King_Safety#Attacking_King_Zone
+    for (size_t k = 1; k < kdIndices.size(); ++k) {
+      if (params[kdIndices[k]] < params[kdIndices[k - 1]])
+        params[kdIndices[k]] = params[kdIndices[k - 1]];
+    }
+
+    // --- Per-epoch bounds clamping ---
+    // Without this, parameters drift outside [min, max] during training
+    // and only get clamped at the very end.  Combined with min=0 bounds,
+    // parameters that oscillate slightly negative accumulate Adam momentum
+    // toward 0 and get locked there by final-epoch clamping.  Per-epoch
+    // clamping keeps every parameter within its physical bounds at all
+    // times, preventing this convergence failure.
+    for (int i = 0; i < nParams; ++i) {
+      double lo = static_cast<double>(eval::tuning::getMin(i));
+      double hi = static_cast<double>(eval::tuning::getMax(i));
+      if (params[i] < lo) params[i] = lo;
+      if (params[i] > hi) params[i] = hi;
+    }
+
     // ----- Report + early stopping -----
-    if (epoch == 1 || epoch % 10 == 0 || epoch == maxEpochs) {
+    if (epoch == 1 || epoch % 5 == 0 || epoch == maxEpochs) {
       double trainErr = computeError(trainSet, K, params.data());
       double testErr  = computeError(testSet, K, params.data());
       fprintf(stderr, "Epoch %4d: train MSE = %.10f, test MSE = %.10f  (lr=%.6f)\n",
@@ -401,7 +449,7 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
         bestParams = params;
         epochsSinceImprove = 0;
       } else {
-        epochsSinceImprove += (epoch == 1) ? 1 : 10;
+        epochsSinceImprove += (epoch == 1) ? 1 : 5;
       }
       if (epochsSinceImprove >= PATIENCE) {
         fprintf(stderr, "Early stopping at epoch %d (no improvement for %d epochs)\n",
@@ -446,10 +494,15 @@ static void printResults() {
   int n = eval::tuning::paramCount();
 
   // --- Pre-build index maps (one-time O(n) lookups) ---
-  // Material indices (in MATERIAL[] order: knight, bishop, rook, queen).
-  const char* matNames[4] = {"MAT_KNIGHT", "MAT_BISHOP", "MAT_ROOK", "MAT_QUEEN"};
-  int matIdx[4];
-  for (int i = 0; i < 4; ++i) matIdx[i] = eval::findParam(matNames[i]);
+  // Material MG indices (in MATERIAL[] order: pawn, knight, bishop, rook, queen).
+  const char* matMgNames[5] = {"MAT_PAWN_MG", "MAT_KNIGHT_MG", "MAT_BISHOP_MG", "MAT_ROOK_MG", "MAT_QUEEN_MG"};
+  int matMgIdx[5];
+  for (int i = 0; i < 5; ++i) matMgIdx[i] = eval::findParam(matMgNames[i]);
+
+  // Material EG indices (in MATERIAL_EG[] order: pawn, knight, bishop, rook, queen).
+  const char* matEgNames[5] = {"MAT_PAWN_EG", "MAT_KNIGHT_EG", "MAT_BISHOP_EG", "MAT_ROOK_EG", "MAT_QUEEN_EG"};
+  int matEgIdx[5];
+  for (int i = 0; i < 5; ++i) matEgIdx[i] = eval::findParam(matEgNames[i]);
 
   // PST indices (12 tables × 64 squares).
   const char* pstNames[12] = {
@@ -481,11 +534,21 @@ static void printResults() {
   }
   printf("\n// %d parameters changed out of %d total.\n\n", changed, n);
 
-  // --- C++ formatted MATERIAL array ---
-  printf("// --- C++ Material array ---\n");
-  printf("EVAL_CONST int MATERIAL[] = {100");
-  for (int i = 0; i < 4; ++i)
-    printf(", %d", eval::tuning::getValue(matIdx[i]));
+  // --- C++ formatted MATERIAL array (MG) ---
+  printf("// --- C++ Material arrays ---\n");
+  printf("EVAL_CONST int MATERIAL[] = {");
+  for (int i = 0; i < 5; ++i) {
+    if (i > 0) printf(", ");
+    printf("%d", eval::tuning::getValue(matMgIdx[i]));
+  }
+  printf(", 0};\n");
+
+  // --- C++ formatted MATERIAL_EG array ---
+  printf("EVAL_CONST int MATERIAL_EG[] = {");
+  for (int i = 0; i < 5; ++i) {
+    if (i > 0) printf(", ");
+    printf("%d", eval::tuning::getValue(matEgIdx[i]));
+  }
   printf(", 0};\n\n");
 
   // --- C++ formatted PST arrays ---

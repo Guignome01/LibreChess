@@ -44,8 +44,9 @@ int findParam(const char* name) {
 // ===========================================================================
 
 struct TraceIndices {
-  // Material (4)
-  int mat[4];
+  // Material — MG (5, includes pawn MG) + EG (5, includes pawn EG)
+  int matMg[5];        // P, N, B, R, Q MG (all tunable)
+  int matEg[5];        // P, N, B, R, Q EG (all tunable)
 
   // PST (12 tables × 64 squares)
   int pst[12][64];
@@ -53,9 +54,12 @@ struct TraceIndices {
   // Passed pawn rank bonuses (ranks 0-7, only 1-6 used)
   int passedMg[8], passedEg[8];
 
-  // Pawn structure scalars
-  int connected, isolated, doubled, backward;
-  int protPassMg, protPassEg, candPassMg, candPassEg;
+  // Pawn structure scalars (separate MG/EG)
+  int connectedMg, connectedEg;
+  int isolatedMg, isolatedEg;
+  int doubledMg, doubledEg;
+  int backwardMg, backwardEg;
+  int protPassMg;
 
   // Passed pawn king distance
   int passerOwn, passerEnemy;
@@ -66,8 +70,9 @@ struct TraceIndices {
   // Bad bishop
   int badBishMg, badBishEg;
 
-  // Rook on file
-  int rookOpen, rookSemi;
+  // Rook on file (separate MG/EG)
+  int rookOpenMg, rookOpenEg;
+  int rookSemiMg, rookSemiEg;
 
   // Rook on 7th
   int r7Mg, r7Eg;
@@ -75,17 +80,14 @@ struct TraceIndices {
   // Rook behind passer
   int rbpOwn, rbpEnemy;
 
-  // Outpost
-  int outpost;
+  // Outpost (separate MG/EG)
+  int outpostMg, outpostEg;
 
   // King safety shield
-  int shieldMissing, shieldAdvanced, shieldOpen;
+  int shieldMissing, shieldAdvRank3, shieldAdvRank4Plus, shieldOpen;
 
-  // Center control
-  int ccOccupy, ccAttack;
-
-  // Space
-  int space;
+  // Space (MG only — EG component removed, CPW: midgame concept)
+  int spaceMg;
 
   // Trapped pieces
   int trappedBish, trappedRook;
@@ -94,13 +96,10 @@ struct TraceIndices {
   int mobNMg, mobNEg, mobBMg, mobBEg;
   int mobRMg, mobREg, mobQMg, mobQEg;
 
-  // Connectivity
-  int conn;
-
-  // Threats (6 types × MG/EG)
-  int thPMinMg, thPMinEg, thPRkMg, thPRkEg;
-  int thPQnMg, thPQnEg, thNRkMg, thNRkEg;
-  int thNQnMg, thNQnEg, thRQnMg, thRQnEg;
+  // Threats (MG only — EG components removed, CPW: midgame concept)
+  int thPMinMg, thPRkMg;
+  int thPQnMg, thNRkMg;
+  int thNQnMg, thRQnMg;
 
   // King danger table
   int kdTable[KING_DANGER_TABLE_SIZE];
@@ -114,11 +113,17 @@ static TraceIndices TI;
 // ---------------------------------------------------------------------------
 
 static void initTraceIndices() {
-  // Material
-  TI.mat[0] = findParam("MAT_KNIGHT");
-  TI.mat[1] = findParam("MAT_BISHOP");
-  TI.mat[2] = findParam("MAT_ROOK");
-  TI.mat[3] = findParam("MAT_QUEEN");
+  // Material — MG (5 including pawn) + EG (5 including pawn)
+  TI.matMg[0] = findParam("MAT_PAWN_MG");
+  TI.matMg[1] = findParam("MAT_KNIGHT_MG");
+  TI.matMg[2] = findParam("MAT_BISHOP_MG");
+  TI.matMg[3] = findParam("MAT_ROOK_MG");
+  TI.matMg[4] = findParam("MAT_QUEEN_MG");
+  TI.matEg[0] = findParam("MAT_PAWN_EG");
+  TI.matEg[1] = findParam("MAT_KNIGHT_EG");
+  TI.matEg[2] = findParam("MAT_BISHOP_EG");
+  TI.matEg[3] = findParam("MAT_ROOK_EG");
+  TI.matEg[4] = findParam("MAT_QUEEN_EG");
 
   // PST
   static const char* pstPrefixes[12] = {
@@ -145,15 +150,16 @@ static void initTraceIndices() {
     TI.passedEg[r] = passedEgNames[r] ? findParam(passedEgNames[r]) : -1;
   }
 
-  // Pawn structure scalars
-  TI.connected  = findParam("CONNECTED_PASSED");
-  TI.isolated   = findParam("ISOLATED_PENALTY");
-  TI.doubled    = findParam("DOUBLED_PENALTY");
-  TI.backward   = findParam("BACKWARD_PENALTY");
-  TI.protPassMg = findParam("PROTECTED_PASSER_MG");
-  TI.protPassEg = findParam("PROTECTED_PASSER_EG");
-  TI.candPassMg = findParam("CANDIDATE_PASSER_MG");
-  TI.candPassEg = findParam("CANDIDATE_PASSER_EG");
+  // Pawn structure scalars (MG/EG split)
+  TI.connectedMg = findParam("CONNECTED_PASSED_MG");
+  TI.connectedEg = findParam("CONNECTED_PASSED_EG");
+  TI.isolatedMg  = findParam("ISOLATED_PENALTY_MG");
+  TI.isolatedEg  = findParam("ISOLATED_PENALTY_EG");
+  TI.doubledMg   = findParam("DOUBLED_PENALTY_MG");
+  TI.doubledEg   = findParam("DOUBLED_PENALTY_EG");
+  TI.backwardMg  = findParam("BACKWARD_PENALTY_MG");
+  TI.backwardEg  = findParam("BACKWARD_PENALTY_EG");
+  TI.protPassMg  = findParam("PROTECTED_PASSER_MG");
 
   // Passed pawn king distance
   TI.passerOwn   = findParam("PASSER_OWN_KING");
@@ -167,9 +173,11 @@ static void initTraceIndices() {
   TI.badBishMg = findParam("BAD_BISHOP_MG");
   TI.badBishEg = findParam("BAD_BISHOP_EG");
 
-  // Rook on file
-  TI.rookOpen = findParam("ROOK_OPEN_FILE");
-  TI.rookSemi = findParam("ROOK_SEMI_OPEN_FILE");
+  // Rook on file (MG/EG split)
+  TI.rookOpenMg = findParam("ROOK_OPEN_FILE_MG");
+  TI.rookOpenEg = findParam("ROOK_OPEN_FILE_EG");
+  TI.rookSemiMg = findParam("ROOK_SEMI_OPEN_FILE_MG");
+  TI.rookSemiEg = findParam("ROOK_SEMI_OPEN_FILE_EG");
 
   // Rook on 7th
   TI.r7Mg = findParam("ROOK_7TH_MG");
@@ -179,20 +187,18 @@ static void initTraceIndices() {
   TI.rbpOwn   = findParam("ROOK_BEHIND_OWN_EG");
   TI.rbpEnemy = findParam("ROOK_BEHIND_ENEMY_EG");
 
-  // Outpost
-  TI.outpost = findParam("OUTPOST_BONUS");
+  // Outpost (MG/EG split)
+  TI.outpostMg = findParam("OUTPOST_BONUS_MG");
+  TI.outpostEg = findParam("OUTPOST_BONUS_EG");
 
   // King safety shield
-  TI.shieldMissing  = findParam("SHIELD_MISSING_PAWN");
-  TI.shieldAdvanced = findParam("SHIELD_ADVANCED_PAWN");
-  TI.shieldOpen     = findParam("SHIELD_OPEN_FILE");
-
-  // Center control
-  TI.ccOccupy = findParam("CENTER_OCCUPATION");
-  TI.ccAttack = findParam("CENTER_ATTACK");
+  TI.shieldMissing     = findParam("SHIELD_MISSING_PAWN");
+  TI.shieldAdvRank3    = findParam("SHIELD_ADV_RANK3");
+  TI.shieldAdvRank4Plus = findParam("SHIELD_ADV_RANK4PLUS");
+  TI.shieldOpen        = findParam("SHIELD_OPEN_FILE");
 
   // Space
-  TI.space = findParam("SPACE_BONUS");
+  TI.spaceMg = findParam("SPACE_BONUS_MG");
 
   // Trapped pieces
   TI.trappedBish = findParam("TRAPPED_BISHOP");
@@ -208,22 +214,13 @@ static void initTraceIndices() {
   TI.mobQMg = findParam("MOBILITY_QUEEN_MG");
   TI.mobQEg = findParam("MOBILITY_QUEEN_EG");
 
-  // Connectivity
-  TI.conn = findParam("CONNECTIVITY");
-
   // Threats
   TI.thPMinMg = findParam("THREAT_P_MINOR_MG");
-  TI.thPMinEg = findParam("THREAT_P_MINOR_EG");
   TI.thPRkMg  = findParam("THREAT_P_ROOK_MG");
-  TI.thPRkEg  = findParam("THREAT_P_ROOK_EG");
   TI.thPQnMg  = findParam("THREAT_P_QUEEN_MG");
-  TI.thPQnEg  = findParam("THREAT_P_QUEEN_EG");
   TI.thNRkMg  = findParam("THREAT_N_ROOK_MG");
-  TI.thNRkEg  = findParam("THREAT_N_ROOK_EG");
   TI.thNQnMg  = findParam("THREAT_N_QUEEN_MG");
-  TI.thNQnEg  = findParam("THREAT_N_QUEEN_EG");
   TI.thRQnMg  = findParam("THREAT_R_QUEEN_MG");
-  TI.thRQnEg  = findParam("THREAT_R_QUEEN_EG");
 
   // King danger table
   TI.kdTable[0] = -1;  // TABLE[0] = 0, fixed.
@@ -277,28 +274,16 @@ Trace extractTrace(const BitboardSet& bb) {
 
   float mgW = mgWeight * ocbScale;
   float egW = egWeight * ocbScale;
-  float bothW = mgW + egW;  // = ocbScale (since mgWeight + egWeight = 1.0).
 
   // -----------------------------------------------------------------------
-  // Fixed pawn material bias.
-  //
-  // MAT_PAWN (MATERIAL[0] = 100) is pinned — it defines the centipawn
-  // unit and is not part of the tuning registry.  Its contribution must
-  // be captured as a fixed offset so traceScore matches evaluatePosition.
+  // Material (P, N, B, R, Q) — all tunable, separate MG and EG.
   // -----------------------------------------------------------------------
-  int wPawnCount = popcount(bb.byPiece[0]);
-  int bPawnCount = popcount(bb.byPiece[6]);
-  t.bias = static_cast<float>((wPawnCount - bPawnCount) * MATERIAL[0]) * bothW;
-
-  // -----------------------------------------------------------------------
-  // Material (MATERIAL[1..4]).
-  // -----------------------------------------------------------------------
-  for (int i = 0; i < 4; ++i) {
-    if (TI.mat[i] < 0) continue;
-    int pt = i + 1;
-    int wCount = popcount(bb.byPiece[pt]);
-    int bCount = popcount(bb.byPiece[pt + 6]);
-    t.add(TI.mat[i], static_cast<float>(wCount - bCount) * bothW);
+  for (int i = 0; i < 5; ++i) {
+    int wCount = popcount(bb.byPiece[i]);
+    int bCount = popcount(bb.byPiece[i + 6]);
+    float diff = static_cast<float>(wCount - bCount);
+    if (TI.matMg[i] >= 0) t.add(TI.matMg[i], diff * mgW);
+    if (TI.matEg[i] >= 0) t.add(TI.matEg[i], diff * egW);
   }
 
   // -----------------------------------------------------------------------
@@ -352,24 +337,20 @@ Trace extractTrace(const BitboardSet& bb) {
       whitePassedFiles |= 1 << (sq & 7);
       if (squareBB(sq) & whitePawnAttacks) {
         addPawnCoeff(TI.protPassMg, mgW);
-        addPawnCoeff(TI.protPassEg, egW);
-      }
-    } else {
-      Bitboard mask = 0;
-      int file = sq & 7;
-      for (int f = std::max(0, file - 1); f <= std::min(7, file + 1); ++f)
-        for (int r = rank + 1; r <= 7; ++r) mask |= squareBB(r * 8 + f);
-      if (popcount(blackPawns & mask) == 1) {
-        addPawnCoeff(TI.candPassMg, mgW);
-        addPawnCoeff(TI.candPassEg, egW);
       }
     }
-    if (isIsolated(sq, whitePawns))
-      addPawnCoeff(TI.isolated, bothW);
-    if (isDoubled(sq, Color::WHITE, whitePawns))
-      addPawnCoeff(TI.doubled, bothW);
-    if (isBackward(sq, Color::WHITE, whitePawns, blackPawnAttacks))
-      addPawnCoeff(TI.backward, bothW);
+    if (isIsolated(sq, whitePawns)) {
+      addPawnCoeff(TI.isolatedMg, mgW);
+      addPawnCoeff(TI.isolatedEg, egW);
+    }
+    if (isDoubled(sq, Color::WHITE, whitePawns)) {
+      addPawnCoeff(TI.doubledMg, mgW);
+      addPawnCoeff(TI.doubledEg, egW);
+    }
+    if (isBackward(sq, Color::WHITE, whitePawns, blackPawnAttacks)) {
+      addPawnCoeff(TI.backwardMg, mgW);
+      addPawnCoeff(TI.backwardEg, egW);
+    }
   }
 
   Bitboard bp = blackPawns;
@@ -384,31 +365,31 @@ Trace extractTrace(const BitboardSet& bb) {
       blackPassedFiles |= 1 << (sq & 7);
       if (squareBB(sq) & blackPawnAttacks) {
         addPawnCoeff(TI.protPassMg, -mgW);
-        addPawnCoeff(TI.protPassEg, -egW);
-      }
-    } else {
-      Bitboard mask = 0;
-      int file = sq & 7;
-      for (int f = std::max(0, file - 1); f <= std::min(7, file + 1); ++f)
-        for (int r = rank - 1; r >= 0; --r) mask |= squareBB(r * 8 + f);
-      if (popcount(whitePawns & mask) == 1) {
-        addPawnCoeff(TI.candPassMg, -mgW);
-        addPawnCoeff(TI.candPassEg, -egW);
       }
     }
-    if (isIsolated(sq, blackPawns))
-      addPawnCoeff(TI.isolated, -bothW);
-    if (isDoubled(sq, Color::BLACK, blackPawns))
-      addPawnCoeff(TI.doubled, -bothW);
-    if (isBackward(sq, Color::BLACK, blackPawns, whitePawnAttacks))
-      addPawnCoeff(TI.backward, -bothW);
+    if (isIsolated(sq, blackPawns)) {
+      addPawnCoeff(TI.isolatedMg, -mgW);
+      addPawnCoeff(TI.isolatedEg, -egW);
+    }
+    if (isDoubled(sq, Color::BLACK, blackPawns)) {
+      addPawnCoeff(TI.doubledMg, -mgW);
+      addPawnCoeff(TI.doubledEg, -egW);
+    }
+    if (isBackward(sq, Color::BLACK, blackPawns, whitePawnAttacks)) {
+      addPawnCoeff(TI.backwardMg, -mgW);
+      addPawnCoeff(TI.backwardEg, -egW);
+    }
   }
 
   for (int f = 0; f < 7; ++f) {
-    if ((whitePassedFiles >> f & 1) && (whitePassedFiles >> (f + 1) & 1))
-      addPawnCoeff(TI.connected, bothW);
-    if ((blackPassedFiles >> f & 1) && (blackPassedFiles >> (f + 1) & 1))
-      addPawnCoeff(TI.connected, -bothW);
+    if ((whitePassedFiles >> f & 1) && (whitePassedFiles >> (f + 1) & 1)) {
+      addPawnCoeff(TI.connectedMg, mgW);
+      addPawnCoeff(TI.connectedEg, egW);
+    }
+    if ((blackPassedFiles >> f & 1) && (blackPassedFiles >> (f + 1) & 1)) {
+      addPawnCoeff(TI.connectedMg, -mgW);
+      addPawnCoeff(TI.connectedEg, -egW);
+    }
   }
 
   for (auto& pc : pawnCoeffs) t.add(pc.first, pc.second);
@@ -480,7 +461,7 @@ Trace extractTrace(const BitboardSet& bb) {
   }
 
   // -----------------------------------------------------------------------
-  // Rook on file (same value for MG + EG).
+  // Rook on file (separate MG/EG).
   // -----------------------------------------------------------------------
   {
     Bitboard allPawns = whitePawns | blackPawns;
@@ -500,8 +481,10 @@ Trace extractTrace(const BitboardSet& bb) {
       if (!(file & allPawns))        openCoeff -= 1.0f;
       else if (!(file & blackPawns)) semiCoeff -= 1.0f;
     }
-    t.add(TI.rookOpen, openCoeff * bothW);
-    t.add(TI.rookSemi, semiCoeff * bothW);
+    t.add(TI.rookOpenMg, openCoeff * mgW);
+    t.add(TI.rookOpenEg, openCoeff * egW);
+    t.add(TI.rookSemiMg, semiCoeff * mgW);
+    t.add(TI.rookSemiEg, semiCoeff * egW);
   }
 
   // -----------------------------------------------------------------------
@@ -509,10 +492,12 @@ Trace extractTrace(const BitboardSet& bb) {
   // -----------------------------------------------------------------------
   {
     float coeff = 0.0f;
-    if ((bb.byPiece[3] & rankBB(6)) && (bb.byPiece[11] & rankBB(7)))
-      coeff += popcount(bb.byPiece[3] & rankBB(6));
-    if ((bb.byPiece[9] & rankBB(1)) && (bb.byPiece[5] & rankBB(0)))
-      coeff -= popcount(bb.byPiece[9] & rankBB(1));
+    Bitboard whiteR7 = bb.byPiece[3] & rankBB(6);
+    if (whiteR7 && ((bb.byPiece[11] & rankBB(7)) || (bb.byPiece[6] & rankBB(6))))
+      coeff += popcount(whiteR7);
+    Bitboard blackR2 = bb.byPiece[9] & rankBB(1);
+    if (blackR2 && ((bb.byPiece[5] & rankBB(0)) || (bb.byPiece[0] & rankBB(1))))
+      coeff -= popcount(blackR2);
     t.add(TI.r7Mg, coeff * mgW);
     t.add(TI.r7Eg, coeff * egW);
   }
@@ -602,14 +587,16 @@ Trace extractTrace(const BitboardSet& bb) {
       if (sq == SQ_D4 || sq == SQ_D5 || sq == SQ_E4 || sq == SQ_E5) bonus = 2;
       coeff -= bonus;
     }
-    t.add(TI.outpost, coeff * bothW);
+    t.add(TI.outpostMg, coeff * mgW);
+    t.add(TI.outpostEg, coeff * egW);
   }
 
   // -----------------------------------------------------------------------
   // King safety / pawn shield (MG only).
   // -----------------------------------------------------------------------
   {
-    float missingCoeff = 0.0f, advancedCoeff = 0.0f, openCoeff = 0.0f;
+    float missingCoeff = 0.0f, rank3Coeff = 0.0f, rank4PlusCoeff = 0.0f,
+          openCoeff = 0.0f;
     Bitboard allPawns = whitePawns | blackPawns;
 
     auto shieldSide = [&](int color, int sign) {
@@ -640,8 +627,13 @@ Trace extractTrace(const BitboardSet& bb) {
           while (copy) {
             Square psq = popLsb(copy);
             int pRank = psq / 8;
-            bool advanced = (color == 0) ? (pRank >= 2) : (pRank <= 5);
-            if (advanced) advancedCoeff += sign;
+            if (color == 0) {
+              if (pRank == 2)       rank3Coeff += sign;
+              else if (pRank >= 3)  rank4PlusCoeff += sign;
+            } else {
+              if (pRank == 5)       rank3Coeff += sign;
+              else if (pRank <= 4)  rank4PlusCoeff += sign;
+            }
           }
         }
         if (f == kingFile && !(allPawns & fileMask))
@@ -653,34 +645,21 @@ Trace extractTrace(const BitboardSet& bb) {
     shieldSide(1, -1);
 
     t.add(TI.shieldMissing, missingCoeff * mgW);
-    t.add(TI.shieldAdvanced, advancedCoeff * mgW);
+    t.add(TI.shieldAdvRank3, rank3Coeff * mgW);
+    t.add(TI.shieldAdvRank4Plus, rank4PlusCoeff * mgW);
     t.add(TI.shieldOpen, openCoeff * mgW);
   }
 
   // -----------------------------------------------------------------------
-  // Center control (same value for MG + EG).
-  // -----------------------------------------------------------------------
-  {
-    int wOcc = popcount(whitePawns & CENTER_MASK);
-    int bOcc = popcount(blackPawns & CENTER_MASK);
-    Bitboard wAtk = shiftNE(whitePawns) | shiftNW(whitePawns);
-    Bitboard bAtk = shiftSE(blackPawns) | shiftSW(blackPawns);
-    int wAtt = popcount(wAtk & CENTER_MASK);
-    int bAtt = popcount(bAtk & CENTER_MASK);
-
-    t.add(TI.ccOccupy, static_cast<float>(wOcc - bOcc) * bothW);
-    t.add(TI.ccAttack, static_cast<float>(wAtt - bAtt) * bothW);
-  }
-
-  // -----------------------------------------------------------------------
-  // Space (same value for MG + EG).
+  // Space (separate MG/EG).
   // -----------------------------------------------------------------------
   {
     Bitboard bAtk = shiftSE(blackPawns) | shiftSW(blackPawns);
     Bitboard wAtk = shiftNE(whitePawns) | shiftNW(whitePawns);
     int ws = popcount(WHITE_SPACE_ZONE & ~bAtk);
     int bs = popcount(BLACK_SPACE_ZONE & ~wAtk);
-    t.add(TI.space, static_cast<float>(ws - bs) * bothW);
+    float diff = static_cast<float>(ws - bs);
+    t.add(TI.spaceMg, diff * mgW);
   }
 
   // -----------------------------------------------------------------------
@@ -745,23 +724,8 @@ Trace extractTrace(const BitboardSet& bb) {
   }
 
   // -----------------------------------------------------------------------
-  // Connectivity (same value for MG + EG).
-  // -----------------------------------------------------------------------
-  {
-    float coeff = 0.0f;
-    for (int c = 0; c < 2; ++c) {
-      int sign = (c == 0) ? 1 : -1;
-      Bitboard friendly = bb.byColor[c];
-      Bitboard friendlyAtk = info.byColor[c];
-      int pawnI = c * 6, kingI = c * 6 + 5;
-      Bitboard targets = friendly & ~bb.byPiece[pawnI] & ~bb.byPiece[kingI];
-      coeff += sign * popcount(targets & friendlyAtk);
-    }
-    t.add(TI.conn, coeff * bothW);
-  }
-
-  // -----------------------------------------------------------------------
-  // Threats (separate MG/EG, 6 threat types).
+  // Threats (separate MG/EG, 6 threat types — minor-vs-queen and
+  // rook-vs-queen have MG only).
   // -----------------------------------------------------------------------
   {
     float pMin = 0, pRk = 0, pQn = 0, nRk = 0, nQn = 0, rQn = 0;
@@ -772,24 +736,24 @@ Trace extractTrace(const BitboardSet& bb) {
       Bitboard enRooks  = bb.byPiece[eo + 3];
       Bitboard enQueens = bb.byPiece[eo + 4];
 
-      Bitboard pAtk = info.byPiece[c][0];
+      Bitboard pAtk = info.byPiece[c][1];   // PieceType::PAWN = 1
       pMin += sign * popcount(pAtk & enMinors);
       pRk  += sign * popcount(pAtk & enRooks);
       pQn  += sign * popcount(pAtk & enQueens);
 
-      Bitboard minAtk = info.byPiece[c][1] | info.byPiece[c][2];
+      Bitboard minAtk = info.byPiece[c][2] | info.byPiece[c][3];  // KNIGHT|BISHOP
       nRk += sign * popcount(minAtk & enRooks);
       nQn += sign * popcount(minAtk & enQueens);
 
-      Bitboard rkAtk = info.byPiece[c][3];
+      Bitboard rkAtk = info.byPiece[c][4];   // PieceType::ROOK = 4
       rQn += sign * popcount(rkAtk & enQueens);
     }
-    t.add(TI.thPMinMg, pMin * mgW); t.add(TI.thPMinEg, pMin * egW);
-    t.add(TI.thPRkMg, pRk * mgW);  t.add(TI.thPRkEg, pRk * egW);
-    t.add(TI.thPQnMg, pQn * mgW);  t.add(TI.thPQnEg, pQn * egW);
-    t.add(TI.thNRkMg, nRk * mgW);  t.add(TI.thNRkEg, nRk * egW);
-    t.add(TI.thNQnMg, nQn * mgW);  t.add(TI.thNQnEg, nQn * egW);
-    t.add(TI.thRQnMg, rQn * mgW);  t.add(TI.thRQnEg, rQn * egW);
+    t.add(TI.thPMinMg, pMin * mgW);
+    t.add(TI.thPRkMg, pRk * mgW);
+    t.add(TI.thPQnMg, pQn * mgW);
+    t.add(TI.thNRkMg, nRk * mgW);
+    t.add(TI.thNQnMg, nQn * mgW);
+    t.add(TI.thRQnMg, rQn * mgW);
   }
 
   // -----------------------------------------------------------------------
@@ -851,67 +815,81 @@ struct TuneEntry {
 // Scalar eval constants are listed explicitly.  PST entries (12 arrays × 64
 // squares, minus 16 frozen pawn rank-1/rank-8 squares = 752 entries) are
 // bulk-registered via loops to avoid 752 manual lines.
+// Total: 91 scalar + 752 PST = 843 tunable parameters.
 // ---------------------------------------------------------------------------
 // clang-format off
 static std::vector<TuneEntry>& buildRegistry() {
   static std::vector<TuneEntry> reg;
   if (!reg.empty()) return reg;
 
-  // ---- Scalar entries (78) ------------------------------------------------
+  // ---- Scalar entries (91) ------------------------------------------------
   // Default values are read from the live variable (*ptr) at registration
   // time — single source of truth with evaluation.cpp constants.
 
-  // --- Material (4) ---
-  // MAT_PAWN is pinned at 100 — it defines the centipawn unit.
-  // Search pruning margins (futility, delta, razor) are calibrated for
-  // 100cp/pawn; allowing MAT_PAWN to drift breaks those margins.
-  reg.push_back({"MAT_KNIGHT",              &MATERIAL[1],       MATERIAL[1],  250,  400, 10});
-  reg.push_back({"MAT_BISHOP",              &MATERIAL[2],       MATERIAL[2],  250,  420, 10});
-  reg.push_back({"MAT_ROOK",                &MATERIAL[3],       MATERIAL[3],  400,  610, 10});
-  reg.push_back({"MAT_QUEEN",               &MATERIAL[4],       MATERIAL[4],  800, 1250, 20});
+  // --- Material MG (5) ---
+  // All piece types tunable.  Search pruning margins (futility, delta,
+  // razor) are hardcoded centipawn constants, not multiples of pawn value,
+  // so pawn MG drifting slightly from 100 is safe.
+  reg.push_back({"MAT_PAWN_MG",             &MATERIAL[0],       MATERIAL[0],   80,  130,  5});
+  reg.push_back({"MAT_KNIGHT_MG",           &MATERIAL[1],       MATERIAL[1],  250,  400, 10});
+  reg.push_back({"MAT_BISHOP_MG",           &MATERIAL[2],       MATERIAL[2],  250,  420, 10});
+  reg.push_back({"MAT_ROOK_MG",             &MATERIAL[3],       MATERIAL[3],  400,  610, 10});
+  reg.push_back({"MAT_QUEEN_MG",            &MATERIAL[4],       MATERIAL[4],  800, 1250, 20});
+
+  // --- Material EG (5) ---
+  // N/B/R/Q EG values allow phase-optimal material weights.
+  reg.push_back({"MAT_PAWN_EG",             &MATERIAL_EG[0],    MATERIAL_EG[0],  80,  150,  5});
+  reg.push_back({"MAT_KNIGHT_EG",           &MATERIAL_EG[1],    MATERIAL_EG[1], 230,  400, 10});
+  reg.push_back({"MAT_BISHOP_EG",           &MATERIAL_EG[2],    MATERIAL_EG[2], 250,  420, 10});
+  reg.push_back({"MAT_ROOK_EG",             &MATERIAL_EG[3],    MATERIAL_EG[3], 430,  650, 10});
+  reg.push_back({"MAT_QUEEN_EG",            &MATERIAL_EG[4],    MATERIAL_EG[4], 850, 1300, 20});
 
   // --- Passed pawn rank bonus (12) ---
   reg.push_back({"PASSED_R2_MG",            &PASSED_RANK_BONUS_MG[1], PASSED_RANK_BONUS_MG[1],    0,   30,  5});
   reg.push_back({"PASSED_R3_MG",            &PASSED_RANK_BONUS_MG[2], PASSED_RANK_BONUS_MG[2],    0,   40,  5});
   reg.push_back({"PASSED_R4_MG",            &PASSED_RANK_BONUS_MG[3], PASSED_RANK_BONUS_MG[3],    0,   50,  5});
-  reg.push_back({"PASSED_R5_MG",            &PASSED_RANK_BONUS_MG[4], PASSED_RANK_BONUS_MG[4],    0,  150, 10});
-  reg.push_back({"PASSED_R6_MG",            &PASSED_RANK_BONUS_MG[5], PASSED_RANK_BONUS_MG[5],    0,  180, 10});
+  reg.push_back({"PASSED_R5_MG",            &PASSED_RANK_BONUS_MG[4], PASSED_RANK_BONUS_MG[4],    5,  150, 10});
+  reg.push_back({"PASSED_R6_MG",            &PASSED_RANK_BONUS_MG[5], PASSED_RANK_BONUS_MG[5],   10,  180, 10});
   reg.push_back({"PASSED_R7_MG",            &PASSED_RANK_BONUS_MG[6], PASSED_RANK_BONUS_MG[6],   20,  300, 15});
   reg.push_back({"PASSED_R2_EG",            &PASSED_RANK_BONUS_EG[1], PASSED_RANK_BONUS_EG[1],    0,   30,  5});
   reg.push_back({"PASSED_R3_EG",            &PASSED_RANK_BONUS_EG[2], PASSED_RANK_BONUS_EG[2],    0,   50,  5});
   reg.push_back({"PASSED_R4_EG",            &PASSED_RANK_BONUS_EG[3], PASSED_RANK_BONUS_EG[3],    0,   80, 10});
-  reg.push_back({"PASSED_R5_EG",            &PASSED_RANK_BONUS_EG[4], PASSED_RANK_BONUS_EG[4],    0,  150, 10});
+  reg.push_back({"PASSED_R5_EG",            &PASSED_RANK_BONUS_EG[4], PASSED_RANK_BONUS_EG[4],   10,  150, 10});
   reg.push_back({"PASSED_R6_EG",            &PASSED_RANK_BONUS_EG[5], PASSED_RANK_BONUS_EG[5],   20,  300, 15});
   reg.push_back({"PASSED_R7_EG",            &PASSED_RANK_BONUS_EG[6], PASSED_RANK_BONUS_EG[6],   80,  500, 20});
 
-  // --- Pawn structure scalars (8) ---
-  reg.push_back({"CONNECTED_PASSED",        &CONNECTED_PASSED,       CONNECTED_PASSED,        0,   40,  5});
-  reg.push_back({"ISOLATED_PENALTY",        &ISOLATED_PENALTY,       ISOLATED_PENALTY,      -30,    0,  5});
-  reg.push_back({"DOUBLED_PENALTY",         &DOUBLED_PENALTY,        DOUBLED_PENALTY,       -40,    0,  5});
-  reg.push_back({"BACKWARD_PENALTY",        &BACKWARD_PENALTY,       BACKWARD_PENALTY,      -35,    0,  5});
-  reg.push_back({"PROTECTED_PASSER_MG",     &PROTECTED_PASSER_MG,    PROTECTED_PASSER_MG,     0,   40,  5});
-  reg.push_back({"PROTECTED_PASSER_EG",     &PROTECTED_PASSER_EG,    PROTECTED_PASSER_EG,     0,   80,  5});
-  reg.push_back({"CANDIDATE_PASSER_MG",     &CANDIDATE_PASSER_MG,    CANDIDATE_PASSER_MG,     0,   30,  5});
-  reg.push_back({"CANDIDATE_PASSER_EG",     &CANDIDATE_PASSER_EG,    CANDIDATE_PASSER_EG,     0,   50,  5});
+  // --- Pawn structure scalars (9) ---
+  reg.push_back({"CONNECTED_PASSED_MG",     &CONNECTED_PASSED_MG,    CONNECTED_PASSED_MG,    0,   40,  5});
+  reg.push_back({"CONNECTED_PASSED_EG",     &CONNECTED_PASSED_EG,    CONNECTED_PASSED_EG,    0,   60,  5});
+  reg.push_back({"ISOLATED_PENALTY_MG",     &ISOLATED_PENALTY_MG,    ISOLATED_PENALTY_MG,  -30,    0,  5});
+  reg.push_back({"ISOLATED_PENALTY_EG",     &ISOLATED_PENALTY_EG,    ISOLATED_PENALTY_EG,  -40,    0,  5});
+  reg.push_back({"DOUBLED_PENALTY_MG",      &DOUBLED_PENALTY_MG,     DOUBLED_PENALTY_MG,   -40,    0,  5});
+  reg.push_back({"DOUBLED_PENALTY_EG",      &DOUBLED_PENALTY_EG,     DOUBLED_PENALTY_EG,   -50,    0,  5});
+  reg.push_back({"BACKWARD_PENALTY_MG",     &BACKWARD_PENALTY_MG,    BACKWARD_PENALTY_MG,  -35,    0,  5});
+  reg.push_back({"BACKWARD_PENALTY_EG",     &BACKWARD_PENALTY_EG,    BACKWARD_PENALTY_EG,  -35,    0,  5});
+  reg.push_back({"PROTECTED_PASSER_MG",     &PROTECTED_PASSER_MG,    PROTECTED_PASSER_MG,    0,   40,  5});
 
   // --- Bishop pair (2) ---
   reg.push_back({"BISHOP_PAIR_MG",          &BISHOP_PAIR_MG,         BISHOP_PAIR_MG,           0,  100,  5});
   reg.push_back({"BISHOP_PAIR_EG",          &BISHOP_PAIR_EG,         BISHOP_PAIR_EG,          10,  150,  5});
 
-  // --- Rook on file (2) ---
-  reg.push_back({"ROOK_OPEN_FILE",          &ROOK_OPEN_FILE,         ROOK_OPEN_FILE,           0,   50,  5});
-  reg.push_back({"ROOK_SEMI_OPEN_FILE",     &ROOK_SEMI_OPEN_FILE,    ROOK_SEMI_OPEN_FILE,      0,   40,  5});
+  // --- Rook on file (4) ---
+  reg.push_back({"ROOK_OPEN_FILE_MG",       &ROOK_OPEN_FILE_MG,      ROOK_OPEN_FILE_MG,        0,   50,  5});
+  reg.push_back({"ROOK_OPEN_FILE_EG",       &ROOK_OPEN_FILE_EG,      ROOK_OPEN_FILE_EG,        0,   50,  5});
+  reg.push_back({"ROOK_SEMI_OPEN_FILE_MG",  &ROOK_SEMI_OPEN_FILE_MG, ROOK_SEMI_OPEN_FILE_MG,   0,   40,  5});
+  reg.push_back({"ROOK_SEMI_OPEN_FILE_EG",  &ROOK_SEMI_OPEN_FILE_EG, ROOK_SEMI_OPEN_FILE_EG,   0,   40,  5});
 
   // --- Rook on 7th (2) ---
-  reg.push_back({"ROOK_7TH_MG",             &ROOK_7TH_MG,           ROOK_7TH_MG,              0,   50,  5});
+  reg.push_back({"ROOK_7TH_MG",             &ROOK_7TH_MG,           ROOK_7TH_MG,              5,   50,  5});
   reg.push_back({"ROOK_7TH_EG",             &ROOK_7TH_EG,           ROOK_7TH_EG,              0,   80,  5});
 
   // --- Rook behind passer (2) ---
   reg.push_back({"ROOK_BEHIND_OWN_EG",      &ROOK_BEHIND_OWN_PASSER_EG,   ROOK_BEHIND_OWN_PASSER_EG,    0,   50,  5});
   reg.push_back({"ROOK_BEHIND_ENEMY_EG",    &ROOK_BEHIND_ENEMY_PASSER_EG, ROOK_BEHIND_ENEMY_PASSER_EG, -50,   10,  5});
 
-  // --- Outpost (1) ---
-  reg.push_back({"OUTPOST_BONUS",           &OUTPOST_BONUS,          OUTPOST_BONUS,             0,   60,  5});
+  // --- Outpost (2) ---
+  reg.push_back({"OUTPOST_BONUS_MG",        &OUTPOST_BONUS_MG,       OUTPOST_BONUS_MG,          0,   60,  5});
+  reg.push_back({"OUTPOST_BONUS_EG",        &OUTPOST_BONUS_EG,       OUTPOST_BONUS_EG,          0,   40,  5});
 
   // --- Bad bishop (2) ---
   reg.push_back({"BAD_BISHOP_MG",           &BAD_BISHOP_MG,          BAD_BISHOP_MG,           -15,    0,  1});
@@ -922,18 +900,22 @@ static std::vector<TuneEntry>& buildRegistry() {
   reg.push_back({"TRAPPED_ROOK",            &TRAPPED_ROOK_PENALTY,   TRAPPED_ROOK_PENALTY,   -100,    0, 10});
 
   // --- Mobility (8) ---
-  reg.push_back({"MOBILITY_KNIGHT_MG",      &MOBILITY_KNIGHT_MG,     MOBILITY_KNIGHT_MG,       0,   20,  1});
-  reg.push_back({"MOBILITY_KNIGHT_EG",      &MOBILITY_KNIGHT_EG,     MOBILITY_KNIGHT_EG,       0,   12,  1});
-  reg.push_back({"MOBILITY_BISHOP_MG",      &MOBILITY_BISHOP_MG,     MOBILITY_BISHOP_MG,       0,   12,  1});
-  reg.push_back({"MOBILITY_BISHOP_EG",      &MOBILITY_BISHOP_EG,     MOBILITY_BISHOP_EG,       0,   12,  1});
-  reg.push_back({"MOBILITY_ROOK_MG",        &MOBILITY_ROOK_MG,       MOBILITY_ROOK_MG,         0,   16,  1});
-  reg.push_back({"MOBILITY_ROOK_EG",        &MOBILITY_ROOK_EG,       MOBILITY_ROOK_EG,         0,   16,  1});
-  reg.push_back({"MOBILITY_QUEEN_MG",       &MOBILITY_QUEEN_MG,      MOBILITY_QUEEN_MG,        0,   12,  1});
-  reg.push_back({"MOBILITY_QUEEN_EG",       &MOBILITY_QUEEN_EG,      MOBILITY_QUEEN_EG,        0,   16,  1});
+  // Min bounds prevent zeroing: each piece type must have a non-zero
+  // mobility weight in at least one phase (tuner-starved features otherwise
+  // collapse to zero, losing signal).
+  reg.push_back({"MOBILITY_KNIGHT_MG",      &MOBILITY_KNIGHT_MG,     MOBILITY_KNIGHT_MG,       1,   20,  1});
+  reg.push_back({"MOBILITY_KNIGHT_EG",      &MOBILITY_KNIGHT_EG,     MOBILITY_KNIGHT_EG,       1,   12,  1});
+  reg.push_back({"MOBILITY_BISHOP_MG",      &MOBILITY_BISHOP_MG,     MOBILITY_BISHOP_MG,       1,   12,  1});
+  reg.push_back({"MOBILITY_BISHOP_EG",      &MOBILITY_BISHOP_EG,     MOBILITY_BISHOP_EG,       1,   12,  1});
+  reg.push_back({"MOBILITY_ROOK_MG",        &MOBILITY_ROOK_MG,       MOBILITY_ROOK_MG,         1,   16,  1});
+  reg.push_back({"MOBILITY_ROOK_EG",        &MOBILITY_ROOK_EG,       MOBILITY_ROOK_EG,         1,   16,  1});
+  reg.push_back({"MOBILITY_QUEEN_MG",       &MOBILITY_QUEEN_MG,      MOBILITY_QUEEN_MG,        1,   12,  1});
+  reg.push_back({"MOBILITY_QUEEN_EG",       &MOBILITY_QUEEN_EG,      MOBILITY_QUEEN_EG,        1,   16,  1});
 
-  // --- King safety shield (3) ---
+  // --- King safety shield (4) ---
   reg.push_back({"SHIELD_MISSING_PAWN",     &SHIELD_MISSING_PAWN,    SHIELD_MISSING_PAWN,    -60,    0,  5});
-  reg.push_back({"SHIELD_ADVANCED_PAWN",    &SHIELD_ADVANCED_PAWN,   SHIELD_ADVANCED_PAWN,   -20,    0,  5});
+  reg.push_back({"SHIELD_ADV_RANK3",        &SHIELD_ADV_RANK3,       SHIELD_ADV_RANK3,       -30,    0,  5});
+  reg.push_back({"SHIELD_ADV_RANK4PLUS",    &SHIELD_ADV_RANK4PLUS,   SHIELD_ADV_RANK4PLUS,   -30,    0,  5});
   reg.push_back({"SHIELD_OPEN_FILE",        &SHIELD_OPEN_FILE,       SHIELD_OPEN_FILE,       -50,    0,  5});
 
   // --- King danger table (12) ---
@@ -953,39 +935,31 @@ static std::vector<TuneEntry>& buildRegistry() {
   reg.push_back({"KD_TABLE_11",             &KING_DANGER_TABLE[11],  KING_DANGER_TABLE[11],  120,  600, 25});
   reg.push_back({"KD_TABLE_12",             &KING_DANGER_TABLE[12],  KING_DANGER_TABLE[12],  150,  700, 25});
 
-  // --- Center control (2) ---
-  reg.push_back({"CENTER_OCCUPATION",       &CENTER_OCCUPATION_BONUS, CENTER_OCCUPATION_BONUS,  0,   50,  5});
-  reg.push_back({"CENTER_ATTACK",           &CENTER_ATTACK_BONUS,     CENTER_ATTACK_BONUS,      0,   15,  5});
-
   // --- Space (1) ---
-  reg.push_back({"SPACE_BONUS",             &SPACE_BONUS,            SPACE_BONUS,               0,   10,  1});
+  // Space is a middlegame concept (CPW); EG component removed after
+  // multiple tuning runs consistently converged it to zero.
+  reg.push_back({"SPACE_BONUS_MG",          &SPACE_BONUS_MG,         SPACE_BONUS_MG,            0,   10,  1});
 
   // --- Passed pawn king distance (2) ---
   reg.push_back({"PASSER_OWN_KING",         &PASSER_OWN_KING,       PASSER_OWN_KING,           0,   15,  1});
   reg.push_back({"PASSER_ENEMY_KING",       &PASSER_ENEMY_KING,     PASSER_ENEMY_KING,         0,   25,  2});
 
-  // --- Threats (12) ---
+  // --- Threats (6) ---
+  // Threats are a middlegame concept (CPW: piece safety dictates midgame
+  // strategy).  EG components removed after multiple tuning runs
+  // consistently converged all four EG threat values to zero.
   reg.push_back({"THREAT_P_MINOR_MG",       &THREAT_PAWN_VS_MINOR_MG,   THREAT_PAWN_VS_MINOR_MG,    0,   30,  2});
-  reg.push_back({"THREAT_P_MINOR_EG",       &THREAT_PAWN_VS_MINOR_EG,   THREAT_PAWN_VS_MINOR_EG,    0,   25,  2});
   reg.push_back({"THREAT_P_ROOK_MG",        &THREAT_PAWN_VS_ROOK_MG,    THREAT_PAWN_VS_ROOK_MG,     0,   35,  2});
-  reg.push_back({"THREAT_P_ROOK_EG",        &THREAT_PAWN_VS_ROOK_EG,    THREAT_PAWN_VS_ROOK_EG,     0,   25,  2});
   reg.push_back({"THREAT_P_QUEEN_MG",       &THREAT_PAWN_VS_QUEEN_MG,   THREAT_PAWN_VS_QUEEN_MG,    0,   50,  3});
-  reg.push_back({"THREAT_P_QUEEN_EG",       &THREAT_PAWN_VS_QUEEN_EG,   THREAT_PAWN_VS_QUEEN_EG,    0,   35,  2});
   reg.push_back({"THREAT_N_ROOK_MG",        &THREAT_MINOR_VS_ROOK_MG,   THREAT_MINOR_VS_ROOK_MG,    0,   45,  2});
-  reg.push_back({"THREAT_N_ROOK_EG",        &THREAT_MINOR_VS_ROOK_EG,   THREAT_MINOR_VS_ROOK_EG,    0,   45,  2});
   reg.push_back({"THREAT_N_QUEEN_MG",       &THREAT_MINOR_VS_QUEEN_MG,  THREAT_MINOR_VS_QUEEN_MG,   0,   55,  2});
-  reg.push_back({"THREAT_N_QUEEN_EG",       &THREAT_MINOR_VS_QUEEN_EG,  THREAT_MINOR_VS_QUEEN_EG,   0,   40,  2});
   reg.push_back({"THREAT_R_QUEEN_MG",       &THREAT_ROOK_VS_QUEEN_MG,   THREAT_ROOK_VS_QUEEN_MG,    0,   30,  1});
-  reg.push_back({"THREAT_R_QUEEN_EG",       &THREAT_ROOK_VS_QUEEN_EG,   THREAT_ROOK_VS_QUEEN_EG,    0,   25,  1});
 
-  // --- Connectivity (1) ---
-  reg.push_back({"CONNECTIVITY",            &CONNECTIVITY_BONUS,     CONNECTIVITY_BONUS,        0,   25,  1});
   // clang-format on
 
   // ---- PST entries (752) --------------------------------------------------
   // 12 arrays × 64 squares = 768, minus 16 frozen pawn squares (rank 1 + 8).
-  // Bulk-registered via loop.  Name strings are heap-allocated (tuning build
-  // only, so the leak is harmless).
+  // Bulk-registered via loop.  Total: 91 scalar + 752 PST = 843 params.
   struct PstDef {
     const char* prefix;
     int* data;
