@@ -117,8 +117,8 @@ inline const char* gameResultName(GameResult result) {
 // halfmoveClock / fullmoveClock for FEN serialization and draw detection.
 struct PositionState {
   uint8_t castlingRights = 0x0F;  // KQkq bitmask (bits 0-3)
-  int epRow = -1;                 // en passant target row (-1 if none)
-  int epCol = -1;                 // en passant target col (-1 if none)
+  int8_t epRow = -1;              // en passant target row (-1 if none, 0-7)
+  int8_t epCol = -1;              // en passant target col (-1 if none, 0-7)
   int halfmoveClock = 0;          // half-move clock (50-move rule)
   int fullmoveClock = 1;          // full-move counter (starts at 1)
 

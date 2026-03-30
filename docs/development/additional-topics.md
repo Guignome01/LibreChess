@@ -137,12 +137,12 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 | BitboardSet (12 piece + 2 color + occupancy) | 120 B |
 | Piece mailbox[64] | 64 B |
 | Color currentTurn | 1 B |
-| PositionState | ~20 B |
+| PositionState | ~12 B |
 | Square kingSquare[2] | 2 B |
 | uint64_t hash | 8 B |
 | HashHistory (256 × 8B + int) | ~2,052 B |
 | Cache fields (FEN string + eval + dirty flags) | ~36 B |
-| **Total** | **~2,303 B** |
+| **Total** | **~2,295 B** |
 
 ## Remaining Features & Enhancements
 

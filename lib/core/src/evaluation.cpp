@@ -535,31 +535,20 @@ static void evalRookFiles(const BitboardSet& bb,
   Bitboard blackPawns = bb.byPiece[6];
   Bitboard allPawns   = whitePawns | blackPawns;
 
-  // White rooks (index 3)
-  Bitboard wr = bb.byPiece[3];
-  while (wr) {
-    Square sq = popLsb(wr);
-    Bitboard file = fileBB(colOf(sq));
-    if (!(file & allPawns)) {
-      mgScore += ROOK_OPEN_FILE_MG;
-      egScore += ROOK_OPEN_FILE_EG;
-    } else if (!(file & whitePawns)) {
-      mgScore += ROOK_SEMI_OPEN_FILE_MG;
-      egScore += ROOK_SEMI_OPEN_FILE_EG;
-    }
-  }
-
-  // Black rooks (index 9)
-  Bitboard br = bb.byPiece[9];
-  while (br) {
-    Square sq = popLsb(br);
-    Bitboard file = fileBB(colOf(sq));
-    if (!(file & allPawns)) {
-      mgScore -= ROOK_OPEN_FILE_MG;
-      egScore -= ROOK_OPEN_FILE_EG;
-    } else if (!(file & blackPawns)) {
-      mgScore -= ROOK_SEMI_OPEN_FILE_MG;
-      egScore -= ROOK_SEMI_OPEN_FILE_EG;
+  for (int c = 0; c < 2; ++c) {
+    int sign = (c == 0) ? 1 : -1;
+    Bitboard rooks        = bb.byPiece[c * 6 + 3];  // W_ROOK=3, B_ROOK=9
+    Bitboard friendlyPawns = (c == 0) ? whitePawns : blackPawns;
+    while (rooks) {
+      Square sq = popLsb(rooks);
+      Bitboard file = fileBB(colOf(sq));
+      if (!(file & allPawns)) {
+        mgScore += sign * ROOK_OPEN_FILE_MG;
+        egScore += sign * ROOK_OPEN_FILE_EG;
+      } else if (!(file & friendlyPawns)) {
+        mgScore += sign * ROOK_SEMI_OPEN_FILE_MG;
+        egScore += sign * ROOK_SEMI_OPEN_FILE_EG;
+      }
     }
   }
 }
@@ -723,23 +712,15 @@ static int evalShieldOneSide(const BitboardSet& bb, Color color) {
       // Check if the pawn is advanced — rank-indexed penalty.
       // Pawns one square forward (rank 3 for white / rank 6 for black) get a
       // mild penalty; pawns two or more squares forward get a heavier one.
+      // Normalize rank to white-relative (0=home rank) for both colors.
       // Reference: https://www.chessprogramming.org/King_Safety
-      if (color == Color::WHITE) {
-        Bitboard copy = shieldPawns;
-        while (copy) {
-          Square sq = popLsb(copy);
-          int rank = sq / 8;  // LERF: 0=rank1
-          if (rank == 2)      score += SHIELD_ADV_RANK3;
-          else if (rank >= 3) score += SHIELD_ADV_RANK4PLUS;
-        }
-      } else {
-        Bitboard copy = shieldPawns;
-        while (copy) {
-          Square sq = popLsb(copy);
-          int rank = sq / 8;
-          if (rank == 5)      score += SHIELD_ADV_RANK3;
-          else if (rank <= 4) score += SHIELD_ADV_RANK4PLUS;
-        }
+      Bitboard copy = shieldPawns;
+      while (copy) {
+        Square sq = popLsb(copy);
+        int rank = sq / 8;  // LERF: 0=rank1
+        int relRank = (color == Color::WHITE) ? rank : (7 - rank);
+        if (relRank == 2)       score += SHIELD_ADV_RANK3;
+        else if (relRank >= 3)  score += SHIELD_ADV_RANK4PLUS;
       }
     }
 
@@ -886,77 +867,47 @@ static void evalKnightOutposts(const BitboardSet& bb,
   // Central square constants (LERF) — used by outpost evaluation.
   constexpr Square SQ_D4 = 27, SQ_D5 = 35, SQ_E4 = 28, SQ_E5 = 36;
 
-  Bitboard whitePawns = bb.byPiece[0];
-  Bitboard blackPawns = bb.byPiece[6];
+  // Unified loop — evaluate outposts for both colors with parameterized
+  // pawn directions.  Enemy pawns that can advance to attack the knight
+  // come from ranks "above" (for white) or "below" (for black) in LERF.
+  for (int c = 0; c < 2; ++c) {
+    int sign = (c == 0) ? 1 : -1;
+    Bitboard knights       = bb.byPiece[c * 6 + 1];  // W_KNIGHT=1, B_KNIGHT=7
+    Bitboard friendlyPAtk  = (c == 0) ? whitePawnAtk : blackPawnAtk;
+    Bitboard enemyPawns    = (c == 0) ? bb.byPiece[6] : bb.byPiece[0];
 
-  Bitboard whitePawnAttacks = whitePawnAtk;
-  Bitboard blackPawnAttacks = blackPawnAtk;
+    while (knights) {
+      Square sq = popLsb(knights);
 
-  // --- White knights (index 1) ---
-  Bitboard wn = bb.byPiece[1];
-  while (wn) {
-    Square sq = popLsb(wn);
+      // Must be protected by a friendly pawn.
+      if (!(squareBB(sq) & friendlyPAtk)) continue;
 
-    // Must be protected by a friendly pawn.
-    if (!(squareBB(sq) & whitePawnAttacks)) continue;
+      // Must not be attackable by enemy pawns on adjacent files that can
+      // advance to reach this square.
+      int file = colOf(sq);
+      Bitboard adjFiles = 0;
+      if (file > 0) adjFiles |= fileBB(file - 1);
+      if (file < 7) adjFiles |= fileBB(file + 1);
 
-    // Must not be attackable by enemy pawns on adjacent files that can
-    // advance to reach this square.  Black pawns move downward in LERF
-    // (decreasing rank), so only black pawns on ranks ABOVE the knight
-    // (rank+1 .. 7) can advance down to attack it.
-    int file = colOf(sq);
-    Bitboard adjFiles = 0;
-    if (file > 0) adjFiles |= fileBB(file - 1);
-    if (file < 7) adjFiles |= fileBB(file + 1);
+      int rank = sq / 8;
+      // White: enemy (black) pawns above (rank+1..7) advance down to attack.
+      // Black: enemy (white) pawns below (0..rank-1) advance up to attack.
+      Bitboard dangerMask = (c == 0)
+          ? ~((static_cast<Bitboard>(1) << (8 * (rank + 1))) - 1)
+          : (rank > 0) ? (static_cast<Bitboard>(1) << (8 * rank)) - 1
+                       : static_cast<Bitboard>(0);
+      if (enemyPawns & adjFiles & dangerMask) continue;
 
-    int rank = sq / 8;
-    // Ranks strictly above: clear the lower (rank+1)*8 bits.
-    Bitboard aboveMask = ~((static_cast<Bitboard>(1) << (8 * (rank + 1))) - 1);
-    if (blackPawns & adjFiles & aboveMask) continue;
+      int bonusMg = OUTPOST_BONUS_MG;
+      int bonusEg = OUTPOST_BONUS_EG;
+      if (sq == SQ_D4 || sq == SQ_D5 || sq == SQ_E4 || sq == SQ_E5) {
+        bonusMg *= 2;
+        bonusEg *= 2;
+      }
 
-    int bonusMg = OUTPOST_BONUS_MG;
-    int bonusEg = OUTPOST_BONUS_EG;
-    if (sq == SQ_D4 || sq == SQ_D5 || sq == SQ_E4 || sq == SQ_E5) {
-      bonusMg *= 2;
-      bonusEg *= 2;
+      mgScore += sign * bonusMg;
+      egScore += sign * bonusEg;
     }
-
-    mgScore += bonusMg;
-    egScore += bonusEg;
-  }
-
-  // --- Black knights (index 7) ---
-  Bitboard bn = bb.byPiece[7];
-  while (bn) {
-    Square sq = popLsb(bn);
-
-    // Must be protected by a friendly pawn.
-    if (!(squareBB(sq) & blackPawnAttacks)) continue;
-
-    // White pawns move upward in LERF (increasing rank), so only white
-    // pawns on ranks BELOW the knight (0 .. rank-1) can advance up to
-    // attack it.
-    int file = colOf(sq);
-    Bitboard adjFiles = 0;
-    if (file > 0) adjFiles |= fileBB(file - 1);
-    if (file < 7) adjFiles |= fileBB(file + 1);
-
-    int rank = sq / 8;
-    // Ranks strictly below: keep only the lower rank*8 bits.
-    Bitboard belowMask = (rank > 0)
-        ? (static_cast<Bitboard>(1) << (8 * rank)) - 1
-        : 0;
-    if (whitePawns & adjFiles & belowMask) continue;
-
-    int bonusMg = OUTPOST_BONUS_MG;
-    int bonusEg = OUTPOST_BONUS_EG;
-    if (sq == SQ_D4 || sq == SQ_D5 || sq == SQ_E4 || sq == SQ_E5) {
-      bonusMg *= 2;
-      bonusEg *= 2;
-    }
-
-    mgScore -= bonusMg;
-    egScore -= bonusEg;
   }
 }
 
@@ -989,64 +940,49 @@ static void evalTrappedPieces(const BitboardSet& bb,
   Bitboard whiteKing    = bb.byPiece[5];   // W_KING
   Bitboard blackKing    = bb.byPiece[11];  // B_KING
 
-  // LERF squares for the trapped bishop patterns.
-  constexpr Square A7 = 48, B6 = 41, B8 = 57;
-  constexpr Square H7 = 55, G6 = 46, G8 = 62;
-  constexpr Square A2 = 8,  B3 = 17, B1 = 1;
-  constexpr Square H2 = 15, G3 = 22, G1 = 6;
+  // Trapped bishop lookup table — each entry maps a bishop square to the
+  // blocking pawn square.  White patterns use blackPawns; black patterns use
+  // whitePawns.  Replaces 8 individual if-statements.
+  // Reference: https://www.chessprogramming.org/Trapped_Pieces
+  struct BishopTrap { Square bishop; Square blocker; };
+  static constexpr BishopTrap WHITE_TRAPS[] = {
+    {48, 41}, {57, 41},   // a7/b8 blocked by b6
+    {55, 46}, {62, 46},   // h7/g8 blocked by g6
+  };
+  static constexpr BishopTrap BLACK_TRAPS[] = {
+    { 8, 17}, { 1, 17},   // a2/b1 blocked by b3
+    {15, 22}, { 6, 22},   // h2/g1 blocked by g3
+  };
 
-  // White bishop trapped on a7 by black pawn on b6.
-  if ((whiteBishops & squareBB(A7)) && (blackPawns & squareBB(B6)))
-    mgScore += TRAPPED_BISHOP_PENALTY;
-  // White bishop trapped on b8 by black pawn on b6 (deeper trap).
-  if ((whiteBishops & squareBB(B8)) && (blackPawns & squareBB(B6)))
-    mgScore += TRAPPED_BISHOP_PENALTY;
-  // White bishop trapped on h7 by black pawn on g6.
-  if ((whiteBishops & squareBB(H7)) && (blackPawns & squareBB(G6)))
-    mgScore += TRAPPED_BISHOP_PENALTY;
-  // White bishop trapped on g8 by black pawn on g6 (deeper trap).
-  if ((whiteBishops & squareBB(G8)) && (blackPawns & squareBB(G6)))
-    mgScore += TRAPPED_BISHOP_PENALTY;
+  for (const auto& t : WHITE_TRAPS) {
+    if ((whiteBishops & squareBB(t.bishop)) && (blackPawns & squareBB(t.blocker)))
+      mgScore += TRAPPED_BISHOP_PENALTY;
+  }
+  for (const auto& t : BLACK_TRAPS) {
+    if ((blackBishops & squareBB(t.bishop)) && (whitePawns & squareBB(t.blocker)))
+      mgScore -= TRAPPED_BISHOP_PENALTY;
+  }
 
-  // Black bishop trapped on a2 by white pawn on b3.
-  if ((blackBishops & squareBB(A2)) && (whitePawns & squareBB(B3)))
-    mgScore -= TRAPPED_BISHOP_PENALTY;
-  // Black bishop trapped on b1 by white pawn on b3 (deeper trap).
-  if ((blackBishops & squareBB(B1)) && (whitePawns & squareBB(B3)))
-    mgScore -= TRAPPED_BISHOP_PENALTY;
-  // Black bishop trapped on h2 by white pawn on g3.
-  if ((blackBishops & squareBB(H2)) && (whitePawns & squareBB(G3)))
-    mgScore -= TRAPPED_BISHOP_PENALTY;
-  // Black bishop trapped on g1 by white pawn on g3 (deeper trap).
-  if ((blackBishops & squareBB(G1)) && (whitePawns & squareBB(G3)))
-    mgScore -= TRAPPED_BISHOP_PENALTY;
+  // Trapped rook — rook hemmed in by own uncastled king.
+  // Each entry maps a rook square to the king squares that trap it.
+  struct RookTrap { Square rook; Bitboard kingMask; };
+  static constexpr RookTrap WHITE_ROOK_TRAPS[] = {
+    {7, squareBB(5) | squareBB(6)},    // h1 trapped by king on f1/g1
+    {0, squareBB(1) | squareBB(2)},    // a1 trapped by king on b1/c1
+  };
+  static constexpr RookTrap BLACK_ROOK_TRAPS[] = {
+    {63, squareBB(61) | squareBB(62)}, // h8 trapped by king on f8/g8
+    {56, squareBB(57) | squareBB(58)}, // a8 trapped by king on b8/c8
+  };
 
-  // Rook trapped by own uncastled king — king on f1/g1 traps rook on h1,
-  // king on b1/c1 traps rook on a1 (and mirrored for black).
-  constexpr Square A1 = 0, H1 = 7;
-  constexpr Square F1 = 5;
-  constexpr Square C1 = 2;
-  constexpr Square A8 = 56, H8 = 63;
-  constexpr Square F8 = 61;
-  constexpr Square C8 = 58;
-
-  // White rook trapped on h1 by king on f1 or g1.
-  if ((whiteRooks & squareBB(H1)) &&
-      (whiteKing & (squareBB(F1) | squareBB(G1))))
-    mgScore += TRAPPED_ROOK_PENALTY;
-  // White rook trapped on a1 by king on b1 or c1.
-  if ((whiteRooks & squareBB(A1)) &&
-      (whiteKing & (squareBB(B1) | squareBB(C1))))
-    mgScore += TRAPPED_ROOK_PENALTY;
-
-  // Black rook trapped on h8 by king on f8 or g8.
-  if ((blackRooks & squareBB(H8)) &&
-      (blackKing & (squareBB(F8) | squareBB(G8))))
-    mgScore -= TRAPPED_ROOK_PENALTY;
-  // Black rook trapped on a8 by king on b8 or c8.
-  if ((blackRooks & squareBB(A8)) &&
-      (blackKing & (squareBB(B8) | squareBB(C8))))
-    mgScore -= TRAPPED_ROOK_PENALTY;
+  for (const auto& t : WHITE_ROOK_TRAPS) {
+    if ((whiteRooks & squareBB(t.rook)) && (whiteKing & t.kingMask))
+      mgScore += TRAPPED_ROOK_PENALTY;
+  }
+  for (const auto& t : BLACK_ROOK_TRAPS) {
+    if ((blackRooks & squareBB(t.rook)) && (blackKing & t.kingMask))
+      mgScore -= TRAPPED_ROOK_PENALTY;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1297,26 +1233,17 @@ EVAL_CONST int BAD_BISHOP_EG = -3;
 
 static void evalBadBishop(const BitboardSet& bb,
                           int& mgScore, int& egScore) {
-  // White bishops
-  Bitboard wb = bb.byPiece[2];   // W_BISHOP
-  Bitboard wp = bb.byPiece[0];   // W_PAWN
-  while (wb) {
-    Square sq = popLsb(wb);
-    Bitboard colorMask = (squareBB(sq) & DARK_SQUARES) ? DARK_SQUARES : LIGHT_SQUARES;
-    int blocked = popcount(wp & colorMask);
-    mgScore += blocked * BAD_BISHOP_MG;
-    egScore += blocked * BAD_BISHOP_EG;
-  }
-
-  // Black bishops
-  Bitboard bbishops = bb.byPiece[8];   // B_BISHOP
-  Bitboard bp = bb.byPiece[6];          // B_PAWN
-  while (bbishops) {
-    Square sq = popLsb(bbishops);
-    Bitboard colorMask = (squareBB(sq) & DARK_SQUARES) ? DARK_SQUARES : LIGHT_SQUARES;
-    int blocked = popcount(bp & colorMask);
-    mgScore -= blocked * BAD_BISHOP_MG;
-    egScore -= blocked * BAD_BISHOP_EG;
+  for (int c = 0; c < 2; ++c) {
+    int sign = (c == 0) ? 1 : -1;
+    Bitboard bishops = bb.byPiece[c * 6 + 2];   // W_BISHOP=2, B_BISHOP=8
+    Bitboard pawns   = bb.byPiece[c * 6];        // W_PAWN=0,   B_PAWN=6
+    while (bishops) {
+      Square sq = popLsb(bishops);
+      Bitboard colorMask = (squareBB(sq) & DARK_SQUARES) ? DARK_SQUARES : LIGHT_SQUARES;
+      int blocked = popcount(pawns & colorMask);
+      mgScore += sign * blocked * BAD_BISHOP_MG;
+      egScore += sign * blocked * BAD_BISHOP_EG;
+    }
   }
 }
 
@@ -1333,52 +1260,34 @@ EVAL_CONST int ROOK_BEHIND_OWN_PASSER_EG   =  5;
 EVAL_CONST int ROOK_BEHIND_ENEMY_PASSER_EG  = -40;
 
 static void evalRookBehindPasser(const BitboardSet& bb, int& egScore) {
-  Bitboard whitePawns = bb.byPiece[0];
-  Bitboard blackPawns = bb.byPiece[6];
-  Bitboard whiteRooks = bb.byPiece[3];   // W_ROOK
-  Bitboard blackRooks = bb.byPiece[9];   // B_ROOK
+  for (int c = 0; c < 2; ++c) {
+    int sign = (c == 0) ? 1 : -1;
+    Color color         = static_cast<Color>(c);
+    Bitboard pawns      = bb.byPiece[c * 6];          // own pawns
+    Bitboard enemyPawns = bb.byPiece[(1 - c) * 6];    // enemy pawns
+    Bitboard ownRooks   = bb.byPiece[c * 6 + 3];      // own rooks
+    Bitboard enemyRooks = bb.byPiece[(1 - c) * 6 + 3]; // enemy rooks
 
-  // Check white passers with rooks on the same file
-  Bitboard wp = whitePawns;
-  while (wp) {
-    Square sq = popLsb(wp);
-    if (!isPassed(sq, Color::WHITE, blackPawns)) continue;
-    int file = colOf(sq);
-    Bitboard fileMask = FILE_A << file;
+    Bitboard p = pawns;
+    while (p) {
+      Square sq = popLsb(p);
+      if (!isPassed(sq, color, enemyPawns)) continue;
+      Bitboard fileMask = FILE_A << colOf(sq);
 
-    // Own rook behind the passer (lower rank for white)
-    Bitboard ownRooksOnFile = whiteRooks & fileMask;
-    while (ownRooksOnFile) {
-      Square rsq = popLsb(ownRooksOnFile);
-      if (rsq < sq) egScore += ROOK_BEHIND_OWN_PASSER_EG;
-    }
-    // Enemy rook behind our passer (lower rank = behind from black's view)
-    Bitboard enemyRooksOnFile = blackRooks & fileMask;
-    while (enemyRooksOnFile) {
-      Square rsq = popLsb(enemyRooksOnFile);
-      if (rsq < sq) egScore += ROOK_BEHIND_ENEMY_PASSER_EG;
-    }
-  }
-
-  // Check black passers with rooks on the same file
-  Bitboard bpawns = blackPawns;
-  while (bpawns) {
-    Square sq = popLsb(bpawns);
-    if (!isPassed(sq, Color::BLACK, whitePawns)) continue;
-    int file = colOf(sq);
-    Bitboard fileMask = FILE_A << file;
-
-    // Own rook behind the passer (higher rank for black)
-    Bitboard ownRooksOnFile = blackRooks & fileMask;
-    while (ownRooksOnFile) {
-      Square rsq = popLsb(ownRooksOnFile);
-      if (rsq > sq) egScore -= ROOK_BEHIND_OWN_PASSER_EG;
-    }
-    // Enemy rook behind black's passer (higher rank = behind from white's view)
-    Bitboard enemyRooksOnFile = whiteRooks & fileMask;
-    while (enemyRooksOnFile) {
-      Square rsq = popLsb(enemyRooksOnFile);
-      if (rsq > sq) egScore -= ROOK_BEHIND_ENEMY_PASSER_EG;
+      // "Behind" the passer: lower rank for white (rsq < sq),
+      // higher rank for black (rsq > sq).
+      Bitboard ownOnFile = ownRooks & fileMask;
+      while (ownOnFile) {
+        Square rsq = popLsb(ownOnFile);
+        if ((c == 0) ? (rsq < sq) : (rsq > sq))
+          egScore += sign * ROOK_BEHIND_OWN_PASSER_EG;
+      }
+      Bitboard enemyOnFile = enemyRooks & fileMask;
+      while (enemyOnFile) {
+        Square rsq = popLsb(enemyOnFile);
+        if ((c == 0) ? (rsq < sq) : (rsq > sq))
+          egScore += sign * ROOK_BEHIND_ENEMY_PASSER_EG;
+      }
     }
   }
 }
