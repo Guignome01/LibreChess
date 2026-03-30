@@ -20,21 +20,21 @@
 // The task is cooperative-cancellable via ctx->cancel → SearchLimits.stop.
 // ---------------------------------------------------------------------------
 
-LibreChessProvider::LibreChessProvider(int depth, uint32_t moveTimeMs,
-                                       char playerColor, ILogger* logger)
-    : EngineProvider(logger),
-      depth_(depth),
-      moveTimeMs_(moveTimeMs),
-      playerColor_(playerColor) {}
+LibreChessProvider::LibreChessProvider(int level, char playerColor, ILogger* logger)
+    : EngineProvider(logger), playerColor_(playerColor) {
+  // Clamp to valid range and resolve depth from the level table.
+  level_ = (level < 1) ? DEFAULT_LEVEL : (level > LEVEL_COUNT) ? DEFAULT_LEVEL : level;
+  depth_ = LEVELS[level_ - 1].depth;
+}
 
 bool LibreChessProvider::initialize(EngineInitResult& result) {
   logger_.info("LibreChessProvider: initializing on-board engine");
-  logger_.infof("  depth=%d, moveTimeMs=%u", depth_, moveTimeMs_);
+  logger_.infof("  level=%d, depth=%d", level_, depth_);
   result.playerColor = playerColor_;
   result.fen = "";  // Starting position
   result.mode = GameModeId::BOT;
   result.engineId = ENGINE_ID;
-  result.difficulty = static_cast<uint8_t>(depth_);
+  result.difficulty = static_cast<uint8_t>(level_);
   result.canResume = true;
   return true;
 }
@@ -43,14 +43,11 @@ void LibreChessProvider::requestMove(const std::string& fen) {
   auto* ctx = new TaskContext();
   ctx->fen = fen;
   ctx->depth = depth_;
-  ctx->moveTimeMs = moveTimeMs_;
   // Stack budget for lcTask (64 KiB = 65536 bytes):
   //   findBestMove frame (MoveList + SearchResult) .... ~1,200 B
   //   Per negamax ply (MovePicker with int16_t arrays) . ~2,200 B × depth
   //   Per quiescence ply (MoveList + int16_t scores) .. ~1,200 B × QS depth
-  //   Extensions (check, singular, recapture) push effective depth
-  //   4-8 plies beyond nominal → depth 15 + 8 ext + 16 QS ≈ 39 plies.
-  //   Estimated worst case: 23 × 2,200 + 16 × 1,200 + 3,000 ≈ 72 KiB.
+  //   Max depth 8 + extensions (~6) = 14 negamax + 16 QS ≈ 50 KiB.
   //   64 KiB provides comfortable headroom for all difficulty levels.
   spawnTask(ctx, "lcTask", taskFunction, 65536);
 }
@@ -103,11 +100,9 @@ void LibreChessProvider::taskFunction(void* param) {
   engine->setTimeFunc([]() -> uint32_t { return millis(); });
   engine->setExternalStop(&ctx->cancel);
 
-  // Build search limits
+  // Build search limits (depth-based only; time control removed)
   LibreChess::search::SearchLimits limits;
-  if (ctx->depth > 0) limits.maxDepth = ctx->depth;
-  if (ctx->moveTimeMs > 0) limits.hardTimeMs = ctx->moveTimeMs;
-  if (ctx->depth <= 0 && ctx->moveTimeMs <= 0) limits.maxDepth = 6;
+  limits.maxDepth = (ctx->depth > 0) ? ctx->depth : 6;
 
   // Run the search — returns structured result, no string parsing needed
   auto result = engine->calculateMove(ctx->fen, limits);

@@ -45,7 +45,7 @@ WiFiManagerESP32* WiFiManagerESP32::instance = nullptr;
 // WiFiManagerESP32
 // ===========================
 
-WiFiManagerESP32::WiFiManagerESP32(BoardDriver* bd, LittleFSStorage* st) : boardDriver(bd), storage_(st), server(AP_PORT), gameMode("0"), lichessToken(""), stockfishSettings(), botPlayerColor('w'), currentFen(INITIAL_FEN), hasPendingEdit(false), boardEvaluation(0.0f) {}
+WiFiManagerESP32::WiFiManagerESP32(BoardDriver* bd, LittleFSStorage* st) : boardDriver(bd), storage_(st), server(AP_PORT), gameMode("0"), lichessToken(""), botPlayerColor('w'), currentFen(INITIAL_FEN), hasPendingEdit(false), boardEvaluation(0.0f) {}
 
 void WiFiManagerESP32::begin() {
   Serial.println("=== Starting LibreChess WiFi Manager (ESP32) ===");
@@ -668,11 +668,12 @@ void WiFiManagerESP32::handleGameSelection(AsyncWebServerRequest* request) {
   if (mode == 2) {
     if (request->hasArg("difficulty") && request->hasArg("playerColor")) {
       int diffLevel = request->arg("difficulty").toInt();
+      if (diffLevel < 1 || diffLevel > 8) diffLevel = 4;
       botPlayerColor = (request->arg("playerColor") == "white") ? 'w' : 'b';
-      stockfishSettings = StockfishSettings::fromLevel(diffLevel);
+      botDifficultyLevel_ = diffLevel;
       botEngine = request->hasArg("engine") ? request->arg("engine") : "stockfish";
-      Serial.printf("Bot configuration received: Engine=%s, Depth=%d, Player is %s\n",
-                     botEngine.c_str(), stockfishSettings.depth,
+      Serial.printf("Bot configuration received: Engine=%s, Level=%d, Player is %s\n",
+                     botEngine.c_str(), botDifficultyLevel_,
                      botPlayerColor == 'w' ? "White" : "Black");
     } else {
       sendJsonError(request, 400, "Missing bot parameters");

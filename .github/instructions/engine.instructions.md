@@ -34,9 +34,9 @@ Providers are composed into `BotMode` via pointer injection (`BotMode` owns the 
 
 ## StockfishProvider
 
-One-shot HTTP provider. Constructor: `StockfishProvider(settings, playerColor, logger)`. Forwards `logger` to `EngineProvider`. Each `requestMove()` spawns a FreeRTOS task that calls the Stockfish API, parses the JSON response, and stores the best move + centipawn evaluation. `checkResult()` uses `pollResult()` (no extra fields beyond base). `initialize()` always succeeds (no server handshake needed).
+One-shot HTTP provider. Constructor: `StockfishProvider(level, playerColor, logger)`. Level (1–8) selects from `StockfishProvider::LEVELS[8]` (depths 6–16, matching the stockfish.online API's valid range). Timeout scales with depth. Forwards `logger` to `EngineProvider`. Each `requestMove()` spawns a FreeRTOS task that calls the Stockfish API, parses the JSON response, and stores the best move + centipawn evaluation. `checkResult()` uses `pollResult()` (no extra fields beyond base). `initialize()` always succeeds (no server handshake needed).
 
-Configuration via `StockfishSettings` — `depth` (1–15), `timeoutMs`, `maxRetries`. Has 8 named presets (`beginner` through `master`) and a `fromLevel(1–8)` factory.
+Configuration via `StockfishSettings` — `depth`, `timeoutMs`, `maxRetries`. Settings are computed internally from the difficulty level; the preset factory and named presets were removed.
 
 ## LichessProvider
 
@@ -46,13 +46,13 @@ Configuration via `LichessConfig` — just an OAuth `apiToken`.
 
 ## LibreChessProvider
 
-On-board engine provider. Constructor: `LibreChessProvider(depth, moveTimeMs, playerColor, logger)`. Forwards `logger` to `EngineProvider`. Uses the `Engine` facade from `lib/engine/` — no network required. `initialize()` always succeeds (no handshake needed), sets `mode = GameModeId::BOT`, `canResume = true`.
+On-board engine provider. Constructor: `LibreChessProvider(level, playerColor, logger)`. Level (1–8) selects from `LibreChessProvider::LEVELS[8]` (depths 1–8). Forwards `logger` to `EngineProvider`. Uses the `Engine` facade from `lib/engine/` — no network required. `initialize()` always succeeds (no handshake needed), sets `mode = GameModeId::BOT`, `canResume = true`.
 
-Each `requestMove()` spawns a FreeRTOS task (16 KiB stack) that:
+Each `requestMove()` spawns a FreeRTOS task (64 KiB stack) that:
 1. Sizes the TT based on available heap (`heap_caps_get_free_size / 4`, capped at 128 KiB, minimum 64 entries)
 2. Creates an `Engine` instance with the computed TT size, sets `millis` as the time function
 3. Wires `ctx->cancel` → `engine.setExternalStop()` for cooperative cancellation
-4. Builds `SearchLimits` (depth and/or moveTime) and calls `engine.calculateMove(fen, limits)`
+4. Builds `SearchLimits` (depth-based) and calls `engine.calculateMove(fen, limits)`
 5. Extracts best move coordinate via `notation::toCoordinate()` and evaluation from `SearchResult`
 
 `checkResult()` uses `peekResult()` + `finishTask()` to read the evaluation before cleanup. `getEvaluation()` returns the last search score for the web UI eval bar.
@@ -77,7 +77,7 @@ API modules handle raw HTTP + TLS. Providers handle chess-domain logic and FreeR
 - **Per-ply negamax** — ~2.2 KiB per ply (MovePicker with MoveList 658B + int16_t scores[218] 436B + int16_t seeValues[218] 436B + other fields + quietsSearched[64] + capturesSearched[64] + UndoInfo + locals). Uses `int16_t` arrays to reduce per-ply stack footprint (all score values fit: MVV-LVA ≤ 600, SEE ≤ 900, history ≤ ±7000).
 - **Per-ply quiescence** — ~1.2 KiB per ply (MoveList 658B + int16_t capScores[218] 436B + UndoInfo + locals).
 
-Estimated worst-case stack at depth 15 + extensions: 21 negamax plies + 8 QS plies ≈ 57 KiB (fits in 64 KiB). See `docs/development/additional-topics.md` for the full budget breakdown.
+Max depth 8 + extensions (~6) + 16 QS plies ≈ 50 KiB (fits in 64 KiB). See `docs/development/additional-topics.md` for the full budget breakdown.
 
 ## Design Decisions
 

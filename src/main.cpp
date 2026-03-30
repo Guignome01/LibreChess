@@ -2,7 +2,6 @@
 #include "game_mode/player_mode.h"
 #include "game_mode/bot_mode.h"
 #include "engine/stockfish/stockfish_provider.h"
-#include "engine/stockfish/stockfish_settings.h"
 #include "engine/lichess/lichess_provider.h"
 #include "engine/lichess/lichess_config.h"
 #include "engine/librechess/librechess_provider.h"
@@ -32,7 +31,7 @@ enum class AppMode {
   SENSOR_TEST = 4
 };
 
-StockfishSettings stockfishSettings = StockfishSettings::medium();
+int botDifficultyLevel = 4;  // 1-8 difficulty level
 char playerColor = 'w';
 String botEngine = "stockfish";
 LichessConfig lichessConfig = {""};
@@ -152,7 +151,7 @@ void checkForResumableGame() {
         currentMode = AppMode::BOT;
         resumingGame = true;
         playerColor = (char)resumePlayerColor;
-        stockfishSettings = StockfishSettings(meta.difficulty);
+        botDifficultyLevel = meta.difficulty;  // 1-8 level stored in game header
         botEngine = (meta.engineId == LibreChessProvider::ENGINE_ID) ? "librechess" : "stockfish";
         break;
     }
@@ -193,7 +192,7 @@ void loop() {
         break;
       case 2:
         currentMode = AppMode::BOT;
-        stockfishSettings = wifiManager.getStockfishSettings();
+        botDifficultyLevel = wifiManager.getBotDifficultyLevel();
         playerColor = wifiManager.getBotPlayerColor();
         botEngine = wifiManager.getBotEngine();
         break;
@@ -341,8 +340,8 @@ void handleMenuResult(int result) {
     case MenuId::DIFF_1: case MenuId::DIFF_2: case MenuId::DIFF_3: case MenuId::DIFF_4:
     case MenuId::DIFF_5: case MenuId::DIFF_6: case MenuId::DIFF_7: case MenuId::DIFF_8: {
       int level = result - MenuId::DIFF_1 + 1;
-      stockfishSettings = StockfishSettings::fromLevel(level);
-      Serial.printf("Difficulty: Level %d (depth %d)\n", level, stockfishSettings.depth);
+      botDifficultyLevel = level;
+      Serial.printf("Difficulty: Level %d\n", level);
       navigator.push(&botColorMenu);
       break;
     }
@@ -396,12 +395,12 @@ void initializeSelectedMode(AppMode mode) {
       activeGame->begin();
       break;
     case AppMode::BOT: {
-      Serial.printf("Starting 'Chess Bot' (Engine: %s, Depth: %d, Player is %s)...\n", botEngine.c_str(), stockfishSettings.depth, playerColor == 'w' ? "White" : "Black");
+      Serial.printf("Starting 'Chess Bot' (Engine: %s, Level: %d, Player is %s)...\n", botEngine.c_str(), botDifficultyLevel, playerColor == 'w' ? "White" : "Black");
       EngineProvider* provider;
       if (botEngine == "librechess") {
-        provider = new LibreChessProvider(stockfishSettings.depth, stockfishSettings.timeoutMs, playerColor, &logger);
+        provider = new LibreChessProvider(botDifficultyLevel, playerColor, &logger);
       } else {
-        provider = new StockfishProvider(stockfishSettings, playerColor, &logger);
+        provider = new StockfishProvider(botDifficultyLevel, playerColor, &logger);
       }
       activeGame = new BotMode(&boardDriver, &wifiManager, &chess, provider, &logger);
       activeGame->begin();

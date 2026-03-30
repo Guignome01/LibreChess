@@ -11,6 +11,16 @@ using namespace LibreChess;
 
 enum class GameModeId : uint8_t;  // Defined in game_mode.h.
 
+// ---------------------------------------------------------------------------
+// Difficulty level descriptor — each engine provider defines a static array
+// of these (up to 8 entries, one per board-row square) mapping a 1-based
+// level index to a human-readable label and a search depth.
+// ---------------------------------------------------------------------------
+struct DifficultyLevel {
+  const char* label;   // Human-readable name (e.g. "Beginner")
+  uint8_t depth;       // Engine search depth for this level
+};
+
 // Result from engine initialization (populated by the provider during begin()).
 struct EngineInitResult {
   char playerColor = 'w';       // Discovered at runtime (Lichess) or passed in (Stockfish)

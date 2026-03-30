@@ -372,7 +372,7 @@
         const RESULT_NAMES = ['In Progress', 'Checkmate', 'Stalemate', 'Draw (50-move)', 'Draw (3-fold)', 'Resignation', 'Draw (insufficient)', 'Draw (agreement)', 'Timeout', 'Aborted'];
         const MODE_NAMES = { 1: 'Human vs Human', 2: 'vs Bot' };
         const ENGINE_NAMES = { 0: 'Stockfish', 1: 'LibreChess' };
-        const DEPTH_NAMES = { 1: 'Beginner', 3: 'Easy', 5: 'Intermediate', 7: 'Medium', 9: 'Advanced', 11: 'Hard', 13: 'Expert', 15: 'Master' };
+        const LEVEL_NAMES = { 1: 'Beginner', 2: 'Easy', 3: 'Intermediate', 4: 'Medium', 5: 'Advanced', 6: 'Hard', 7: 'Expert', 8: 'Master' };
 
         function promoCodeToChar(code) {
             switch (code) {
@@ -788,7 +788,7 @@
                         let subtitle = MODE_NAMES[game.mode] || 'Game';
                         if (game.mode === 2) {
                             const eng = ENGINE_NAMES[game.engineId] || 'Bot';
-                            subtitle = 'vs ' + eng + ' (' + (DEPTH_NAMES[game.difficulty] || 'D' + game.difficulty) + ')';
+                            subtitle = 'vs ' + eng + ' (' + (LEVEL_NAMES[game.difficulty] || 'Level ' + game.difficulty) + ')';
                         }
 
                         const card = $('<div class=\"game-card\" data-id=\"' + game.id + '\"></div>');
@@ -890,7 +890,7 @@
         // Helper: format opponent/mode text from game metadata
         function formatOpponent(meta) {
             if (meta.mode === 2) {
-                const diff = DEPTH_NAMES[meta.difficulty] || ('Depth ' + meta.difficulty);
+                const diff = LEVEL_NAMES[meta.difficulty] || ('Level ' + meta.difficulty);
                 const eng = ENGINE_NAMES[meta.engineId] || 'Bot';
                 const color = meta.playerColor === 'w' ? 'White' : 'Black';
                 return 'vs ' + eng + ' (' + diff + ') as ' + color;

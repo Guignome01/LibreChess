@@ -4,9 +4,14 @@
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
 
-StockfishProvider::StockfishProvider(const StockfishSettings& settings, char playerColor,
-                                     ILogger* logger)
-    : EngineProvider(logger), settings_(settings), playerColor_(playerColor) {}
+StockfishProvider::StockfishProvider(int level, char playerColor, ILogger* logger)
+    : EngineProvider(logger), playerColor_(playerColor) {
+  // Clamp to valid range and resolve depth + timeout from the level table.
+  level_ = (level < 1) ? DEFAULT_LEVEL : (level > LEVEL_COUNT) ? DEFAULT_LEVEL : level;
+  int depth = LEVELS[level_ - 1].depth;
+  int timeoutMs = 10000 + depth * 3500;  // Scale timeout with depth
+  settings_ = StockfishSettings(depth, timeoutMs);
+}
 
 bool StockfishProvider::initialize(EngineInitResult& result) {
   logger_.infof("StockfishProvider: depth=%d, timeout=%dms, retries=%d",
@@ -14,7 +19,7 @@ bool StockfishProvider::initialize(EngineInitResult& result) {
   result.playerColor = playerColor_;
   result.fen = "";  // Starting position
   result.mode = GameModeId::BOT;
-  result.difficulty = static_cast<uint8_t>(settings_.depth);
+  result.difficulty = static_cast<uint8_t>(level_);
   result.canResume = true;
   return true;
 }

@@ -11,7 +11,17 @@ class StockfishProvider : public EngineProvider {
   /// Provider identity stored in GameMeta for game resume.
   static constexpr uint8_t ENGINE_ID = 0;
 
-  explicit StockfishProvider(const StockfishSettings& settings, char playerColor = 'w',
+  /// 8 difficulty levels mapping to the Stockfish API's valid depth range (6–16).
+  static constexpr int LEVEL_COUNT = 8;
+  static constexpr DifficultyLevel LEVELS[LEVEL_COUNT] = {
+      {"Beginner", 6},  {"Easy", 7},         {"Intermediate", 8},
+      {"Medium", 9},    {"Advanced", 10},     {"Hard", 12},
+      {"Expert", 14},   {"Master", 16},
+  };
+  static constexpr int DEFAULT_LEVEL = 4;  // Medium
+
+  /// Construct from a 1-based difficulty level (1–8). Clamped to valid range.
+  explicit StockfishProvider(int level = DEFAULT_LEVEL, char playerColor = 'w',
                              ILogger* logger = nullptr);
 
   bool initialize(EngineInitResult& result) override;
@@ -30,6 +40,7 @@ class StockfishProvider : public EngineProvider {
 
   static void taskFunction(void* param);
 
+  int level_;
   StockfishSettings settings_;
   char playerColor_;
   int currentEvaluation_ = 0;

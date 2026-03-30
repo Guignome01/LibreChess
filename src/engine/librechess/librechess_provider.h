@@ -17,11 +17,17 @@ class LibreChessProvider : public EngineProvider {
   /// Provider identity stored in GameMeta for game resume.
   static constexpr uint8_t ENGINE_ID = 1;
 
-  // `depth`: max search depth (0 = use time control instead).
-  // `moveTimeMs`: time per move in ms (0 = use depth instead).
-  // `playerColor`: 'w' or 'b' — reported through EngineInitResult.
-  // At least one of depth/moveTimeMs should be non-zero.
-  explicit LibreChessProvider(int depth = 6, uint32_t moveTimeMs = 0,
+  /// 8 difficulty levels for the on-board engine (depths 1–8).
+  static constexpr int LEVEL_COUNT = 8;
+  static constexpr DifficultyLevel LEVELS[LEVEL_COUNT] = {
+      {"Beginner", 1},  {"Easy", 2},         {"Intermediate", 3},
+      {"Medium", 4},    {"Advanced", 5},      {"Hard", 6},
+      {"Expert", 7},    {"Master", 8},
+  };
+  static constexpr int DEFAULT_LEVEL = 4;  // Medium
+
+  /// Construct from a 1-based difficulty level (1–8). Clamped to valid range.
+  explicit LibreChessProvider(int level = DEFAULT_LEVEL,
                               char playerColor = 'w',
                               ILogger* logger = nullptr);
 
@@ -34,13 +40,12 @@ class LibreChessProvider : public EngineProvider {
   struct TaskContext : BaseTaskContext {
     std::string fen;
     int depth;
-    uint32_t moveTimeMs;
   };
 
   static void taskFunction(void* param);
 
+  int level_;
   int depth_;
-  uint32_t moveTimeMs_;
   char playerColor_;
   int currentEvaluation_ = 0;
 };

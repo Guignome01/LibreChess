@@ -3,7 +3,6 @@
 
 #include "board_driver.h"
 #include "observer.h"
-#include "engine/stockfish/stockfish_settings.h"
 #include <Arduino.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
@@ -71,7 +70,7 @@ class WiFiManagerESP32 : public IGameObserver {
   String gameMode;
   String lichessToken;
 
-  StockfishSettings stockfishSettings = StockfishSettings::medium();
+  int botDifficultyLevel_ = 4; // 1-8 difficulty level (engine resolves to depth)
   char botPlayerColor = 'w'; // 'w' or 'b' — color the local player controls in bot mode
   String botEngine = "stockfish"; // "stockfish" or "librechess"
 
@@ -170,7 +169,7 @@ class WiFiManagerESP32 : public IGameObserver {
   int getSelectedGameMode() const { return gameMode.toInt(); }
   void resetGameSelection() { gameMode = "0"; };
   // Bot configuration
-  StockfishSettings getStockfishSettings() { return stockfishSettings; }
+  int getBotDifficultyLevel() { return botDifficultyLevel_; }
   char getBotPlayerColor() { return botPlayerColor; }
   String getBotEngine() { return botEngine; }
   // Lichess configuration

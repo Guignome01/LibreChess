@@ -278,7 +278,7 @@ For game resume: `begin()` detects the `resumingGame` flag, skips piece setup, c
 The `MenuNavigator` manages a stack of `BoardMenu` instances (max depth 4):
 
 - **Game selection** (root) → 4 center squares: Blue (ChessMoves), Green (Bot), Yellow (Lichess), Red (SensorTest)
-- **Bot difficulty** (pushed on Bot selection) → 8 squares across row 3, colors green→blue, depths 3→17
+- **Bot difficulty** (pushed on Bot selection) → 8 squares across row 3, colors green→blue, levels 1–8 (engine resolves level → depth)
 - **Bot color** (pushed on difficulty selection) → 3 squares: White, DimWhite (play as Black), Yellow (random)
 
 Menu IDs use distinct ranges per level (0–9 root, 10–19 difficulty, 20–29 color) so `handleMenuResult()` can route by ID value alone — no callbacks or virtual dispatch.
@@ -439,20 +439,33 @@ All menu layout data lives in `menu_config.h/cpp`:
 - Parses JSON responses for best move, evaluation, and continuation line
 - Connection uses TLS with `setInsecure()` (no certificate pinning)
 
-`StockfishSettings` (in `engine/stockfish/stockfish_settings.h`) defines 8 difficulty presets:
+Each engine provider defines a static `LEVELS[8]` array mapping difficulty level (1–8) to a label and search depth. `GameMeta.difficulty` stores the level number (1–8), not the raw depth. Providers are constructed with a level and player color, then passed to `BotMode` as an `EngineProvider*`.
 
-| Level | Name | Depth | Timeout |
-|-------|------|-------|---------|
-| 1 | Beginner | 3 | 10s |
-| 2 | Easy | 5 | 15s |
-| 3 | Intermediate | 7 | 20s |
-| 4 | Medium | 9 | 25s |
-| 5 | Advanced | 11 | 35s |
-| 6 | Hard | 13 | 45s |
-| 7 | Expert | 15 | 55s |
-| 8 | Master | 17 | 65s |
+**StockfishProvider** (depths 6–16, matching the stockfish.online API):
 
-`StockfishSettings::fromLevel(int)` is a factory that selects by 1-based level. `StockfishProvider` is constructed with a `StockfishSettings` and player color, then passed to `BotMode` as an `EngineProvider*`.
+| Level | Name | Depth |
+|-------|------|-------|
+| 1 | Beginner | 6 |
+| 2 | Easy | 7 |
+| 3 | Intermediate | 8 |
+| 4 | Medium | 9 |
+| 5 | Advanced | 10 |
+| 6 | Hard | 12 |
+| 7 | Expert | 14 |
+| 8 | Master | 16 |
+
+**LibreChessProvider** (depths 1–8, safe for ESP32 stack):
+
+| Level | Name | Depth |
+|-------|------|-------|
+| 1 | Beginner | 1 |
+| 2 | Easy | 2 |
+| 3 | Intermediate | 3 |
+| 4 | Medium | 4 |
+| 5 | Advanced | 5 |
+| 6 | Hard | 6 |
+| 7 | Expert | 7 |
+| 8 | Master | 8 |
 
 ### LibreChess (On-Board Engine)
 
@@ -462,7 +475,7 @@ The on-board engine runs entirely within `lib/core/` — no network, no external
 
 - **`uci`** (`uci.h/cpp`) — Transport-agnostic UCI protocol handler. `UCIStream` is the abstract I/O interface (Serial, string buffer). `UCIHandler` owns a `Position`, `TranspositionTable`, and stop flag; dispatches standard UCI commands (`uci`, `isready`, `ucinewgame`, `position`, `go`, `stop`, `quit`). Simple time management from game clocks (remaining/30 + increment/2). `StringUCIStream` provides in-memory I/O for testing and in-process use.
 
-`LibreChessProvider` is constructed with depth, moveTimeMs, and player color, then passed to `BotMode` as an `EngineProvider*`. `SerialUCIStream` enables external UCI GUIs (Arena, CuteChess) to drive the engine over the ESP32's UART.
+`LibreChessProvider` is constructed with a difficulty level (1–8) and player color, then passed to `BotMode` as an `EngineProvider*`. `SerialUCIStream` enables external UCI GUIs (Arena, CuteChess) to drive the engine over the ESP32's UART.
 
 ### Lichess
 
