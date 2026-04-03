@@ -49,18 +49,6 @@ static void test_make_piece(void) {
 static void test_piece_predicates(void) {
   TEST_ASSERT_TRUE(isEmpty(Piece::NONE));
   TEST_ASSERT_FALSE(isEmpty(Piece::W_PAWN));
-
-  TEST_ASSERT_TRUE(isWhite(Piece::W_QUEEN));
-  TEST_ASSERT_FALSE(isWhite(Piece::B_QUEEN));
-  TEST_ASSERT_FALSE(isWhite(Piece::NONE));
-
-  TEST_ASSERT_TRUE(isBlack(Piece::B_ROOK));
-  TEST_ASSERT_FALSE(isBlack(Piece::W_ROOK));
-  TEST_ASSERT_FALSE(isBlack(Piece::NONE));
-
-  TEST_ASSERT_TRUE(isColor(Piece::W_KNIGHT, Color::WHITE));
-  TEST_ASSERT_FALSE(isColor(Piece::W_KNIGHT, Color::BLACK));
-  TEST_ASSERT_FALSE(isColor(Piece::NONE, Color::WHITE));
 }
 
 // ===========================================================================
@@ -118,41 +106,6 @@ static void test_piece_type_to_char(void) {
   TEST_ASSERT_EQUAL_CHAR('Q', pieceTypeToChar(PieceType::QUEEN));
   TEST_ASSERT_EQUAL_CHAR('K', pieceTypeToChar(PieceType::KING));
   TEST_ASSERT_EQUAL_CHAR(' ', pieceTypeToChar(PieceType::NONE));
-}
-
-// ===========================================================================
-// Piece — material values
-// ===========================================================================
-
-static void test_piece_value(void) {
-  TEST_ASSERT_EQUAL_FLOAT(1.0f, pieceValue(Piece::W_PAWN));
-  TEST_ASSERT_EQUAL_FLOAT(3.0f, pieceValue(Piece::W_KNIGHT));
-  TEST_ASSERT_EQUAL_FLOAT(3.0f, pieceValue(Piece::W_BISHOP));
-  TEST_ASSERT_EQUAL_FLOAT(5.0f, pieceValue(Piece::W_ROOK));
-  TEST_ASSERT_EQUAL_FLOAT(9.0f, pieceValue(Piece::W_QUEEN));
-  TEST_ASSERT_EQUAL_FLOAT(0.0f, pieceValue(Piece::W_KING));
-  TEST_ASSERT_EQUAL_FLOAT(1.0f, pieceValue(Piece::B_PAWN));
-  TEST_ASSERT_EQUAL_FLOAT(9.0f, pieceValue(Piece::B_QUEEN));
-  TEST_ASSERT_EQUAL_FLOAT(0.0f, pieceValue(Piece::NONE));
-}
-
-static void test_piece_value_all_black(void) {
-  TEST_ASSERT_EQUAL_FLOAT(1.0f, pieceValue(Piece::B_PAWN));
-  TEST_ASSERT_EQUAL_FLOAT(3.0f, pieceValue(Piece::B_KNIGHT));
-  TEST_ASSERT_EQUAL_FLOAT(3.0f, pieceValue(Piece::B_BISHOP));
-  TEST_ASSERT_EQUAL_FLOAT(5.0f, pieceValue(Piece::B_ROOK));
-  TEST_ASSERT_EQUAL_FLOAT(9.0f, pieceValue(Piece::B_QUEEN));
-  TEST_ASSERT_EQUAL_FLOAT(0.0f, pieceValue(Piece::B_KING));
-}
-
-static void test_pieceTypeValue_all(void) {
-  TEST_ASSERT_EQUAL_FLOAT(1.0f, pieceTypeValue(PieceType::PAWN));
-  TEST_ASSERT_EQUAL_FLOAT(3.0f, pieceTypeValue(PieceType::KNIGHT));
-  TEST_ASSERT_EQUAL_FLOAT(3.0f, pieceTypeValue(PieceType::BISHOP));
-  TEST_ASSERT_EQUAL_FLOAT(5.0f, pieceTypeValue(PieceType::ROOK));
-  TEST_ASSERT_EQUAL_FLOAT(9.0f, pieceTypeValue(PieceType::QUEEN));
-  TEST_ASSERT_EQUAL_FLOAT(0.0f, pieceTypeValue(PieceType::KING));
-  TEST_ASSERT_EQUAL_FLOAT(0.0f, pieceTypeValue(PieceType::NONE));
 }
 
 static void test_charToPiece_all_valid(void) {
@@ -235,49 +188,7 @@ static void test_piece_none_is_zero(void) {
 }
 
 // ===========================================================================
-// Piece — isPromotion
-// ===========================================================================
-
-static void test_isPromotion_white_pawn_on_row_0(void) {
-  TEST_ASSERT_TRUE(isPromotion(Piece::W_PAWN, 0));
-}
-
-static void test_isPromotion_white_pawn_on_other_rows(void) {
-  for (int row = 1; row <= 7; row++) {
-    TEST_ASSERT_FALSE(isPromotion(Piece::W_PAWN, row));
-  }
-}
-
-static void test_isPromotion_black_pawn_on_row_7(void) {
-  TEST_ASSERT_TRUE(isPromotion(Piece::B_PAWN, 7));
-}
-
-static void test_isPromotion_black_pawn_on_other_rows(void) {
-  for (int row = 0; row <= 6; row++) {
-    TEST_ASSERT_FALSE(isPromotion(Piece::B_PAWN, row));
-  }
-}
-
-static void test_isPromotion_non_pawn_pieces(void) {
-  Piece whitePieces[] = {Piece::W_KNIGHT, Piece::W_BISHOP, Piece::W_ROOK,
-                         Piece::W_QUEEN, Piece::W_KING};
-  for (auto p : whitePieces) {
-    TEST_ASSERT_FALSE(isPromotion(p, 0));
-  }
-  Piece blackPieces[] = {Piece::B_KNIGHT, Piece::B_BISHOP, Piece::B_ROOK,
-                         Piece::B_QUEEN, Piece::B_KING};
-  for (auto p : blackPieces) {
-    TEST_ASSERT_FALSE(isPromotion(p, 7));
-  }
-}
-
-static void test_isPromotion_none(void) {
-  TEST_ASSERT_FALSE(isPromotion(Piece::NONE, 0));
-  TEST_ASSERT_FALSE(isPromotion(Piece::NONE, 7));
-}
-
-// ===========================================================================
-// Piece — pieceColor / isWhite / isBlack (from utils)
+// Piece — pieceColor (from utils)
 // ===========================================================================
 
 static void test_getPieceColor(void) {
@@ -286,20 +197,6 @@ static void test_getPieceColor(void) {
   TEST_ASSERT_ENUM_EQ(Color::BLACK, pieceColor(Piece::B_KING));
   TEST_ASSERT_ENUM_EQ(Color::BLACK, pieceColor(Piece::B_PAWN));
   // pieceColor on NONE is undefined behavior — only check valid pieces
-}
-
-static void test_isWhitePiece(void) {
-  TEST_ASSERT_TRUE(isWhite(Piece::W_KING));
-  TEST_ASSERT_TRUE(isWhite(Piece::W_QUEEN));
-  TEST_ASSERT_FALSE(isWhite(Piece::B_KING));
-  TEST_ASSERT_FALSE(isWhite(Piece::NONE));
-}
-
-static void test_isBlackPiece(void) {
-  TEST_ASSERT_TRUE(isBlack(Piece::B_KING));
-  TEST_ASSERT_TRUE(isBlack(Piece::B_QUEEN));
-  TEST_ASSERT_FALSE(isBlack(Piece::W_KING));
-  TEST_ASSERT_FALSE(isBlack(Piece::NONE));
 }
 
 static void test_colorName_explicit(void) {
@@ -360,11 +257,6 @@ void register_piece_tests() {
   RUN_TEST(test_piece_type_to_char);
   RUN_TEST(test_charToPiece_all_valid);
 
-  // Piece — material values
-  RUN_TEST(test_piece_value);
-  RUN_TEST(test_piece_value_all_black);
-  RUN_TEST(test_pieceTypeValue_all);
-
   // Piece — Zobrist index
   RUN_TEST(test_zobrist_index);
   RUN_TEST(test_zobrist_index_constants);
@@ -374,19 +266,11 @@ void register_piece_tests() {
   RUN_TEST(test_color_name);
   RUN_TEST(test_color_char_conversion);
 
-  // Piece — zero-init and isPromotion
+  // Piece — zero-init
   RUN_TEST(test_piece_none_is_zero);
-  RUN_TEST(test_isPromotion_white_pawn_on_row_0);
-  RUN_TEST(test_isPromotion_white_pawn_on_other_rows);
-  RUN_TEST(test_isPromotion_black_pawn_on_row_7);
-  RUN_TEST(test_isPromotion_black_pawn_on_other_rows);
-  RUN_TEST(test_isPromotion_non_pawn_pieces);
-  RUN_TEST(test_isPromotion_none);
 
-  // Piece — pieceColor / isWhite / isBlack
+  // Piece — pieceColor
   RUN_TEST(test_getPieceColor);
-  RUN_TEST(test_isWhitePiece);
-  RUN_TEST(test_isBlackPiece);
   RUN_TEST(test_colorName_explicit);
 
   // Piece — opponent color

@@ -83,21 +83,6 @@ static void test_engine_newgame_clears(void) {
 }
 
 // ===========================================================================
-// stop flag causes early return
-// ===========================================================================
-
-static void test_engine_stop_flag(void) {
-  Engine engine(64);
-  // Call stop() — simulates a previously-interrupted search.
-  // calculateMove() resets the internal flag, so the next search must work.
-  engine.stop();
-  search::SearchLimits limits;
-  limits.maxDepth = 1;
-  auto result = engine.calculateMove(STARTPOS, limits);
-  TEST_ASSERT_TRUE(result.bestMove.from != 0 || result.bestMove.to != 0);
-}
-
-// ===========================================================================
 // position() returns correct state after calculateMove
 // ===========================================================================
 
@@ -203,7 +188,6 @@ void register_engine_tests() {
   RUN_TEST(test_engine_calculateMove_depth1);
   RUN_TEST(test_engine_calculateMove_custom_fen);
   RUN_TEST(test_engine_newgame_clears);
-  RUN_TEST(test_engine_stop_flag);
   RUN_TEST(test_engine_position_access);
   RUN_TEST(test_engine_mate_in_1);
   RUN_TEST(test_engine_depth_control);

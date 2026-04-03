@@ -1,12 +1,11 @@
 #include "board_driver.h"
-#include "utils.h"
+#include "game.h"
 #include "system_utils.h"
 #include "led_colors.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <math.h>
 
-namespace utils = LibreChess::utils;
 
 // 74HC595 shift register pin mapping: bits are sent MSB first, so bit 7 shifts to QH, bit 0 stays at QA
 // col 0 -> QA (pin 15), col 1 -> QB (pin 1), ..., col 7 -> QH (pin 7)
@@ -363,9 +362,9 @@ bool BoardDriver::calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t NUM_PI
     char square[3];
     if (axis == Axis::ROWS) {
       square[0] = 'a';
-      square[1] = utils::rankChar(i);
+      square[1] = Game::rankChar(i);
     } else {
-      square[0] = utils::fileChar(i);
+      square[0] = Game::fileChar(i);
       square[1] = '1';
     }
     square[2] = '\0';
@@ -435,9 +434,9 @@ bool BoardDriver::calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t NUM_PI
       int assignedIndex = axisPinsOrder[pin];
       char assignedRankFile[8];
       if (axis == Axis::ROWS)
-        snprintf(assignedRankFile, sizeof(assignedRankFile), "rank %c", utils::rankChar(assignedIndex));
+        snprintf(assignedRankFile, sizeof(assignedRankFile), "rank %c", Game::rankChar(assignedIndex));
       else
-        snprintf(assignedRankFile, sizeof(assignedRankFile), "file %c", utils::fileChar(assignedIndex));
+        snprintf(assignedRankFile, sizeof(assignedRankFile), "file %c", Game::fileChar(assignedIndex));
       if (detectedAxis == Axis::ROWS)
         Serial.printf("[ERROR] Row %d (GPIO %d) already has %s assigned. Retry %s.\n", pin, rowPins[pin], assignedRankFile, square);
       else

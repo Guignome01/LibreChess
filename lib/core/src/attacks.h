@@ -94,10 +94,6 @@ AttackInfo computeAll(const LibreChess::BitboardSet& bb);
 // (exclusive of both endpoints). Returns 0 if not colinear.
 Bitboard between(Square s1, Square s2);
 
-// Full line through s1 and s2, extending to both board edges, inclusive of
-// both endpoints. Returns 0 if not colinear.
-Bitboard line(Square s1, Square s2);
-
 // ---------------------------------------------------------------------------
 // Square attack detection
 // ---------------------------------------------------------------------------

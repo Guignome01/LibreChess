@@ -67,8 +67,8 @@ void test_zobrist_piece_index_invalid(void) {
 void test_computeHash_deterministic(void) {
   setupInitialBoard(bb, mailbox);
   PositionState st = PositionState::initial();
-  uint64_t h1 = zobrist::computeHash(bb, mailbox, Color::WHITE, st);
-  uint64_t h2 = zobrist::computeHash(bb, mailbox, Color::WHITE, st);
+  uint64_t h1 = zobrist::computeHash(bb, mailbox, Color::WHITE, st, false);
+  uint64_t h2 = zobrist::computeHash(bb, mailbox, Color::WHITE, st, false);
   TEST_ASSERT_EQUAL_HEX64(h1, h2);
   TEST_ASSERT_NOT_EQUAL(0ULL, h1);
 }
@@ -76,7 +76,7 @@ void test_computeHash_deterministic(void) {
 void test_computeHash_different_positions(void) {
   setupInitialBoard(bb, mailbox);
   PositionState st = PositionState::initial();
-  uint64_t h1 = zobrist::computeHash(bb, mailbox, Color::WHITE, st);
+  uint64_t h1 = zobrist::computeHash(bb, mailbox, Color::WHITE, st, false);
 
   // Move e2 to e4
   Piece pawn = mailbox[squareOf(6, 4)];
@@ -86,7 +86,7 @@ void test_computeHash_different_positions(void) {
   mailbox[squareOf(4, 4)] = pawn;
   st.epRow = 5;
   st.epCol = 4;
-  uint64_t h2 = zobrist::computeHash(bb, mailbox, Color::BLACK, st);
+  uint64_t h2 = zobrist::computeHash(bb, mailbox, Color::BLACK, st, false);
   TEST_ASSERT_NOT_EQUAL(h1, h2);
 }
 
@@ -97,16 +97,16 @@ void test_computeHash_same_position_same_hash(void) {
   setupInitialBoard(bb, mailbox);
   setupInitialBoard(bb2, mailbox2);
   PositionState st = PositionState::initial();
-  uint64_t h1 = zobrist::computeHash(bb, mailbox, Color::WHITE, st);
-  uint64_t h2 = zobrist::computeHash(bb2, mailbox2, Color::WHITE, st);
+  uint64_t h1 = zobrist::computeHash(bb, mailbox, Color::WHITE, st, false);
+  uint64_t h2 = zobrist::computeHash(bb2, mailbox2, Color::WHITE, st, false);
   TEST_ASSERT_EQUAL_HEX64(h1, h2);
 }
 
 void test_computeHash_turn_sensitivity(void) {
   setupInitialBoard(bb, mailbox);
   PositionState st = PositionState::initial();
-  uint64_t hw = zobrist::computeHash(bb, mailbox, Color::WHITE, st);
-  uint64_t hb = zobrist::computeHash(bb, mailbox, Color::BLACK, st);
+  uint64_t hw = zobrist::computeHash(bb, mailbox, Color::WHITE, st, false);
+  uint64_t hb = zobrist::computeHash(bb, mailbox, Color::BLACK, st, false);
   TEST_ASSERT_NOT_EQUAL(hw, hb);
 }
 
@@ -115,8 +115,8 @@ void test_computeHash_castling_sensitivity(void) {
   PositionState st1 = PositionState::initial();  // KQkq = 0x0F
   PositionState st2 = PositionState::initial();
   st2.castlingRights = 0x05;  // Kk only
-  uint64_t h1 = zobrist::computeHash(bb, mailbox, Color::WHITE, st1);
-  uint64_t h2 = zobrist::computeHash(bb, mailbox, Color::WHITE, st2);
+  uint64_t h1 = zobrist::computeHash(bb, mailbox, Color::WHITE, st1, false);
+  uint64_t h2 = zobrist::computeHash(bb, mailbox, Color::WHITE, st2, false);
   TEST_ASSERT_NOT_EQUAL(h1, h2);
 }
 
@@ -131,8 +131,8 @@ void test_computeHash_en_passant_sensitivity(void) {
   PositionState st1{0x00, -1, -1, 0, 1};  // no EP
   PositionState st2{0x00, 2, 3, 0, 1};    // EP on d6 (row=2, col=3)
 
-  uint64_t h1 = zobrist::computeHash(bb, mailbox, Color::WHITE, st1);
-  uint64_t h2 = zobrist::computeHash(bb, mailbox, Color::WHITE, st2);
+  uint64_t h1 = zobrist::computeHash(bb, mailbox, Color::WHITE, st1, false);
+  uint64_t h2 = zobrist::computeHash(bb, mailbox, Color::WHITE, st2, true);
   TEST_ASSERT_NOT_EQUAL(h1, h2);
 }
 
@@ -141,7 +141,7 @@ void test_computeHash_king_vs_king(void) {
   placePiece(bb, mailbox, Piece::W_KING, "e1");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   PositionState st{0x00, -1, -1, 0, 1};
-  uint64_t h = zobrist::computeHash(bb, mailbox, Color::WHITE, st);
+  uint64_t h = zobrist::computeHash(bb, mailbox, Color::WHITE, st, false);
   TEST_ASSERT_NOT_EQUAL(0ULL, h);
 }
 
@@ -155,7 +155,7 @@ void test_computeHash_incremental_vs_full(void) {
   pos.makeMove(7, 6, 5, 5);  // Nf3
 
   // Full recompute from scratch
-  uint64_t full = zobrist::computeHash(pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState());
+  uint64_t full = zobrist::computeHash(pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState(), false);
 
   // The board's internal hash is stored in hashHistory — the last entry
   // We can verify by loading the same FEN into a fresh board
@@ -164,7 +164,7 @@ void test_computeHash_incremental_vs_full(void) {
   pos2.loadFEN(fen);
 
   // Both boards should produce the same hash from scratch
-  uint64_t full2 = zobrist::computeHash(pos2.bitboards(), pos2.mailbox(), pos2.currentTurn(), pos2.positionState());
+  uint64_t full2 = zobrist::computeHash(pos2.bitboards(), pos2.mailbox(), pos2.currentTurn(), pos2.positionState(), false);
   TEST_ASSERT_EQUAL_HEX64(full, full2);
 }
 

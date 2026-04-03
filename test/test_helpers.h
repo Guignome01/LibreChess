@@ -7,7 +7,6 @@
 #include <movegen.h>
 #include <notation.h>
 #include <position.h>
-#include <rules.h>
 
 #include <cstring>
 
@@ -86,5 +85,30 @@ inline MoveEntry makeEntry(int fr, int fc, int tr, int tc, Piece piece,
 extern BitboardSet bb;
 extern Piece mailbox[64];
 extern bool needsDefaultKings;
+
+// ---------------------------------------------------------------------------
+// Relocated test-only helpers (removed from production headers)
+// ---------------------------------------------------------------------------
+
+/// Convert color character to Color enum (relocated from piece.h).
+inline constexpr Color charToColor(char c) {
+  return (c == 'b' || c == 'B') ? Color::BLACK : Color::WHITE;
+}
+
+/// Identify which piece sits on a square by scanning all 12 bitboards.
+/// O(12) scan — use the mailbox for hot-path lookups instead.
+/// Relocated from BitboardSet::pieceOn().
+inline Piece pieceOn(const BitboardSet& bs, Square sq) {
+  Bitboard bit = squareBB(sq);
+  if (!(bs.occupied & bit)) return Piece::NONE;
+  for (int i = 0; i < NUM_PIECE_BOARDS; ++i) {
+    if (bs.byPiece[i] & bit) {
+      Color c = (i < 6) ? Color::WHITE : Color::BLACK;
+      auto t = static_cast<PieceType>((i % 6) + 1);
+      return piece::makePiece(c, t);
+    }
+  }
+  return Piece::NONE;
+}
 
 #endif // TEST_HELPERS_H

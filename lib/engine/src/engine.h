@@ -47,9 +47,6 @@ class Engine {
   // Set the time function (firmware passes millis(), tests pass a mock).
   void setTimeFunc(search::TimeFunc fn) { timeFunc_ = fn; }
 
-  // Signal the engine to stop searching (thread-safe).
-  void stop() { stop_.store(true, std::memory_order_relaxed); }
-
   // Wire an external stop flag (e.g. ctx->cancel in EngineProvider).
   // When set, calculateMove() will use this flag for SearchLimits::stop
   // instead of the internal one.  The caller must ensure the pointer

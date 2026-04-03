@@ -19,12 +19,125 @@ void test_no_fifty_move_rule(void) {
 }
 
 // ---------------------------------------------------------------------------
-// checkEnPassant
+// utils::checkEnPassant (free function — mailbox + Square API)
+// ---------------------------------------------------------------------------
+
+void test_utils_checkEnPassant_double_push_sets_target(void) {
+  // White pawn e2→e4: EP target should be e3
+  BitboardSet b; Piece m[64]; Color turn;
+  fen::fenToBoard("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", b, m, turn);
+  auto ep = utils::checkEnPassant(m, squareOf(6, 4), squareOf(4, 4));
+  TEST_ASSERT_FALSE(ep.isCapture);
+  TEST_ASSERT_EQUAL_INT(-1, ep.capturedPawnRow);
+  TEST_ASSERT_EQUAL_INT(5, ep.nextEpRow);
+  TEST_ASSERT_EQUAL_INT(4, ep.nextEpCol);
+}
+
+void test_utils_checkEnPassant_single_push_no_target(void) {
+  // White pawn e3→e4: no EP target (only 1-square push)
+  BitboardSet b; Piece m[64]; Color turn;
+  fen::fenToBoard("rnbqkbnr/pppppppp/8/8/8/4P3/PPPP1PPP/RNBQKBNR w KQkq - 0 1", b, m, turn);
+  auto ep = utils::checkEnPassant(m, squareOf(5, 4), squareOf(4, 4));
+  TEST_ASSERT_FALSE(ep.isCapture);
+  TEST_ASSERT_EQUAL_INT(-1, ep.nextEpRow);
+  TEST_ASSERT_EQUAL_INT(-1, ep.nextEpCol);
+}
+
+void test_utils_checkEnPassant_capture_detected(void) {
+  // White pawn on e5, diagonal to f6 (empty) = EP capture
+  BitboardSet b; Piece m[64]; Color turn;
+  fen::fenToBoard("rnbqkbnr/pppp1ppp/8/4Pp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 1", b, m, turn);
+  auto ep = utils::checkEnPassant(m, squareOf(3, 4), squareOf(2, 5));
+  TEST_ASSERT_TRUE(ep.isCapture);
+  TEST_ASSERT_EQUAL_INT(3, ep.capturedPawnRow);
+}
+
+void test_utils_checkEnPassant_normal_capture_not_ep(void) {
+  // Pawn diagonal capture to occupied square = normal capture, not EP
+  BitboardSet b; Piece m[64]; Color turn;
+  fen::fenToBoard("rnbqkbnr/pppp1ppp/5p2/4P3/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1", b, m, turn);
+  auto ep = utils::checkEnPassant(m, squareOf(3, 4), squareOf(2, 5));
+  TEST_ASSERT_FALSE(ep.isCapture);
+  TEST_ASSERT_EQUAL_INT(-1, ep.capturedPawnRow);
+}
+
+void test_utils_checkEnPassant_black_double_push(void) {
+  // Black pawn d7→d5: EP target should be d6
+  BitboardSet b; Piece m[64]; Color turn;
+  fen::fenToBoard("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1", b, m, turn);
+  auto ep = utils::checkEnPassant(m, squareOf(1, 3), squareOf(3, 3));
+  TEST_ASSERT_FALSE(ep.isCapture);
+  TEST_ASSERT_EQUAL_INT(2, ep.nextEpRow);
+  TEST_ASSERT_EQUAL_INT(3, ep.nextEpCol);
+}
+
+void test_utils_checkEnPassant_non_pawn_no_effect(void) {
+  // Knight move — should never set EP target or capture
+  BitboardSet b; Piece m[64]; Color turn;
+  fen::fenToBoard("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", b, m, turn);
+  auto ep = utils::checkEnPassant(m, squareOf(7, 1), squareOf(5, 2));
+  TEST_ASSERT_FALSE(ep.isCapture);
+  TEST_ASSERT_EQUAL_INT(-1, ep.nextEpRow);
+  TEST_ASSERT_EQUAL_INT(-1, ep.nextEpCol);
+}
+
+// ---------------------------------------------------------------------------
+// utils::checkCastling (free function — mailbox + Square API)
+// ---------------------------------------------------------------------------
+
+void test_utils_checkCastling_kingside(void) {
+  BitboardSet b; Piece m[64]; Color turn;
+  fen::fenToBoard("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1", b, m, turn);
+  auto c = utils::checkCastling(m, squareOf(7, 4), squareOf(7, 6));
+  TEST_ASSERT_TRUE(c.isCastling);
+  TEST_ASSERT_EQUAL_INT(7, c.rookFromCol);
+  TEST_ASSERT_EQUAL_INT(5, c.rookToCol);
+}
+
+void test_utils_checkCastling_queenside(void) {
+  BitboardSet b; Piece m[64]; Color turn;
+  fen::fenToBoard("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1", b, m, turn);
+  auto c = utils::checkCastling(m, squareOf(7, 4), squareOf(7, 2));
+  TEST_ASSERT_TRUE(c.isCastling);
+  TEST_ASSERT_EQUAL_INT(0, c.rookFromCol);
+  TEST_ASSERT_EQUAL_INT(3, c.rookToCol);
+}
+
+void test_utils_checkCastling_black_kingside(void) {
+  BitboardSet b; Piece m[64]; Color turn;
+  fen::fenToBoard("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R b KQkq - 0 1", b, m, turn);
+  auto c = utils::checkCastling(m, squareOf(0, 4), squareOf(0, 6));
+  TEST_ASSERT_TRUE(c.isCastling);
+  TEST_ASSERT_EQUAL_INT(7, c.rookFromCol);
+  TEST_ASSERT_EQUAL_INT(5, c.rookToCol);
+}
+
+void test_utils_checkCastling_not_king(void) {
+  // Rook moving 2 squares is not castling
+  BitboardSet b; Piece m[64]; Color turn;
+  fen::fenToBoard("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1", b, m, turn);
+  auto c = utils::checkCastling(m, squareOf(7, 0), squareOf(7, 2));
+  TEST_ASSERT_FALSE(c.isCastling);
+  TEST_ASSERT_EQUAL_INT(-1, c.rookFromCol);
+  TEST_ASSERT_EQUAL_INT(-1, c.rookToCol);
+}
+
+void test_utils_checkCastling_king_one_square(void) {
+  // King moving one square is not castling
+  BitboardSet b; Piece m[64]; Color turn;
+  fen::fenToBoard("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1", b, m, turn);
+  auto c = utils::checkCastling(m, squareOf(7, 4), squareOf(7, 5));
+  TEST_ASSERT_FALSE(c.isCastling);
+}
+
+// ---------------------------------------------------------------------------
+// checkEnPassant (Position member method — delegates to utils::)
 // ---------------------------------------------------------------------------
 
 void test_checkEnPassant_double_push_sets_target(void) {
-  // White pawn e2→e4 (row 6→4): EP target should be e3 (row 5, col 4)
-  auto ep = utils::checkEnPassant(6, 4, 4, 4, Piece::W_PAWN, Piece::NONE);
+  Position pos;
+  pos.loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+  auto ep = pos.checkEnPassant(6, 4, 4, 4);
   TEST_ASSERT_FALSE(ep.isCapture);
   TEST_ASSERT_EQUAL_INT(-1, ep.capturedPawnRow);
   TEST_ASSERT_EQUAL_INT(5, ep.nextEpRow);
@@ -32,81 +145,95 @@ void test_checkEnPassant_double_push_sets_target(void) {
 }
 
 void test_checkEnPassant_single_push_no_target(void) {
-  // White pawn e3→e4 (row 5→4): no EP target
-  auto ep = utils::checkEnPassant(5, 4, 4, 4, Piece::W_PAWN, Piece::NONE);
+  Position pos;
+  pos.loadFEN("rnbqkbnr/pppppppp/8/8/8/4P3/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
+  auto ep = pos.checkEnPassant(5, 4, 4, 4);
   TEST_ASSERT_FALSE(ep.isCapture);
   TEST_ASSERT_EQUAL_INT(-1, ep.nextEpRow);
   TEST_ASSERT_EQUAL_INT(-1, ep.nextEpCol);
 }
 
 void test_checkEnPassant_capture_detected(void) {
-  // White pawn diagonal capture to empty square = EP capture
-  auto ep = utils::checkEnPassant(3, 4, 2, 5, Piece::W_PAWN, Piece::NONE);
+  Position pos;
+  pos.loadFEN("rnbqkbnr/pppp1ppp/8/4Pp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 1");
+  auto ep = pos.checkEnPassant(3, 4, 2, 5);
   TEST_ASSERT_TRUE(ep.isCapture);
-  TEST_ASSERT_EQUAL_INT(3, ep.capturedPawnRow); // captured pawn is on same row as from
+  TEST_ASSERT_EQUAL_INT(3, ep.capturedPawnRow);
 }
 
 void test_checkEnPassant_normal_capture_not_ep(void) {
-  // White pawn diagonal capture to occupied square = normal capture, not EP
-  auto ep = utils::checkEnPassant(3, 4, 2, 5, Piece::W_PAWN, Piece::B_PAWN);
+  Position pos;
+  pos.loadFEN("rnbqkbnr/pppp1ppp/5p2/4P3/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
+  auto ep = pos.checkEnPassant(3, 4, 2, 5);
   TEST_ASSERT_FALSE(ep.isCapture);
   TEST_ASSERT_EQUAL_INT(-1, ep.capturedPawnRow);
 }
 
 void test_checkEnPassant_black_double_push(void) {
-  // Black pawn d7→d5 (row 1→3): EP target should be d6 (row 2, col 3)
-  auto ep = utils::checkEnPassant(1, 3, 3, 3, Piece::B_PAWN, Piece::NONE);
+  Position pos;
+  pos.loadFEN("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1");
+  auto ep = pos.checkEnPassant(1, 3, 3, 3);
   TEST_ASSERT_FALSE(ep.isCapture);
   TEST_ASSERT_EQUAL_INT(2, ep.nextEpRow);
   TEST_ASSERT_EQUAL_INT(3, ep.nextEpCol);
 }
 
 void test_checkEnPassant_non_pawn_no_effect(void) {
-  // Knight move — should never set EP target or capture
-  auto ep = utils::checkEnPassant(7, 1, 5, 2, Piece::W_KNIGHT, Piece::NONE);
+  Position pos;
+  pos.loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+  auto ep = pos.checkEnPassant(7, 1, 5, 2);
   TEST_ASSERT_FALSE(ep.isCapture);
   TEST_ASSERT_EQUAL_INT(-1, ep.nextEpRow);
   TEST_ASSERT_EQUAL_INT(-1, ep.nextEpCol);
 }
 
 // ---------------------------------------------------------------------------
-// checkCastling
+// checkCastling (Position member method — delegates to utils::)
 // ---------------------------------------------------------------------------
 
 void test_checkCastling_kingside(void) {
-  auto c = utils::checkCastling(7, 4, 7, 6, Piece::W_KING);
+  Position pos;
+  pos.loadFEN("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1");
+  auto c = pos.checkCastling(7, 4, 7, 6);
   TEST_ASSERT_TRUE(c.isCastling);
-  TEST_ASSERT_EQUAL_INT(7, c.rookFromCol);  // h-file
-  TEST_ASSERT_EQUAL_INT(5, c.rookToCol);    // f-file
+  TEST_ASSERT_EQUAL_INT(7, c.rookFromCol);
+  TEST_ASSERT_EQUAL_INT(5, c.rookToCol);
 }
 
 void test_checkCastling_queenside(void) {
-  auto c = utils::checkCastling(7, 4, 7, 2, Piece::W_KING);
+  Position pos;
+  pos.loadFEN("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1");
+  auto c = pos.checkCastling(7, 4, 7, 2);
   TEST_ASSERT_TRUE(c.isCastling);
-  TEST_ASSERT_EQUAL_INT(0, c.rookFromCol);  // a-file
-  TEST_ASSERT_EQUAL_INT(3, c.rookToCol);    // d-file
+  TEST_ASSERT_EQUAL_INT(0, c.rookFromCol);
+  TEST_ASSERT_EQUAL_INT(3, c.rookToCol);
 }
 
 void test_checkCastling_black_kingside(void) {
-  auto c = utils::checkCastling(0, 4, 0, 6, Piece::B_KING);
+  Position pos;
+  pos.loadFEN("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R b KQkq - 0 1");
+  auto c = pos.checkCastling(0, 4, 0, 6);
   TEST_ASSERT_TRUE(c.isCastling);
   TEST_ASSERT_EQUAL_INT(7, c.rookFromCol);
   TEST_ASSERT_EQUAL_INT(5, c.rookToCol);
 }
 
 void test_checkCastling_not_king(void) {
-  // Rook moving 2 squares is not castling
-  auto c = utils::checkCastling(7, 0, 7, 2, Piece::W_ROOK);
+  Position pos;
+  pos.loadFEN("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1");
+  auto c = pos.checkCastling(7, 0, 7, 2);
   TEST_ASSERT_FALSE(c.isCastling);
   TEST_ASSERT_EQUAL_INT(-1, c.rookFromCol);
   TEST_ASSERT_EQUAL_INT(-1, c.rookToCol);
 }
 
 void test_checkCastling_king_one_square(void) {
-  // King moving one square is not castling
-  auto c = utils::checkCastling(7, 4, 7, 5, Piece::W_KING);
+  Position pos;
+  pos.loadFEN("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1");
+  auto c = pos.checkCastling(7, 4, 7, 5);
   TEST_ASSERT_FALSE(c.isCastling);
 }
+
 
 // ---------------------------------------------------------------------------
 // updateCastlingRights
@@ -114,39 +241,39 @@ void test_checkCastling_king_one_square(void) {
 
 void test_updateCastlingRights_white_king_moves(void) {
   uint8_t rights = 0x0F;  // KQkq
-  rights = utils::updateCastlingRights(rights, 7, 4, 7, 5, Piece::W_KING, Piece::NONE);
+  rights = utils::updateCastlingRights(rights, squareOf(7, 4), squareOf(7, 5));
   TEST_ASSERT_EQUAL_UINT8(0x0C, rights);  // kq only
 }
 
 void test_updateCastlingRights_black_king_moves(void) {
   uint8_t rights = 0x0F;
-  rights = utils::updateCastlingRights(rights, 0, 4, 0, 5, Piece::B_KING, Piece::NONE);
+  rights = utils::updateCastlingRights(rights, squareOf(0, 4), squareOf(0, 5));
   TEST_ASSERT_EQUAL_UINT8(0x03, rights);  // KQ only
 }
 
 void test_updateCastlingRights_white_h_rook_moves(void) {
   uint8_t rights = 0x0F;
-  rights = utils::updateCastlingRights(rights, 7, 7, 5, 7, Piece::W_ROOK, Piece::NONE);
+  rights = utils::updateCastlingRights(rights, squareOf(7, 7), squareOf(5, 7));
   TEST_ASSERT_EQUAL_UINT8(0x0E, rights);  // Qkq (lost K)
 }
 
 void test_updateCastlingRights_white_a_rook_moves(void) {
   uint8_t rights = 0x0F;
-  rights = utils::updateCastlingRights(rights, 7, 0, 5, 0, Piece::W_ROOK, Piece::NONE);
+  rights = utils::updateCastlingRights(rights, squareOf(7, 0), squareOf(5, 0));
   TEST_ASSERT_EQUAL_UINT8(0x0D, rights);  // Kkq (lost Q)
 }
 
 void test_updateCastlingRights_rook_captured(void) {
   uint8_t rights = 0x0F;
   // Black captures white h-rook
-  rights = utils::updateCastlingRights(rights, 0, 7, 7, 7, Piece::B_ROOK, Piece::W_ROOK);
+  rights = utils::updateCastlingRights(rights, squareOf(0, 7), squareOf(7, 7));
   // Lost K (rook captured on h1) + lost k (black rook moved from h8)
   TEST_ASSERT_EQUAL_UINT8(0x0A, rights);  // Qq
 }
 
 void test_updateCastlingRights_no_change_on_pawn_move(void) {
   uint8_t rights = 0x0F;
-  rights = utils::updateCastlingRights(rights, 6, 4, 4, 4, Piece::W_PAWN, Piece::NONE);
+  rights = utils::updateCastlingRights(rights, squareOf(6, 4), squareOf(4, 4));
   TEST_ASSERT_EQUAL_UINT8(0x0F, rights);  // unchanged
 }
 
@@ -367,12 +494,13 @@ void test_gameResultName_all_values(void) {
 }
 
 // ---------------------------------------------------------------------------
-// boardToText
+// boardToText (Position member method)
 // ---------------------------------------------------------------------------
 
 void test_boardToText_initial_position(void) {
-  setupInitialBoard(bb, mailbox);
-  std::string text = utils::boardToText(mailbox);
+  Position pos;
+  pos.newGame();
+  std::string text = pos.boardToText();
   TEST_ASSERT_TRUE(text.length() > 0);
   // Check that back ranks have expected piece chars
   TEST_ASSERT_TRUE(text.find('r') != std::string::npos);  // black rook
@@ -382,73 +510,19 @@ void test_boardToText_initial_position(void) {
 }
 
 void test_boardToText_empty_board(void) {
-  std::string text = utils::boardToText(mailbox);
+  Position pos;
+  pos.loadFEN("4k3/8/8/8/8/8/8/4K3 w - - 0 1");
+  std::string text = pos.boardToText();
   TEST_ASSERT_TRUE(text.length() > 0);
-  // Empty board rows should contain only dots (no piece chars between rank labels)
-  // Each rank line looks like "8 . . . . . . . .  8\n"
-  for (int row = 0; row < 8; row++) {
-    char rank = utils::rankChar(row);
-    // Find the rank label at line start
-    std::string prefix = std::string(1, rank) + " ";
-    size_t pos = text.find(prefix);
-    TEST_ASSERT_TRUE(pos != std::string::npos);
-    // The 8 squares after the rank label should all be dots
-    for (int col = 0; col < 8; col++) {
-      TEST_ASSERT_EQUAL_CHAR('.', text[pos + 2 + col * 2]);
-    }
+  // Most rank lines should be all dots except the king ranks
+  // Check rank 4 (row 4) which should have all dots
+  char rank = utils::rankChar(4);
+  std::string prefix = std::string(1, rank) + " ";
+  size_t pos_found = text.find(prefix);
+  TEST_ASSERT_TRUE(pos_found != std::string::npos);
+  for (int col = 0; col < 8; col++) {
+    TEST_ASSERT_EQUAL_CHAR('.', text[pos_found + 2 + col * 2]);
   }
-}
-
-// ---------------------------------------------------------------------------
-// applyBoardTransform
-// ---------------------------------------------------------------------------
-
-void test_applyBoardTransform_simple_move(void) {
-  placePiece(bb, mailbox, Piece::W_PAWN, "e2");
-  utils::EnPassantInfo ep{false, -1, -1, -1};
-  utils::CastlingInfo castle{false, -1, -1};
-  Piece captured = Piece::NONE;
-  utils::applyBoardTransform(bb, mailbox, squareOf(6, 4), squareOf(4, 4), ep, castle, captured);
-  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, mailbox[squareOf(4, 4)]);
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, mailbox[squareOf(6, 4)]);
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, captured);
-}
-
-void test_applyBoardTransform_capture(void) {
-  placePiece(bb, mailbox, Piece::W_PAWN, "e4");
-  placePiece(bb, mailbox, Piece::B_PAWN, "d5");
-  utils::EnPassantInfo ep{false, -1, -1, -1};
-  utils::CastlingInfo castle{false, -1, -1};
-  Piece captured = Piece::NONE;
-  utils::applyBoardTransform(bb, mailbox, squareOf(4, 4), squareOf(3, 3), ep, castle, captured);
-  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, mailbox[squareOf(3, 3)]);
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, mailbox[squareOf(4, 4)]);
-  TEST_ASSERT_ENUM_EQ(Piece::B_PAWN, captured);
-}
-
-void test_applyBoardTransform_en_passant(void) {
-  placePiece(bb, mailbox, Piece::W_PAWN, "e5");
-  placePiece(bb, mailbox, Piece::B_PAWN, "d5");  // captured pawn on row 3
-  utils::EnPassantInfo ep{true, 3, -1, -1};  // EP capture, captured pawn on row 3
-  utils::CastlingInfo castle{false, -1, -1};
-  Piece captured = Piece::NONE;
-  utils::applyBoardTransform(bb, mailbox, squareOf(3, 4), squareOf(2, 3), ep, castle, captured);
-  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, mailbox[squareOf(2, 3)]);  // pawn moved to d6
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, mailbox[squareOf(3, 4)]);     // source cleared
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, mailbox[squareOf(3, 3)]);     // captured pawn removed
-}
-
-void test_applyBoardTransform_castling(void) {
-  placePiece(bb, mailbox, Piece::W_KING, "e1");
-  placePiece(bb, mailbox, Piece::W_ROOK, "h1");
-  utils::EnPassantInfo ep{false, -1, -1, -1};
-  utils::CastlingInfo castle{true, 7, 5};  // kingside: rook h1→f1
-  Piece captured = Piece::NONE;
-  utils::applyBoardTransform(bb, mailbox, squareOf(7, 4), squareOf(7, 6), ep, castle, captured);
-  TEST_ASSERT_ENUM_EQ(Piece::W_KING, mailbox[squareOf(7, 6)]);   // king on g1
-  TEST_ASSERT_ENUM_EQ(Piece::W_ROOK, mailbox[squareOf(7, 5)]);   // rook on f1
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, mailbox[squareOf(7, 4)]);      // e1 cleared
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, mailbox[squareOf(7, 7)]);      // h1 cleared
 }
 
 // ---------------------------------------------------------------------------
@@ -462,7 +536,22 @@ void register_utils_tests() {
   RUN_TEST(test_fifty_move_rule);
   RUN_TEST(test_no_fifty_move_rule);
 
-  // checkEnPassant
+  // utils::checkEnPassant (free function)
+  RUN_TEST(test_utils_checkEnPassant_double_push_sets_target);
+  RUN_TEST(test_utils_checkEnPassant_single_push_no_target);
+  RUN_TEST(test_utils_checkEnPassant_capture_detected);
+  RUN_TEST(test_utils_checkEnPassant_normal_capture_not_ep);
+  RUN_TEST(test_utils_checkEnPassant_black_double_push);
+  RUN_TEST(test_utils_checkEnPassant_non_pawn_no_effect);
+
+  // utils::checkCastling (free function)
+  RUN_TEST(test_utils_checkCastling_kingside);
+  RUN_TEST(test_utils_checkCastling_queenside);
+  RUN_TEST(test_utils_checkCastling_black_kingside);
+  RUN_TEST(test_utils_checkCastling_not_king);
+  RUN_TEST(test_utils_checkCastling_king_one_square);
+
+  // checkEnPassant (Position method — delegates to utils::)
   RUN_TEST(test_checkEnPassant_double_push_sets_target);
   RUN_TEST(test_checkEnPassant_single_push_no_target);
   RUN_TEST(test_checkEnPassant_capture_detected);
@@ -470,7 +559,7 @@ void register_utils_tests() {
   RUN_TEST(test_checkEnPassant_black_double_push);
   RUN_TEST(test_checkEnPassant_non_pawn_no_effect);
 
-  // checkCastling
+  // checkCastling (Position method — delegates to utils::)
   RUN_TEST(test_checkCastling_kingside);
   RUN_TEST(test_checkCastling_queenside);
   RUN_TEST(test_checkCastling_black_kingside);
@@ -531,10 +620,4 @@ void register_utils_tests() {
   // boardToText
   RUN_TEST(test_boardToText_initial_position);
   RUN_TEST(test_boardToText_empty_board);
-
-  // applyBoardTransform
-  RUN_TEST(test_applyBoardTransform_simple_move);
-  RUN_TEST(test_applyBoardTransform_capture);
-  RUN_TEST(test_applyBoardTransform_en_passant);
-  RUN_TEST(test_applyBoardTransform_castling);
 }

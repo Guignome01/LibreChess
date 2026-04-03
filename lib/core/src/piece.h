@@ -6,7 +6,7 @@
 // All functions in LibreChess::piece are constexpr, O(1), and operate on
 // the bit-packed Piece = (Color << 3) | PieceType encoding defined in
 // types.h. Provides extraction (pieceType, pieceColor), construction
-// (makePiece), predicates (isEmpty, isWhite, isBlack, isColor), color
+// (makePiece), predicates (isEmpty), color
 // helpers (pawnDirection, homeRow, promotionRow), FEN boundary conversion
 // (charToPiece, pieceToChar), and Zobrist indexing (pieceZobristIndex).
 
@@ -40,18 +40,6 @@ constexpr Piece makePiece(Color c, PieceType t) {
 
 constexpr bool isEmpty(Piece p) { return p == Piece::NONE; }
 
-constexpr bool isWhite(Piece p) {
-  return !isEmpty(p) && pieceColor(p) == Color::WHITE;
-}
-
-constexpr bool isBlack(Piece p) {
-  return !isEmpty(p) && pieceColor(p) == Color::BLACK;
-}
-
-constexpr bool isColor(Piece p, Color c) {
-  return !isEmpty(p) && pieceColor(p) == c;
-}
-
 // ---------------------------------------------------------------------------
 // Color helpers
 // ---------------------------------------------------------------------------
@@ -68,20 +56,15 @@ constexpr int promotionRow(Color c) {
   return c == Color::WHITE ? 0 : 7;
 }
 
-constexpr bool isPromotion(Piece piece, int targetRow) {
-  return pieceType(piece) == PieceType::PAWN &&
-         targetRow == promotionRow(pieceColor(piece));
-}
-
 inline const char* colorName(Color c) {
   return c == Color::WHITE ? "White" : "Black";
 }
 
 // ---------------------------------------------------------------------------
-// FEN boundary conversion — lookup tables for char <-> Piece
+// FEN boundary conversion — char <-> Piece
 // ---------------------------------------------------------------------------
 
-constexpr Piece charToPiece(char c) {
+inline constexpr Piece charToPiece(char c) {
   switch (c) {
     case 'P': return Piece::W_PAWN;
     case 'N': return Piece::W_KNIGHT;
@@ -121,16 +104,15 @@ constexpr char pieceToChar(Piece p) {
   return (raw(p) < sizeof(TABLE)) ? TABLE[raw(p)] : '?';
 }
 
-// Char to PieceType (case-insensitive: 'Q' -> QUEEN, 'n' -> KNIGHT).
-constexpr PieceType charToPieceType(char c) {
-  switch (c >= 'a' ? (c - 32) : c) {  // toupper equivalent
-    case 'P': return PieceType::PAWN;
-    case 'N': return PieceType::KNIGHT;
-    case 'B': return PieceType::BISHOP;
-    case 'R': return PieceType::ROOK;
-    case 'Q': return PieceType::QUEEN;
-    case 'K': return PieceType::KING;
-    default:  return PieceType::NONE;
+inline constexpr PieceType charToPieceType(char c) {
+  switch (c) {
+    case 'P': case 'p': return PieceType::PAWN;
+    case 'N': case 'n': return PieceType::KNIGHT;
+    case 'B': case 'b': return PieceType::BISHOP;
+    case 'R': case 'r': return PieceType::ROOK;
+    case 'Q': case 'q': return PieceType::QUEEN;
+    case 'K': case 'k': return PieceType::KING;
+    default:            return PieceType::NONE;
   }
 }
 
@@ -138,23 +120,6 @@ constexpr char pieceTypeToChar(PieceType t) {
   constexpr char TABLE[] = {' ', 'P', 'N', 'B', 'R', 'Q', 'K'};
   return (raw(t) < sizeof(TABLE)) ? TABLE[raw(t)] : '?';
 }
-
-// Is char a valid promotion piece letter? (case-insensitive: q, r, b, n)
-constexpr bool isValidPromotionChar(char c) {
-  return c == 'q' || c == 'Q' || c == 'r' || c == 'R' ||
-         c == 'b' || c == 'B' || c == 'n' || c == 'N';
-}
-
-// ---------------------------------------------------------------------------
-// Material values — indexed by PieceType (color-independent).
-// ---------------------------------------------------------------------------
-
-constexpr float pieceTypeValue(PieceType t) {
-  constexpr float V[] = {0, 1, 3, 3, 5, 9, 0};  // NONE..KING
-  return (raw(t) < sizeof(V) / sizeof(V[0])) ? V[raw(t)] : 0;
-}
-
-constexpr float pieceValue(Piece p) { return pieceTypeValue(pieceType(p)); }
 
 // ---------------------------------------------------------------------------
 // Zobrist index — maps Piece to 0..11 for the Zobrist key table.
@@ -174,21 +139,20 @@ constexpr bool isValidZobristIndex(int idx) {
   return idx >= 0 && idx < 12;
 }
 
+// Lookup table: Piece -> Zobrist index (0-11), -1 for NONE/unused.
+// Indexed by raw(Piece) which spans 0-15 (Piece = (Color<<3) | PieceType).
+static constexpr int ZOBRIST_IDX_TABLE[16] = {
+  // 0:NONE  1:WP  2:WN  3:WB  4:WR  5:WQ  6:WK  7:(-)  8:(-)  9:BP 10:BN 11:BB 12:BR 13:BQ 14:BK 15:(-)
+      -1,     0,    1,    2,    3,    4,    5,   -1,   -1,    6,    7,    8,    9,   10,   11,   -1
+};
+
 constexpr int pieceZobristIndex(Piece p) {
-  // White pieces: PAWN=0 KNIGHT=1 BISHOP=2 ROOK=3 QUEEN=4 KING=5
-  // Black pieces: PAWN=6 KNIGHT=7 BISHOP=8 ROOK=9 QUEEN=10 KING=11
-  if (isEmpty(p)) return ZOBRIST_IDX_NONE;
-  int typeIdx = raw(pieceType(p)) - 1;  // PAWN=0..KING=5
-  return (pieceColor(p) == Color::BLACK) ? typeIdx + 6 : typeIdx;
+  return (raw(p) < 16) ? ZOBRIST_IDX_TABLE[raw(p)] : ZOBRIST_IDX_NONE;
 }
 
 // ---------------------------------------------------------------------------
 // Color conversion helpers
 // ---------------------------------------------------------------------------
-
-constexpr Color charToColor(char c) {
-  return (c == 'b' || c == 'B') ? Color::BLACK : Color::WHITE;
-}
 
 constexpr char colorToChar(Color c) {
   return c == Color::WHITE ? 'w' : 'b';

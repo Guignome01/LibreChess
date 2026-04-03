@@ -2,13 +2,13 @@
 #define GAME_MODE_H
 
 #include "board_driver.h"
+#include "game.h"
 #include "led_colors.h"
 #include "logger.h"
 #include "move.h"
 #include "types.h"
 #include <Arduino.h>
 
-namespace LibreChess { class Game; }
 using namespace LibreChess;
 
 // Forward declaration to avoid circular dependency
@@ -110,7 +110,7 @@ class GameMode {
   void clearResignFeedback(int row, int col);
 
   // Hardware-only castling interactions (board already updated by Position)
-  void applyCastlingHardware(int kingFromRow, int kingFromCol, int kingToRow, int kingToCol, Piece kingPiece, bool waitForKingCompletion = false);
+  void applyCastlingHardware(int kingFromRow, int kingFromCol, int kingToRow, int kingToCol, const CastlingInfo& castleInfo, bool waitForKingCompletion = false);
   void confirmSquareCompletion(int row, int col);
 
   // Virtual hooks for remote move handling (overridden in subclasses)

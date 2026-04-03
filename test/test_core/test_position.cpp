@@ -383,7 +383,8 @@ void test_position_stalemate(void) {
   TEST_ASSERT_TRUE(r.valid);
   TEST_ASSERT_ENUM_EQ(GameResult::STALEMATE, r.gameResult);
   TEST_ASSERT_EQUAL_CHAR('d', r.winnerColor);
-  TEST_ASSERT_TRUE(pos.isStalemate());
+  TEST_ASSERT_TRUE(Position::isStalemate(pos.bitboards(), pos.mailbox(),
+                                         pos.currentTurn(), pos.positionState()));
 }
 
 // ---------------------------------------------------------------------------
@@ -413,7 +414,7 @@ void test_position_insufficient_material_k_vs_k(void) {
   MoveResult r = pos.makeMove(7, 4, 7, 3); // Ke1-d1
   TEST_ASSERT_TRUE(r.valid);
   TEST_ASSERT_ENUM_EQ(GameResult::DRAW_INSUFFICIENT, r.gameResult);
-  TEST_ASSERT_TRUE(pos.isInsufficientMaterial());
+  TEST_ASSERT_TRUE(Position::isInsufficientMaterial(pos.bitboards()));
   TEST_ASSERT_TRUE(pos.isDraw());
 }
 
@@ -455,7 +456,7 @@ void test_position_insufficient_material_kb_vs_kb_diff_color(void) {
   TEST_ASSERT_TRUE(r.valid);
   // Different color bishops — NOT insufficient
   TEST_ASSERT_ENUM_EQ(GameResult::IN_PROGRESS, r.gameResult);
-  TEST_ASSERT_FALSE(pos.isInsufficientMaterial());
+  TEST_ASSERT_FALSE(Position::isInsufficientMaterial(pos.bitboards()));
 }
 
 void test_position_sufficient_material_knn(void) {
@@ -665,54 +666,6 @@ void test_position_fullmove_increments_after_black(void) {
 }
 
 // ---------------------------------------------------------------------------
-// findPiece
-// ---------------------------------------------------------------------------
-
-void test_position_find_piece_kings_initial(void) {
-  setUpPosition();
-  int positions[2][2];
-  int count = pos.findPiece(Piece::W_KING, positions, 2);
-  TEST_ASSERT_EQUAL_INT(1, count);
-  TEST_ASSERT_EQUAL_INT(7, positions[0][0]); // row 7 = rank 1
-  TEST_ASSERT_EQUAL_INT(4, positions[0][1]); // col 4 = file e
-}
-
-void test_position_find_piece_black_pawns_initial(void) {
-  setUpPosition();
-  int positions[8][2];
-  int count = pos.findPiece(Piece::B_PAWN, positions, 8);
-  TEST_ASSERT_EQUAL_INT(8, count);
-  // All should be on row 1 (rank 7)
-  for (int i = 0; i < count; i++) {
-    TEST_ASSERT_EQUAL_INT(1, positions[i][0]);
-  }
-}
-
-void test_position_find_piece_not_found(void) {
-  setUpPosition();
-  pos.loadFEN("4k3/8/8/8/8/8/8/4K3 w - - 0 1");
-  int positions[8][2];
-  int count = pos.findPiece(Piece::W_QUEEN, positions, 8);
-  TEST_ASSERT_EQUAL_INT(0, count);
-}
-
-void test_position_find_piece_multiple_bishops(void) {
-  setUpPosition();
-  pos.loadFEN("4k3/8/8/8/8/2B1B3/8/4K3 w - - 0 1");
-  int positions[4][2];
-  int count = pos.findPiece(Piece::W_BISHOP, positions, 4);
-  TEST_ASSERT_EQUAL_INT(2, count);
-}
-
-void test_position_find_piece_max_limit(void) {
-  setUpPosition();
-  // 8 white pawns, but limit to 3
-  int positions[3][2];
-  int count = pos.findPiece(Piece::W_PAWN, positions, 3);
-  TEST_ASSERT_EQUAL_INT(3, count);
-}
-
-// ---------------------------------------------------------------------------
 // inCheck (no-arg, uses current turn)
 // ---------------------------------------------------------------------------
 
@@ -745,87 +698,27 @@ void test_position_is_checkmate_false(void) {
 }
 
 // ---------------------------------------------------------------------------
-// isStalemate (no-arg, uses current turn)
-// ---------------------------------------------------------------------------
-
-void test_position_is_stalemate_true(void) {
-  setUpPosition();
-  // Stalemate: black king on a8, white queen on b6, white king on c8 — black to move
-  pos.loadFEN("k7/8/1Q6/8/8/8/8/2K5 b - - 0 1");
-  TEST_ASSERT_TRUE(pos.isStalemate());
-}
-
-void test_position_is_stalemate_false(void) {
-  setUpPosition();
-  TEST_ASSERT_FALSE(pos.isStalemate());
-}
-
-// ---------------------------------------------------------------------------
-// isInsufficientMaterial (public)
-// ---------------------------------------------------------------------------
-
-void test_position_is_insufficient_material_true(void) {
-  setUpPosition();
-  pos.loadFEN("4k3/8/8/8/8/8/8/4K3 w - - 0 1");
-  TEST_ASSERT_TRUE(pos.isInsufficientMaterial());
-}
-
-void test_position_is_insufficient_material_false(void) {
-  setUpPosition();
-  TEST_ASSERT_FALSE(pos.isInsufficientMaterial());
-}
-
-// ---------------------------------------------------------------------------
-// isAttacked
-// ---------------------------------------------------------------------------
-
-void test_position_is_attacked_by_white(void) {
-  setUpPosition();
-  // White pawn on e4 attacks d5 and f5
-  pos.loadFEN("4k3/8/8/8/4P3/8/8/4K3 w - - 0 1");
-  TEST_ASSERT_TRUE(pos.isAttacked(3, 3, Color::WHITE));  // d5 attacked by white
-  TEST_ASSERT_TRUE(pos.isAttacked(3, 5, Color::WHITE));  // f5 attacked by white
-  TEST_ASSERT_FALSE(pos.isAttacked(3, 4, Color::WHITE)); // e5 not attacked by white pawn
-}
-
-void test_position_is_attacked_by_black(void) {
-  setUpPosition();
-  // Black knight on f6 attacks e4, g4, d5, h5, d7, h7, e8, g8
-  pos.loadFEN("4k3/8/5n2/8/8/8/8/4K3 w - - 0 1");
-  TEST_ASSERT_TRUE(pos.isAttacked(4, 4, Color::BLACK));  // e4 attacked by black knight
-  TEST_ASSERT_TRUE(pos.isAttacked(4, 6, Color::BLACK));  // g4 attacked by black knight
-  TEST_ASSERT_FALSE(pos.isAttacked(4, 5, Color::BLACK)); // f4 not attacked by black knight
-}
-
-void test_position_is_attacked_empty_square(void) {
-  setUpPosition();
-  // Empty square can be attacked
-  pos.loadFEN("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-  TEST_ASSERT_TRUE(pos.isAttacked(0, 0, Color::WHITE)); // a8 attacked by Ra1 along file
-}
-
-// ---------------------------------------------------------------------------
 // moveNumber
 // ---------------------------------------------------------------------------
 
 void test_position_move_number_initial(void) {
   setUpPosition();
-  TEST_ASSERT_EQUAL_INT(1, pos.moveNumber());
+  TEST_ASSERT_EQUAL_INT(1, pos.positionState().fullmoveClock);
 }
 
 void test_position_move_number_after_moves(void) {
   setUpPosition();
   pos.loadFEN("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
   pos.makeMove(6, 4, 4, 4); // e2-e4 (white, fullmove stays 1)
-  TEST_ASSERT_EQUAL_INT(1, pos.moveNumber());
+  TEST_ASSERT_EQUAL_INT(1, pos.positionState().fullmoveClock);
   pos.makeMove(0, 4, 0, 3); // Ke8-d8 (black, fullmove → 2)
-  TEST_ASSERT_EQUAL_INT(2, pos.moveNumber());
+  TEST_ASSERT_EQUAL_INT(2, pos.positionState().fullmoveClock);
 }
 
 void test_position_move_number_from_fen(void) {
   setUpPosition();
   pos.loadFEN("4k3/8/8/8/8/8/8/4K3 w - - 0 42");
-  TEST_ASSERT_EQUAL_INT(42, pos.moveNumber());
+  TEST_ASSERT_EQUAL_INT(42, pos.positionState().fullmoveClock);
 }
 
 // ---------------------------------------------------------------------------
@@ -849,7 +742,7 @@ void test_position_threefold_repetition(void) {
   pos.makeMove(7, 3, 7, 4);
   MoveResult r = pos.makeMove(0, 3, 0, 4);  // third repetition
   TEST_ASSERT_ENUM_EQ(GameResult::DRAW_3FOLD, r.gameResult);
-  TEST_ASSERT_TRUE(pos.isThreefoldRepetition());
+  TEST_ASSERT_TRUE(pos.isRepetition());
   TEST_ASSERT_TRUE(pos.isDraw());
 }
 
@@ -866,7 +759,7 @@ void test_position_threefold_different_castling_rights(void) {
   pos.makeMove(7, 3, 7, 4);
   MoveResult r = pos.makeMove(0, 3, 0, 4); // occurrence 2 (not 3)
   TEST_ASSERT_ENUM_EQ(GameResult::IN_PROGRESS, r.gameResult);
-  TEST_ASSERT_FALSE(pos.isThreefoldRepetition());
+  TEST_ASSERT_FALSE(pos.isRepetition());
 }
 
 void test_position_threefold_not_reached(void) {
@@ -878,12 +771,12 @@ void test_position_threefold_not_reached(void) {
   pos.makeMove(7, 3, 7, 4);
   MoveResult r = pos.makeMove(0, 3, 0, 4); // occurrence 2
   TEST_ASSERT_ENUM_EQ(GameResult::IN_PROGRESS, r.gameResult);
-  TEST_ASSERT_FALSE(pos.isThreefoldRepetition());
+  TEST_ASSERT_FALSE(pos.isRepetition());
 }
 
 void test_position_threefold_query(void) {
   setUpPosition();
-  TEST_ASSERT_FALSE(pos.isThreefoldRepetition());
+  TEST_ASSERT_FALSE(pos.isRepetition());
 }
 
 void test_position_threefold_with_rook_moves(void) {
@@ -899,7 +792,7 @@ void test_position_threefold_with_rook_moves(void) {
   pos.makeMove(7, 1, 7, 0);
   MoveResult r = pos.makeMove(0, 3, 0, 4); // 3rd time
   TEST_ASSERT_ENUM_EQ(GameResult::DRAW_3FOLD, r.gameResult);
-  TEST_ASSERT_TRUE(pos.isThreefoldRepetition());
+  TEST_ASSERT_TRUE(pos.isRepetition());
   TEST_ASSERT_TRUE(pos.isDraw());
 }
 
@@ -915,7 +808,7 @@ void test_position_position_history_reset_on_pawn_move(void) {
   pos.makeMove(6, 4, 4, 4); // e2-e4
   pos.makeMove(0, 4, 0, 3); // Ke8-d8
   // Now even if positions repeat, the prior history is gone
-  TEST_ASSERT_FALSE(pos.isThreefoldRepetition());
+  TEST_ASSERT_FALSE(pos.isRepetition());
 }
 
 // ---------------------------------------------------------------------------
@@ -1259,7 +1152,7 @@ void test_position_load_fen_sets_clocks(void) {
 // Board-level threefold repetition query
 // ---------------------------------------------------------------------------
 
-void test_position_isThreefoldRepetition_query(void) {
+void test_position_isRepetition_query(void) {
   setUpPosition();
   pos.loadFEN("4k3/4p3/8/8/8/8/4P3/4K3 w - - 0 1");
   // Repeat position 3 times
@@ -1271,12 +1164,12 @@ void test_position_isThreefoldRepetition_query(void) {
   pos.makeMove(0, 4, 0, 3);  // Ke8-d8
   pos.makeMove(7, 3, 7, 4);  // Kd1-e1
   pos.makeMove(0, 3, 0, 4);  // Kd8-e8 — 3rd occurrence
-  TEST_ASSERT_TRUE(pos.isThreefoldRepetition());
+  TEST_ASSERT_TRUE(pos.isRepetition());
 }
 
-void test_position_isThreefoldRepetition_false(void) {
+void test_position_isRepetition_false(void) {
   setUpPosition();
-  TEST_ASSERT_FALSE(pos.isThreefoldRepetition());
+  TEST_ASSERT_FALSE(pos.isRepetition());
 }
 
 // ---------------------------------------------------------------------------
@@ -1347,8 +1240,8 @@ void test_make_unmake_roundtrip_capture(void) {
   Move m(squareOf(4, 4), squareOf(3, 3), MOVE_CAPTURE);  // exd5
   UndoInfo undo = pos.make(m);
 
-  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, pos.pieceOn(squareOf(3, 3)));
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.pieceOn(squareOf(4, 4)));
+  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, pos.getSquare(3, 3));
+  TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.getSquare(4, 4));
 
   pos.unmake(m, undo);
   TEST_ASSERT_EQUAL_STRING(fenBefore.c_str(), pos.getFen().c_str());
@@ -1366,9 +1259,9 @@ void test_make_unmake_roundtrip_ep(void) {
   UndoInfo undo = pos.make(m);
 
   // Pawn should be on d6, d5 and e5 empty
-  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, pos.pieceOn(squareOf(2, 3)));
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.pieceOn(squareOf(3, 3)));  // captured pawn removed
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.pieceOn(squareOf(3, 4)));
+  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, pos.getSquare(2, 3));
+  TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.getSquare(3, 3));  // captured pawn removed
+  TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.getSquare(3, 4));
 
   pos.unmake(m, undo);
   TEST_ASSERT_EQUAL_STRING(fenBefore.c_str(), pos.getFen().c_str());
@@ -1385,10 +1278,10 @@ void test_make_unmake_roundtrip_castling(void) {
   UndoInfo undo = pos.make(m);
 
   // King on g1, rook on f1
-  TEST_ASSERT_ENUM_EQ(Piece::W_KING, pos.pieceOn(squareOf(7, 6)));
-  TEST_ASSERT_ENUM_EQ(Piece::W_ROOK, pos.pieceOn(squareOf(7, 5)));
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.pieceOn(squareOf(7, 4)));
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.pieceOn(squareOf(7, 7)));
+  TEST_ASSERT_ENUM_EQ(Piece::W_KING, pos.getSquare(7, 6));
+  TEST_ASSERT_ENUM_EQ(Piece::W_ROOK, pos.getSquare(7, 5));
+  TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.getSquare(7, 4));
+  TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.getSquare(7, 7));
 
   pos.unmake(m, undo);
   TEST_ASSERT_EQUAL_STRING(fenBefore.c_str(), pos.getFen().c_str());
@@ -1404,8 +1297,8 @@ void test_make_unmake_roundtrip_queenside_castling(void) {
   UndoInfo undo = pos.make(m);
 
   // King on c1, rook on d1
-  TEST_ASSERT_ENUM_EQ(Piece::W_KING, pos.pieceOn(squareOf(7, 2)));
-  TEST_ASSERT_ENUM_EQ(Piece::W_ROOK, pos.pieceOn(squareOf(7, 3)));
+  TEST_ASSERT_ENUM_EQ(Piece::W_KING, pos.getSquare(7, 2));
+  TEST_ASSERT_ENUM_EQ(Piece::W_ROOK, pos.getSquare(7, 3));
 
   pos.unmake(m, undo);
   TEST_ASSERT_EQUAL_STRING(fenBefore.c_str(), pos.getFen().c_str());
@@ -1421,15 +1314,15 @@ void test_make_unmake_roundtrip_promotion(void) {
   Move m(squareOf(1, 0), squareOf(0, 0), queenPromoFlags);  // a7-a8=Q
   UndoInfo undo = pos.make(m);
 
-  TEST_ASSERT_ENUM_EQ(Piece::W_QUEEN, pos.pieceOn(squareOf(0, 0)));
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.pieceOn(squareOf(1, 0)));
+  TEST_ASSERT_ENUM_EQ(Piece::W_QUEEN, pos.getSquare(0, 0));
+  TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.getSquare(1, 0));
 
   pos.unmake(m, undo);
   TEST_ASSERT_EQUAL_STRING(fenBefore.c_str(), pos.getFen().c_str());
   TEST_ASSERT_EQUAL_UINT64(hashBefore, pos.hash());
   // Unmake should restore pawn, not queen
-  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, pos.pieceOn(squareOf(1, 0)));
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.pieceOn(squareOf(0, 0)));
+  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, pos.getSquare(1, 0));
+  TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.getSquare(0, 0));
 }
 
 void test_make_unmake_roundtrip_promotion_capture(void) {
@@ -1442,13 +1335,13 @@ void test_make_unmake_roundtrip_promotion_capture(void) {
   Move m(squareOf(1, 0), squareOf(0, 1), MOVE_CAPTURE | queenPromo);  // axb8=Q
   UndoInfo undo = pos.make(m);
 
-  TEST_ASSERT_ENUM_EQ(Piece::W_QUEEN, pos.pieceOn(squareOf(0, 1)));
+  TEST_ASSERT_ENUM_EQ(Piece::W_QUEEN, pos.getSquare(0, 1));
 
   pos.unmake(m, undo);
   TEST_ASSERT_EQUAL_STRING(fenBefore.c_str(), pos.getFen().c_str());
   TEST_ASSERT_EQUAL_UINT64(hashBefore, pos.hash());
   // Knight should be restored
-  TEST_ASSERT_ENUM_EQ(Piece::B_KNIGHT, pos.pieceOn(squareOf(0, 1)));
+  TEST_ASSERT_ENUM_EQ(Piece::B_KNIGHT, pos.getSquare(0, 1));
 }
 
 void test_make_hash_matches_compute(void) {
@@ -1458,7 +1351,7 @@ void test_make_hash_matches_compute(void) {
 
   uint64_t incremental = pos.hash();
   uint64_t computed = zobrist::computeHash(
-      pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState());
+      pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState(), false);
   TEST_ASSERT_EQUAL_UINT64(computed, incremental);
 }
 
@@ -1471,7 +1364,7 @@ void test_make_hash_matches_compute_capture(void) {
 
   uint64_t incremental = pos.hash();
   uint64_t computed = zobrist::computeHash(
-      pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState());
+      pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState(), false);
   TEST_ASSERT_EQUAL_UINT64(computed, incremental);
 }
 
@@ -1484,7 +1377,7 @@ void test_make_hash_matches_compute_castling(void) {
 
   uint64_t incremental = pos.hash();
   uint64_t computed = zobrist::computeHash(
-      pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState());
+      pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState(), false);
   TEST_ASSERT_EQUAL_UINT64(computed, incremental);
 }
 
@@ -1497,7 +1390,7 @@ void test_make_hash_matches_compute_ep(void) {
 
   uint64_t incremental = pos.hash();
   uint64_t computed = zobrist::computeHash(
-      pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState());
+      pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState(), false);
   TEST_ASSERT_EQUAL_UINT64(computed, incremental);
 }
 
@@ -1511,7 +1404,7 @@ void test_make_hash_matches_compute_promotion(void) {
 
   uint64_t incremental = pos.hash();
   uint64_t computed = zobrist::computeHash(
-      pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState());
+      pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState(), false);
   TEST_ASSERT_EQUAL_UINT64(computed, incremental);
 }
 
@@ -1527,11 +1420,13 @@ void test_make_updates_turn(void) {
 void test_make_updates_king_cache(void) {
   setUpPosition();
   pos.loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-  TEST_ASSERT_EQUAL_INT(squareOf(7, 4), pos.kingSquare(Color::WHITE));
+  TEST_ASSERT_EQUAL_INT(7, pos.kingRow(Color::WHITE));
+  TEST_ASSERT_EQUAL_INT(4, pos.kingCol(Color::WHITE));
 
   Move m(squareOf(7, 4), squareOf(6, 4));  // Ke1-e2
   pos.make(m);
-  TEST_ASSERT_EQUAL_INT(squareOf(6, 4), pos.kingSquare(Color::WHITE));
+  TEST_ASSERT_EQUAL_INT(6, pos.kingRow(Color::WHITE));
+  TEST_ASSERT_EQUAL_INT(4, pos.kingCol(Color::WHITE));
 }
 
 void test_make_sets_ep_after_double_push(void) {
@@ -1564,15 +1459,15 @@ void test_make_resets_halfmove_on_capture(void) {
 
 void test_make_increments_fullmove_after_black(void) {
   setUpPosition();
-  TEST_ASSERT_EQUAL_INT(1, pos.moveNumber());
+  TEST_ASSERT_EQUAL_INT(1, pos.positionState().fullmoveClock);
 
   Move e4(squareOf(6, 4), squareOf(4, 4));
   pos.make(e4);
-  TEST_ASSERT_EQUAL_INT(1, pos.moveNumber());  // still 1 after White
+  TEST_ASSERT_EQUAL_INT(1, pos.positionState().fullmoveClock);  // still 1 after White
 
   Move e5(squareOf(1, 4), squareOf(3, 4));
   pos.make(e5);
-  TEST_ASSERT_EQUAL_INT(2, pos.moveNumber());  // increments after Black
+  TEST_ASSERT_EQUAL_INT(2, pos.positionState().fullmoveClock);  // increments after Black
 }
 
 void test_make_unmake_sequence_multiple_moves(void) {
@@ -1618,8 +1513,934 @@ void test_make_castling_revokes_castling_rights(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Incremental material tracking
+// ---------------------------------------------------------------------------
+
+// Verify material() matches eval::computeMaterial() at startpos.
+void test_material_initial_position(void) {
+  setUpPosition();
+  int expected = eval::computeMaterial(pos.bitboards());
+  TEST_ASSERT_EQUAL_INT(expected, pos.material());
+  TEST_ASSERT_EQUAL_INT(0, pos.material());  // symmetric = 0
+}
+
+// material() stays correct after regular capture.
+void test_material_after_capture(void) {
+  setUpPosition();
+  pos.loadFEN("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2");
+  Move m(squareOf(4, 4), squareOf(3, 3), MOVE_CAPTURE);  // exd5
+  UndoInfo undo = pos.make(m);
+  TEST_ASSERT_EQUAL_INT(eval::computeMaterial(pos.bitboards()), pos.material());
+  pos.unmake(m, undo);
+  TEST_ASSERT_EQUAL_INT(eval::computeMaterial(pos.bitboards()), pos.material());
+}
+
+// material() stays correct after en passant capture.
+void test_material_after_ep_capture(void) {
+  setUpPosition();
+  pos.loadFEN("rnbqkbnr/ppp1pppp/8/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 3");
+  Move m(squareOf(3, 4), squareOf(2, 3), MOVE_EP);  // exd6 e.p.
+  UndoInfo undo = pos.make(m);
+  TEST_ASSERT_EQUAL_INT(eval::computeMaterial(pos.bitboards()), pos.material());
+  pos.unmake(m, undo);
+  TEST_ASSERT_EQUAL_INT(eval::computeMaterial(pos.bitboards()), pos.material());
+}
+
+// material() stays correct after promotion.
+void test_material_after_promotion(void) {
+  setUpPosition();
+  pos.loadFEN("8/P3k3/8/8/8/8/4K3/8 w - - 0 1");
+  uint8_t queenPromo = Move::promoFlags(Move::promoIndexFromType(PieceType::QUEEN));
+  Move m(squareOf(1, 0), squareOf(0, 0), queenPromo);  // a8=Q
+  UndoInfo undo = pos.make(m);
+  TEST_ASSERT_EQUAL_INT(eval::computeMaterial(pos.bitboards()), pos.material());
+  pos.unmake(m, undo);
+  TEST_ASSERT_EQUAL_INT(eval::computeMaterial(pos.bitboards()), pos.material());
+}
+
+// material() stays correct across a sequence of make/unmake moves.
+void test_material_make_unmake_sequence(void) {
+  setUpPosition();
+  // Play a few moves and verify after each
+  Move m1(squareOf(6, 4), squareOf(4, 4), 0);  // e4
+  UndoInfo u1 = pos.make(m1);
+  TEST_ASSERT_EQUAL_INT(eval::computeMaterial(pos.bitboards()), pos.material());
+
+  Move m2(squareOf(1, 3), squareOf(3, 3), 0);  // d5
+  UndoInfo u2 = pos.make(m2);
+  TEST_ASSERT_EQUAL_INT(eval::computeMaterial(pos.bitboards()), pos.material());
+
+  Move m3(squareOf(4, 4), squareOf(3, 3), MOVE_CAPTURE);  // exd5
+  UndoInfo u3 = pos.make(m3);
+  TEST_ASSERT_EQUAL_INT(eval::computeMaterial(pos.bitboards()), pos.material());
+
+  pos.unmake(m3, u3);
+  TEST_ASSERT_EQUAL_INT(eval::computeMaterial(pos.bitboards()), pos.material());
+  pos.unmake(m2, u2);
+  TEST_ASSERT_EQUAL_INT(eval::computeMaterial(pos.bitboards()), pos.material());
+  pos.unmake(m1, u1);
+  TEST_ASSERT_EQUAL_INT(eval::computeMaterial(pos.bitboards()), pos.material());
+  TEST_ASSERT_EQUAL_INT(0, pos.material());  // back to symmetric
+}
+
+// material() preserved across null move make/unmake.
+void test_material_null_move(void) {
+  setUpPosition();
+  pos.loadFEN("r1bqkbnr/pppppppp/2n5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2");
+  int before = pos.material();
+  UndoInfo undo = pos.makeNullMove();
+  TEST_ASSERT_EQUAL_INT(before, pos.material());
+  pos.unmakeNullMove(undo);
+  TEST_ASSERT_EQUAL_INT(before, pos.material());
+}
+
+// material() recomputed after loadFEN.
+void test_material_after_load_fen(void) {
+  setUpPosition();
+  pos.loadFEN("rnbqkb1r/pppppppp/5n2/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2");
+  TEST_ASSERT_EQUAL_INT(eval::computeMaterial(pos.bitboards()), pos.material());
+}
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
+
+
+// ===========================================================================
+// Tests merged from test_rules.cpp (Position static methods + movegen rules)
+// ===========================================================================
+// ===========================================================================
+// isCheck
+// ===========================================================================
+
+static void test_king_not_in_check_initial(void) {
+  setupInitialBoard(bb, mailbox);
+  TEST_ASSERT_FALSE(Position::isCheck(bb, Color::WHITE));
+  TEST_ASSERT_FALSE(Position::isCheck(bb, Color::BLACK));
+}
+
+static void test_king_in_check_by_rook(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_ROOK, "e8"); // rook on same file
+  TEST_ASSERT_TRUE(Position::isCheck(bb, Color::WHITE));
+}
+
+static void test_king_in_check_by_bishop(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_BISHOP, "h4"); // bishop on diagonal
+  TEST_ASSERT_TRUE(Position::isCheck(bb, Color::WHITE));
+}
+
+static void test_king_in_check_by_knight(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KNIGHT, "f3"); // knight checks
+  TEST_ASSERT_TRUE(Position::isCheck(bb, Color::WHITE));
+}
+
+static void test_king_in_check_by_pawn(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e4");
+  placePiece(bb, mailbox, Piece::B_PAWN, "d5"); // black pawn attacks e4 from d5
+  TEST_ASSERT_TRUE(Position::isCheck(bb, Color::WHITE));
+}
+
+static void test_king_in_check_by_queen(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_QUEEN, "e8"); // queen on same file
+  TEST_ASSERT_TRUE(Position::isCheck(bb, Color::WHITE));
+}
+
+static void test_king_not_in_check_blocked(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_ROOK, "e8");
+  placePiece(bb, mailbox, Piece::W_PAWN, "e2"); // own pawn blocks rook
+  TEST_ASSERT_FALSE(Position::isCheck(bb, Color::WHITE));
+}
+
+static void test_black_king_in_check(void) {
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::W_ROOK, "e1"); // white rook attacks
+  TEST_ASSERT_TRUE(Position::isCheck(bb, Color::BLACK));
+}
+
+// ===========================================================================
+// isCheckmate
+// ===========================================================================
+
+static void test_back_rank_mate(void) {
+  // Classic back-rank mate: Black king on g8, pawns on f7/g7/h7, White rook on e8
+  placePiece(bb, mailbox, Piece::B_KING, "g8");
+  placePiece(bb, mailbox, Piece::B_PAWN, "f7");
+  placePiece(bb, mailbox, Piece::B_PAWN, "g7");
+  placePiece(bb, mailbox, Piece::B_PAWN, "h7");
+  placePiece(bb, mailbox, Piece::W_ROOK, "e8"); // delivers mate
+  PositionState flags{0x00, -1, -1, 0, 1};
+  TEST_ASSERT_TRUE(Position::isCheckmate(bb, mailbox, Color::BLACK, flags));
+}
+
+static void test_scholars_mate(void) {
+  // Scholar's mate position: White queen on f7 delivers checkmate
+  PositionState state;
+  Color turn;
+  fen::fenToBoard("r1bqkb1r/pppp1Qpp/2n2n2/4p3/2B1P3/8/PPPP1PPP/RNB1K1NR b - - 0 1", bb, mailbox, turn, &state);
+  TEST_ASSERT_TRUE(Position::isCheckmate(bb, mailbox, Color::BLACK, state));
+}
+
+static void test_not_checkmate_can_block(void) {
+  // King in check but can block
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "d1"); // own rook can block/interpose
+  placePiece(bb, mailbox, Piece::B_ROOK, "e8"); // attacking rook
+  PositionState flags{0x00, -1, -1, 0, 1};
+  TEST_ASSERT_FALSE(Position::isCheckmate(bb, mailbox, Color::WHITE, flags));
+}
+
+static void test_not_checkmate_can_escape(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_ROOK, "e8"); // rook checks
+  // King can escape to d1, d2, f1, f2
+  PositionState flags{0x00, -1, -1, 0, 1};
+  TEST_ASSERT_FALSE(Position::isCheckmate(bb, mailbox, Color::WHITE, flags));
+}
+
+static void test_not_checkmate_can_capture_attacker(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_ROOK, "e2"); // rook checks from e2
+  // King can capture the rook (assuming no support)
+  PositionState flags{0x00, -1, -1, 0, 1};
+  TEST_ASSERT_FALSE(Position::isCheckmate(bb, mailbox, Color::WHITE, flags));
+}
+
+static void test_smothered_mate(void) {
+  // Philidor's smothered mate: Kh8, Rg8, g7/h7 pawns, white Nf7#
+  placePiece(bb, mailbox, Piece::B_KING, "h8");
+  placePiece(bb, mailbox, Piece::B_ROOK, "g8"); // own rook blocks g8
+  placePiece(bb, mailbox, Piece::B_PAWN, "g7");
+  placePiece(bb, mailbox, Piece::B_PAWN, "h7");
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::W_KNIGHT, "f7"); // knight checks h8, blocks via g8/g7/h7
+  PositionState flags{0x00, -1, -1, 0, 1};
+  TEST_ASSERT_TRUE(Position::isCheck(bb, Color::BLACK));
+  TEST_ASSERT_TRUE(Position::isCheckmate(bb, mailbox, Color::BLACK, flags));
+}
+
+// ===========================================================================
+// isStalemate
+// ===========================================================================
+
+static void test_stalemate_king_only(void) {
+  // Classic stalemate: Black king on a8, White queen on b6, White king on c6
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::W_QUEEN, "b6");
+  placePiece(bb, mailbox, Piece::W_KING, "c6");
+  PositionState flags{0x00, -1, -1, 0, 1};
+  // Black to move — king has no legal moves, not in check
+  TEST_ASSERT_FALSE(Position::isCheck(bb, Color::BLACK));
+  TEST_ASSERT_TRUE(Position::isStalemate(bb, mailbox, Color::BLACK, flags));
+}
+
+static void test_not_stalemate_has_move(void) {
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::W_KING, "c6");
+  PositionState flags{0x00, -1, -1, 0, 1};
+  // Black king can move to b8, b7, a7
+  TEST_ASSERT_FALSE(Position::isStalemate(bb, mailbox, Color::BLACK, flags));
+}
+
+static void test_stalemate_with_blocked_pawns(void) {
+  // Black king on a8, black pawn on a7 blocked by white pawn on a6.
+  // White king on c7 controls b8, b7, c8, d8, d7.
+  // Black has no legal moves: king surrounded, pawn blocked.
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::B_PAWN, "a7");
+  placePiece(bb, mailbox, Piece::W_PAWN, "a6"); // blocks the pawn
+  placePiece(bb, mailbox, Piece::W_KING, "c7"); // controls b8, b7, c8, d8, d7
+  PositionState flags{0x00, -1, -1, 0, 1};
+  TEST_ASSERT_FALSE(Position::isCheck(bb, Color::BLACK));
+  TEST_ASSERT_TRUE(Position::isStalemate(bb, mailbox, Color::BLACK, flags));
+}
+
+// ===========================================================================
+// Move legality (can't move into check, pins)
+// ===========================================================================
+
+static void test_king_cannot_move_into_check(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_ROOK, "f8"); // rook controls f-file
+  int r, c;
+  sq("e1", r, c);
+  int tr, tc;
+  sq("f1", tr, tc);
+  PositionState flags{0x00, -1, -1, 0, 1};
+  TEST_ASSERT_FALSE(movegen::isValidMove(bb, mailbox, r, c, tr, tc, flags));
+}
+
+static void test_pinned_piece_cannot_move(void) {
+  // Bishop pinned to its own king
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "e2"); // bishop on same file, between king and rook
+  placePiece(bb, mailbox, Piece::B_ROOK, "e8"); // enemy rook pins bishop
+  int r, c;
+  sq("e2", r, c);
+  int tr, tc;
+  sq("d3", tr, tc);
+  PositionState flags{0x00, -1, -1, 0, 1};
+  // Moving bishop exposes king to check → illegal
+  TEST_ASSERT_FALSE(movegen::isValidMove(bb, mailbox, r, c, tr, tc, flags));
+}
+
+static void test_pinned_piece_can_move_along_pin(void) {
+  // Rook pinned along file — can move along that file
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "e4"); // own rook on same file
+  placePiece(bb, mailbox, Piece::B_ROOK, "e8"); // enemy rook pins
+  int r, c;
+  sq("e4", r, c);
+  int tr, tc;
+  sq("e8", tr, tc); // capture the pinning rook
+  PositionState flags{0x00, -1, -1, 0, 1};
+  TEST_ASSERT_TRUE(movegen::isValidMove(bb, mailbox, r, c, tr, tc, flags));
+}
+
+static void test_diagonal_pin(void) {
+  // Black pawn on d4 pinned to black king on g7 by white bishop on a1
+  placePiece(bb, mailbox, Piece::B_KING, "g7");
+  placePiece(bb, mailbox, Piece::W_KING, "a8");
+  placePiece(bb, mailbox, Piece::B_PAWN, "d4");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "a1"); // pins d4 to g7 along diagonal
+  int r, c;
+  sq("d4", r, c);
+  PositionState flags{0x00, -1, -1, 0, 1};
+  // Pawn should have 0 legal moves (pinned diagonally, can't move along pin)
+  MoveList moves;
+  movegen::getPossibleMoves(bb, mailbox, r, c, flags, moves);
+  TEST_ASSERT_EQUAL_INT(0, moves.count);
+}
+
+static void test_discovered_check(void) {
+  // White bishop on c1 blocks white rook on a1 from checking black king on h1.
+  // Move the bishop away to reveal the rook check.
+  placePiece(bb, mailbox, Piece::B_KING, "h1");
+  placePiece(bb, mailbox, Piece::W_KING, "a8");
+  placePiece(bb, mailbox, Piece::W_ROOK, "a1"); // rook on a1
+  placePiece(bb, mailbox, Piece::W_BISHOP, "d1"); // bishop blocks rank 1
+  // After bishop moves to e2 (off rank 1), rook gives check along rank 1
+  // Verify the bishop CAN move (it would reveal check on opponent's king)
+  int r, c;
+  sq("d1", r, c);
+  int tr, tc;
+  sq("e2", tr, tc);
+  PositionState flags{0x00, -1, -1, 0, 1};
+  TEST_ASSERT_TRUE(movegen::isValidMove(bb, mailbox, r, c, tr, tc, flags));
+}
+
+static void test_double_check_only_king_can_move(void) {
+  // Black king in double check from white rook and bishop.
+  // Only king moves should be legal — no blocks or captures by other pieces.
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "e1"); // rook checks along e-file
+  placePiece(bb, mailbox, Piece::W_BISHOP, "b5"); // bishop checks along b5-e8 diagonal
+  placePiece(bb, mailbox, Piece::B_KNIGHT, "d6"); // black knight could theoretically block/capture
+
+  PositionState flags{0x00, -1, -1, 0, 1};
+  // King is in check
+  TEST_ASSERT_TRUE(Position::isCheck(bb, Color::BLACK));
+  // Knight on d6 cannot resolve double check (even though it attacks both e4 and b5)
+  MoveList moves;
+  int r, c;
+  sq("d6", r, c);
+  movegen::getPossibleMoves(bb, mailbox, r, c, flags, moves);
+  TEST_ASSERT_EQUAL_INT(0, moves.count);
+}
+
+// ===========================================================================
+// Pin-aware generation — checkMask and pin detection scenarios
+// ===========================================================================
+
+static void test_single_check_slider_can_block(void) {
+  // White king e1 in check from black rook e8.
+  // White rook on d4 (not pinned) can interpose at e4 but cannot make unrelated moves.
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::B_ROOK, "e8"); // checks king on e-file
+  placePiece(bb, mailbox, Piece::W_ROOK, "d4"); // can block at e4
+  PositionState flags{0x00, -1, -1, 0, 1};
+  // Moving to e4 interposes the check — legal
+  TEST_ASSERT_TRUE(moveExists(bb, mailbox, 4, 3, 4, 4, flags));
+  // Moving to d5 does not address the check — illegal
+  TEST_ASSERT_FALSE(moveExists(bb, mailbox, 4, 3, 3, 3, flags));
+}
+
+static void test_knight_check_no_blocking(void) {
+  // White king e1 in check from black knight f3.
+  // White bishop d4 cannot block (non-colinear) and cannot capture f3 (not on diagonal).
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::B_KNIGHT, "f3"); // knight check — cannot be blocked
+  placePiece(bb, mailbox, Piece::W_BISHOP, "d4"); // not in position to capture f3
+  PositionState flags{0x00, -1, -1, 0, 1};
+  MoveList moves;
+  int r, c;
+  sq("d4", r, c);
+  movegen::getPossibleMoves(bb, mailbox, r, c, flags, moves);
+  TEST_ASSERT_EQUAL_INT(0, moves.count);
+}
+
+static void test_two_friendly_shielding_king_not_pinned(void) {
+  // White king a1, white rook c1, white knight f1, black rook h1.
+  // Two friendlies on rank 1 between king and enemy rook — neither is pinned.
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::W_ROOK, "c1");
+  placePiece(bb, mailbox, Piece::W_KNIGHT, "f1");
+  placePiece(bb, mailbox, Piece::B_ROOK, "h1"); // blocked by two friendlies
+  PositionState flags{0x00, -1, -1, 0, 1};
+  // Knight is NOT pinned — it has its 4 normal moves (d2, e3, g3, h2)
+  MoveList moves;
+  int r, c;
+  sq("f1", r, c);
+  movegen::getPossibleMoves(bb, mailbox, r, c, flags, moves);
+  TEST_ASSERT_EQUAL_INT(4, moves.count);
+}
+
+static void test_ep_horizontal_pin_illegal(void) {
+  // White king a5, white pawn d5, black pawn e5 (just moved), black rook h5.
+  // After EP capture dxe6, both d5 and e5 are cleared — king on a5 is exposed to rook on h5.
+  placePiece(bb, mailbox, Piece::W_KING, "a5");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::W_PAWN, "d5");
+  placePiece(bb, mailbox, Piece::B_PAWN, "e5"); // last moved from e7
+  placePiece(bb, mailbox, Piece::B_ROOK, "h5"); // would give check after EP
+  int epR, epC;
+  sq("e6", epR, epC); // EP target square
+  PositionState flags{0x00, epR, epC, 0, 1};
+  TEST_ASSERT_FALSE(movegen::hasLegalEnPassantCapture(bb, mailbox, Color::WHITE, flags));
+}
+
+static void test_getPossibleMoves_idempotent(void) {
+  // Calling getPossibleMoves twice on the same position must return identical
+  // results (verifies no internal state leaks between calls).
+  placePiece(bb, mailbox, Piece::W_KING, "e4");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::B_ROOK, "h5"); // limits some king moves
+  PositionState flags{0x00, -1, -1, 0, 1};
+  int r, c;
+  sq("e4", r, c);
+  MoveList moves1, moves2;
+  movegen::getPossibleMoves(bb, mailbox, r, c, flags, moves1);
+  movegen::getPossibleMoves(bb, mailbox, r, c, flags, moves2);
+  TEST_ASSERT_EQUAL_INT(moves1.count, moves2.count);
+}
+
+// ===========================================================================
+// hasLegalEnPassantCapture (direct tests)
+// ===========================================================================
+
+static void test_hasLegalEnPassantCapture_true(void) {
+  // White pawn on e5, black pawn on d5, EP target d6
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::W_PAWN, "e5");
+  placePiece(bb, mailbox, Piece::B_PAWN, "d5");
+  int epR, epC;
+  sq("d6", epR, epC);
+  PositionState flags{0x00, epR, epC, 0, 1};
+  TEST_ASSERT_TRUE(movegen::hasLegalEnPassantCapture(bb, mailbox, Color::WHITE, flags));
+}
+
+static void test_hasLegalEnPassantCapture_false_no_target(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::W_PAWN, "e5");
+  placePiece(bb, mailbox, Piece::B_PAWN, "d5");
+  PositionState flags{0x00, -1, -1, 0, 1}; // no EP target
+  TEST_ASSERT_FALSE(movegen::hasLegalEnPassantCapture(bb, mailbox, Color::WHITE, flags));
+}
+
+// EP capture from a-file pawn (only one adjacent file: b).
+static void test_hasLegalEnPassantCapture_a_file(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "h1");
+  placePiece(bb, mailbox, Piece::B_KING, "h8");
+  placePiece(bb, mailbox, Piece::W_PAWN, "a5");
+  placePiece(bb, mailbox, Piece::B_PAWN, "b5");
+  int epR, epC;
+  sq("b6", epR, epC);
+  PositionState flags{0x00, epR, epC, 0, 1};
+  TEST_ASSERT_TRUE(movegen::hasLegalEnPassantCapture(bb, mailbox, Color::WHITE, flags));
+}
+
+// EP capture from h-file pawn (only one adjacent file: g).
+static void test_hasLegalEnPassantCapture_h_file(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::W_PAWN, "h5");
+  placePiece(bb, mailbox, Piece::B_PAWN, "g5");
+  int epR, epC;
+  sq("g6", epR, epC);
+  PositionState flags{0x00, epR, epC, 0, 1};
+  TEST_ASSERT_TRUE(movegen::hasLegalEnPassantCapture(bb, mailbox, Color::WHITE, flags));
+}
+
+// No EP capture when pawn is on the wrong file.
+static void test_hasLegalEnPassantCapture_wrong_file(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::W_PAWN, "c5");  // c-file pawn
+  placePiece(bb, mailbox, Piece::B_PAWN, "e5");   // e-file pawn that doubled
+  int epR, epC;
+  sq("e6", epR, epC);
+  PositionState flags{0x00, epR, epC, 0, 1};
+  // c-pawn is 2 files away from e6 — no EP possible
+  TEST_ASSERT_FALSE(movegen::hasLegalEnPassantCapture(bb, mailbox, Color::WHITE, flags));
+}
+
+// Black EP capture on h-file edge.
+static void test_hasLegalEnPassantCapture_black_h_file(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::B_PAWN, "h4");
+  placePiece(bb, mailbox, Piece::W_PAWN, "g4");
+  int epR, epC;
+  sq("g3", epR, epC);
+  PositionState flags{0x00, epR, epC, 0, 1};
+  TEST_ASSERT_TRUE(movegen::hasLegalEnPassantCapture(bb, mailbox, Color::BLACK, flags));
+}
+
+// ===========================================================================
+// isSquareUnderAttack (direct tests)
+// ===========================================================================
+
+static void test_isSquareUnderAttack_by_pawn(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::B_PAWN, "d5");
+  int r, c;
+  sq("e4", r, c);
+  // e4 is attacked by black pawn from d5 (defending color = white → attacker = black)
+  TEST_ASSERT_TRUE(attacks::isSquareUnderAttack(bb, r, c, Color::WHITE));
+}
+
+static void test_isSquareUnderAttack_by_knight(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::B_KNIGHT, "f3");
+  int r, c;
+  sq("e1", r, c);
+  TEST_ASSERT_TRUE(attacks::isSquareUnderAttack(bb, r, c, Color::WHITE));
+}
+
+static void test_isSquareUnderAttack_not_attacked(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::B_KNIGHT, "f3");
+  int r, c;
+  sq("a4", r, c);
+  TEST_ASSERT_FALSE(attacks::isSquareUnderAttack(bb, r, c, Color::WHITE));
+}
+
+// ===========================================================================
+// isValidMove — direct tests
+// ===========================================================================
+
+static void test_isValidMove_basic_valid(void) {
+  setupInitialBoard(bb, mailbox);
+  PositionState flags = PositionState::initial();
+  // e2e4 is valid
+  TEST_ASSERT_TRUE(movegen::isValidMove(bb, mailbox, 6, 4, 4, 4, flags));
+}
+
+static void test_isValidMove_illegal_destination(void) {
+  setupInitialBoard(bb, mailbox);
+  PositionState flags = PositionState::initial();
+  // e2e5 (3 squares) is illegal for a pawn
+  TEST_ASSERT_FALSE(movegen::isValidMove(bb, mailbox, 6, 4, 3, 4, flags));
+}
+
+static void test_isValidMove_empty_source(void) {
+  PositionState flags{0x00, -1, -1, 0, 1};
+  placePiece(bb, mailbox, Piece::W_KING, "h1");
+  placePiece(bb, mailbox, Piece::B_KING, "h8");
+  // e4 is empty — moving from empty square is invalid
+  TEST_ASSERT_FALSE(movegen::isValidMove(bb, mailbox, 4, 4, 3, 4, flags));
+}
+
+// ===========================================================================
+// isDraw — direct static tests
+// ===========================================================================
+
+static void test_rules_isDraw_insufficient(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  PositionState st{0x00, -1, -1, 0, 1};
+  HashHistory hh{};
+  TEST_ASSERT_TRUE(Position::isDraw(bb, mailbox, Color::WHITE, st, hh));
+}
+
+static void test_rules_isDraw_fifty_move(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::W_ROOK, "a1");  // sufficient material
+  PositionState st{0x00, -1, -1, 100, 50};
+  HashHistory hh{};
+  TEST_ASSERT_TRUE(Position::isDraw(bb, mailbox, Color::WHITE, st, hh));
+}
+
+static void test_rules_isDraw_false(void) {
+  setupInitialBoard(bb, mailbox);
+  PositionState st = PositionState::initial();
+  HashHistory hh{};
+  TEST_ASSERT_FALSE(Position::isDraw(bb, mailbox, Color::WHITE, st, hh));
+}
+
+// ===========================================================================
+// isGameOver — direct static tests
+// ===========================================================================
+
+static void test_rules_isGameOver_checkmate(void) {
+  // Back rank mate
+  placePiece(bb, mailbox, Piece::B_KING, "g8");
+  placePiece(bb, mailbox, Piece::B_PAWN, "f7");
+  placePiece(bb, mailbox, Piece::B_PAWN, "g7");
+  placePiece(bb, mailbox, Piece::B_PAWN, "h7");
+  placePiece(bb, mailbox, Piece::W_ROOK, "e8");
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
+  PositionState st{0x00, -1, -1, 0, 1};
+  HashHistory hh{};
+  char winner = ' ';
+  GameResult result = Position::isGameOver(bb, mailbox, Color::BLACK, st, hh, winner);
+  TEST_ASSERT_ENUM_EQ(GameResult::CHECKMATE, result);
+  TEST_ASSERT_EQUAL_CHAR('w', winner);
+}
+
+static void test_rules_isGameOver_stalemate(void) {
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::W_QUEEN, "b6");
+  placePiece(bb, mailbox, Piece::W_KING, "c6");
+  PositionState st{0x00, -1, -1, 0, 1};
+  HashHistory hh{};
+  char winner = ' ';
+  GameResult result = Position::isGameOver(bb, mailbox, Color::BLACK, st, hh, winner);
+  TEST_ASSERT_ENUM_EQ(GameResult::STALEMATE, result);
+}
+
+static void test_rules_isGameOver_in_progress(void) {
+  setupInitialBoard(bb, mailbox);
+  PositionState st = PositionState::initial();
+  HashHistory hh{};
+  char winner = ' ';
+  GameResult result = Position::isGameOver(bb, mailbox, Color::WHITE, st, hh, winner);
+  TEST_ASSERT_ENUM_EQ(GameResult::IN_PROGRESS, result);
+}
+
+// ===========================================================================
+// isThreefoldRepetition
+// ===========================================================================
+
+static void test_rules_isThreefoldRepetition_direct(void) {
+  // Fabricate a HashHistory with 3 identical hashes
+  HashHistory hh{};
+  hh.keys[0] = 0xABCD;
+  hh.keys[1] = 0x1234;
+  hh.keys[2] = 0xABCD;
+  hh.keys[3] = 0x5678;
+  hh.keys[4] = 0xABCD;
+  hh.count = 5;
+  TEST_ASSERT_TRUE(Position::isThreefoldRepetition(hh));
+}
+
+static void test_rules_isThreefoldRepetition_not_reached(void) {
+  HashHistory hh{};
+  hh.keys[0] = 0xABCD;
+  hh.keys[1] = 0x1234;
+  hh.keys[2] = 0xABCD;
+  hh.count = 3;
+  TEST_ASSERT_FALSE(Position::isThreefoldRepetition(hh));
+}
+
+// ===========================================================================
+// Castling
+// ===========================================================================
+
+static void test_white_kingside_castle_available(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "h1");
+  PositionState flags{0x0F, -1, -1}; // all rights
+  int r, c;
+  sq("e1", r, c);
+  int tr, tc;
+  sq("g1", tr, tc);
+  TEST_ASSERT_TRUE(moveExists(bb, mailbox, r, c, tr, tc, flags));
+}
+
+static void test_white_queenside_castle_available(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "a1");
+  PositionState flags{0x0F, -1, -1};
+  int r, c;
+  sq("e1", r, c);
+  int tr, tc;
+  sq("c1", tr, tc);
+  TEST_ASSERT_TRUE(moveExists(bb, mailbox, r, c, tr, tc, flags));
+}
+
+static void test_black_kingside_castle_available(void) {
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_ROOK, "h8");
+  PositionState flags{0x0F, -1, -1};
+  int r, c;
+  sq("e8", r, c);
+  int tr, tc;
+  sq("g8", tr, tc);
+  TEST_ASSERT_TRUE(moveExists(bb, mailbox, r, c, tr, tc, flags));
+}
+
+static void test_black_queenside_castle_available(void) {
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_ROOK, "a8");
+  PositionState flags{0x0F, -1, -1};
+  int r, c;
+  sq("e8", r, c);
+  int tr, tc;
+  sq("c8", tr, tc);
+  TEST_ASSERT_TRUE(moveExists(bb, mailbox, r, c, tr, tc, flags));
+}
+
+static void test_castle_blocked_by_piece(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "h1");
+  placePiece(bb, mailbox, Piece::W_KNIGHT, "g1"); // knight blocks
+  PositionState flags{0x0F, -1, -1};
+  int r, c;
+  sq("e1", r, c);
+  int tr, tc;
+  sq("g1", tr, tc);
+  TEST_ASSERT_FALSE(moveExists(bb, mailbox, r, c, tr, tc, flags));
+}
+
+static void test_castle_through_check_forbidden(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "h1");
+  placePiece(bb, mailbox, Piece::B_ROOK, "f8"); // rook controls f1 — king passes through check
+  PositionState flags{0x0F, -1, -1};
+  int r, c;
+  sq("e1", r, c);
+  int tr, tc;
+  sq("g1", tr, tc);
+  TEST_ASSERT_FALSE(movegen::isValidMove(bb, mailbox, r, c, tr, tc, flags));
+}
+
+static void test_castle_while_in_check_forbidden(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "h1");
+  placePiece(bb, mailbox, Piece::B_ROOK, "e8"); // rook gives check on e-file
+  PositionState flags{0x0F, -1, -1};
+  int r, c;
+  sq("e1", r, c);
+  int tr, tc;
+  sq("g1", tr, tc);
+  TEST_ASSERT_FALSE(movegen::isValidMove(bb, mailbox, r, c, tr, tc, flags));
+}
+
+static void test_castle_destination_under_attack(void) {
+  // g1 attacked by black rook on g8, but f1 is safe
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "h1");
+  placePiece(bb, mailbox, Piece::B_ROOK, "g8"); // attacks g1 (destination)
+  PositionState flags{0x0F, -1, -1};
+  int r, c;
+  sq("e1", r, c);
+  int tr, tc;
+  sq("g1", tr, tc);
+  TEST_ASSERT_FALSE(movegen::isValidMove(bb, mailbox, r, c, tr, tc, flags));
+}
+
+static void test_no_castle_right_revoked(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "h1");
+  PositionState flags{0x00, -1, -1, 0, 1}; // no rights
+  int r, c;
+  sq("e1", r, c);
+  int tr, tc;
+  sq("g1", tr, tc);
+  TEST_ASSERT_FALSE(moveExists(bb, mailbox, r, c, tr, tc, flags));
+}
+
+static void test_queenside_blocked_b1(void) {
+  // b1 must be empty (rook passes through it)
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "a1");
+  placePiece(bb, mailbox, Piece::W_KNIGHT, "b1");
+  PositionState flags{0x0F, -1, -1};
+  int r, c;
+  sq("e1", r, c);
+  int tr, tc;
+  sq("c1", tr, tc);
+  TEST_ASSERT_FALSE(moveExists(bb, mailbox, r, c, tr, tc, flags));
+}
+
+static void test_partial_castling_rights_kingside_only(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "h1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "a1");
+  PositionState flags{0x01, -1, -1}; // only white kingside (K)
+  int r, c;
+  sq("e1", r, c);
+  int ktr, ktc, qtr, qtc;
+  sq("g1", ktr, ktc);
+  sq("c1", qtr, qtc);
+  TEST_ASSERT_TRUE(moveExists(bb, mailbox, r, c, ktr, ktc, flags));  // kingside OK
+  TEST_ASSERT_FALSE(moveExists(bb, mailbox, r, c, qtr, qtc, flags)); // queenside NO
+}
+
+// ===========================================================================
+// En passant
+// ===========================================================================
+
+static void test_en_passant_white_captures(void) {
+  // White pawn on e5, Black pawn just double-pushed to d5
+  placePiece(bb, mailbox, Piece::W_PAWN, "e5");
+  placePiece(bb, mailbox, Piece::B_PAWN, "d5");
+  int epR, epC;
+  sq("d6", epR, epC);
+  PositionState flags{0x0F, epR, epC}; // d6
+
+  int r, c;
+  sq("e5", r, c);
+  TEST_ASSERT_TRUE(moveExists(bb, mailbox, r, c, epR, epC, flags));
+}
+
+static void test_en_passant_black_captures(void) {
+  placePiece(bb, mailbox, Piece::B_PAWN, "d4");
+  placePiece(bb, mailbox, Piece::W_PAWN, "e4");
+  int epR, epC;
+  sq("e3", epR, epC);
+  PositionState flags{0x0F, epR, epC}; // e3
+
+  int r, c;
+  sq("d4", r, c);
+  TEST_ASSERT_TRUE(moveExists(bb, mailbox, r, c, epR, epC, flags));
+}
+
+static void test_en_passant_not_available(void) {
+  // Pawns adjacent but no en passant target set
+  placePiece(bb, mailbox, Piece::W_PAWN, "e5");
+  placePiece(bb, mailbox, Piece::B_PAWN, "d5");
+  // Default flags — no en passant
+
+  int r, c;
+  sq("e5", r, c);
+  int tr, tc;
+  sq("d6", tr, tc);
+  TEST_ASSERT_FALSE(moveExists(bb, mailbox, r, c, tr, tc));
+}
+
+static void test_ep_capture_leaves_king_in_check(void) {
+  // Horizontal pin: white K on a5, P on d5, black p on e5 (just double-pushed),
+  // black rook on h5. EP capture d5→e6 removes e5 pawn, exposes king along rank 5.
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "a5");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  placePiece(bb, mailbox, Piece::W_PAWN, "d5");
+  placePiece(bb, mailbox, Piece::B_PAWN, "e5");
+  placePiece(bb, mailbox, Piece::B_ROOK, "h5");
+  int epR, epC;
+  sq("e6", epR, epC);
+  PositionState flags{0x00, epR, epC, 0, 1};
+  int r, c;
+  sq("d5", r, c);
+  TEST_ASSERT_FALSE(movegen::isValidMove(bb, mailbox, r, c, epR, epC, flags));
+}
+
+static void test_ep_a_file_boundary(void) {
+  placePiece(bb, mailbox, Piece::W_PAWN, "a5");
+  placePiece(bb, mailbox, Piece::B_PAWN, "b5");
+  int epR, epC;
+  sq("b6", epR, epC);
+  PositionState flags{0x0F, epR, epC};
+  int r, c;
+  sq("a5", r, c);
+  TEST_ASSERT_TRUE(moveExists(bb, mailbox, r, c, epR, epC, flags));
+}
+
+static void test_ep_h_file_boundary(void) {
+  placePiece(bb, mailbox, Piece::W_PAWN, "h5");
+  placePiece(bb, mailbox, Piece::B_PAWN, "g5");
+  int epR, epC;
+  sq("g6", epR, epC);
+  PositionState flags{0x0F, epR, epC};
+  int r, c;
+  sq("h5", r, c);
+  TEST_ASSERT_TRUE(moveExists(bb, mailbox, r, c, epR, epC, flags));
+}
+
+// ===========================================================================
+// Helpers: isEnPassantMove, isCastlingMove, etc.
+// ===========================================================================
+
+static void test_isEnPassantMove_true(void) {
+  // White pawn on e5 captures diagonally to d6 (empty) => en passant
+  Position pos;
+  pos.loadFEN("rnbqkbnr/ppp1pppp/8/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 1");
+  auto info = pos.checkEnPassant(3, 4, 2, 3);
+  TEST_ASSERT_TRUE(info.isCapture);
+}
+
+static void test_isEnPassantMove_false_normal_capture(void) {
+  // White pawn captures a piece diagonally -- not en passant
+  Position pos;
+  pos.loadFEN("rnbqkbnr/ppp1pppp/3p4/4P3/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
+  auto info = pos.checkEnPassant(3, 4, 2, 3);
+  TEST_ASSERT_FALSE(info.isCapture);
+}
+
+static void test_isEnPassantMove_non_pawn(void) {
+  // Bishop on e5 moves diagonally to d6 (empty) -- not a pawn, no EP
+  Position pos;
+  pos.loadFEN("rnbqkbnr/pppppppp/8/4B3/8/8/PPPPPPPP/RNBQK1NR w KQkq - 0 1");
+  TEST_ASSERT_FALSE(pos.checkEnPassant(3, 4, 2, 3).isCapture);
+}
+
+static void test_isCastlingMove_true(void) {
+  // King moves 2 squares
+  Position pos;
+  pos.loadFEN("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1");
+  TEST_ASSERT_TRUE(pos.checkCastling(7, 4, 7, 6).isCastling);
+  TEST_ASSERT_TRUE(pos.checkCastling(7, 4, 7, 2).isCastling);
+}
+
+static void test_isCastlingMove_false(void) {
+  // King moves 1 square
+  Position pos;
+  pos.loadFEN("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1");
+  TEST_ASSERT_FALSE(pos.checkCastling(7, 4, 7, 5).isCastling);
+}
+
+static void test_isCastlingMove_non_king(void) {
+  // Rook moves 2 squares -- not castling
+  Position pos;
+  pos.loadFEN("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1");
+  TEST_ASSERT_FALSE(pos.checkCastling(7, 0, 7, 2).isCastling);
+}
+
+static void test_getEnPassantCapturedPawnRow(void) {
+  // White captures en passant moving to row 2 (rank 6) -- captured pawn is on row 3
+  Position pos;
+  pos.loadFEN("rnbqkbnr/1ppppppp/8/p3P3/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
+  auto info = pos.checkEnPassant(3, 4, 2, 3);
+  // Diagonal pawn move to empty → EP detected, captured pawn on row 3
+  // (Note: this tests EP detection logic, not full legality)
+
+  // Black captures en passant
+  Position pos2;
+  pos2.loadFEN("rnbqkbnr/pppp1ppp/8/8/Pp6/8/1PPPPPPP/RNBQKBNR b KQkq a3 0 1");
+  auto info2 = pos2.checkEnPassant(4, 1, 5, 0);
+  TEST_ASSERT_TRUE(info2.isCapture);
+  TEST_ASSERT_EQUAL_INT(4, info2.capturedPawnRow);
+}
+
+// ===========================================================================
+// Registration
+// ===========================================================================
 
 void register_position_tests() {
   needsDefaultKings = false;
@@ -1716,13 +2537,6 @@ void register_position_tests() {
   RUN_TEST(test_position_halfmove_clock_resets_on_pawn_move);
   RUN_TEST(test_position_fullmove_increments_after_black);
 
-  // findPiece
-  RUN_TEST(test_position_find_piece_kings_initial);
-  RUN_TEST(test_position_find_piece_black_pawns_initial);
-  RUN_TEST(test_position_find_piece_not_found);
-  RUN_TEST(test_position_find_piece_multiple_bishops);
-  RUN_TEST(test_position_find_piece_max_limit);
-
   // inCheck (no-arg)
   RUN_TEST(test_position_in_check_true);
   RUN_TEST(test_position_in_check_false);
@@ -1730,19 +2544,6 @@ void register_position_tests() {
   // isCheckmate (no-arg)
   RUN_TEST(test_position_is_checkmate_true);
   RUN_TEST(test_position_is_checkmate_false);
-
-  // isStalemate (no-arg)
-  RUN_TEST(test_position_is_stalemate_true);
-  RUN_TEST(test_position_is_stalemate_false);
-
-  // isInsufficientMaterial (public)
-  RUN_TEST(test_position_is_insufficient_material_true);
-  RUN_TEST(test_position_is_insufficient_material_false);
-
-  // isAttacked
-  RUN_TEST(test_position_is_attacked_by_white);
-  RUN_TEST(test_position_is_attacked_by_black);
-  RUN_TEST(test_position_is_attacked_empty_square);
 
   // moveNumber
   RUN_TEST(test_position_move_number_initial);
@@ -1794,8 +2595,8 @@ void register_position_tests() {
   RUN_TEST(test_position_load_fen_sets_clocks);
 
   // Board-level threefold repetition
-  RUN_TEST(test_position_isThreefoldRepetition_query);
-  RUN_TEST(test_position_isThreefoldRepetition_false);
+  RUN_TEST(test_position_isRepetition_query);
+  RUN_TEST(test_position_isRepetition_false);
 
   // reverseMove restoration
   RUN_TEST(test_position_reverse_move_restores_fen);
@@ -1822,4 +2623,104 @@ void register_position_tests() {
   RUN_TEST(test_make_increments_fullmove_after_black);
   RUN_TEST(test_make_unmake_sequence_multiple_moves);
   RUN_TEST(test_make_castling_revokes_castling_rights);
+
+  // Incremental material tracking
+  RUN_TEST(test_material_initial_position);
+  RUN_TEST(test_material_after_capture);
+  RUN_TEST(test_material_after_ep_capture);
+  RUN_TEST(test_material_after_promotion);
+  RUN_TEST(test_material_make_unmake_sequence);
+  RUN_TEST(test_material_null_move);
+  RUN_TEST(test_material_after_load_fen);
+
+  // =======================================================================
+  // Tests from former test_rules.cpp (Position static methods + rules)
+  // =======================================================================
+  needsDefaultKings = false;
+  // ----- Check detection -----
+  RUN_TEST(test_king_not_in_check_initial);
+  RUN_TEST(test_king_in_check_by_rook);
+  RUN_TEST(test_king_in_check_by_bishop);
+  RUN_TEST(test_king_in_check_by_knight);
+  RUN_TEST(test_king_in_check_by_pawn);
+  RUN_TEST(test_king_in_check_by_queen);
+  RUN_TEST(test_king_not_in_check_blocked);
+  RUN_TEST(test_black_king_in_check);
+  // ----- Checkmate -----
+  RUN_TEST(test_back_rank_mate);
+  RUN_TEST(test_scholars_mate);
+  RUN_TEST(test_not_checkmate_can_block);
+  RUN_TEST(test_not_checkmate_can_escape);
+  RUN_TEST(test_not_checkmate_can_capture_attacker);
+  RUN_TEST(test_smothered_mate);
+  // ----- Stalemate -----
+  RUN_TEST(test_stalemate_king_only);
+  RUN_TEST(test_not_stalemate_has_move);
+  RUN_TEST(test_stalemate_with_blocked_pawns);
+  // ----- Move legality (pins, check evasion) -----
+  RUN_TEST(test_king_cannot_move_into_check);
+  RUN_TEST(test_pinned_piece_cannot_move);
+  RUN_TEST(test_pinned_piece_can_move_along_pin);
+  RUN_TEST(test_diagonal_pin);
+  RUN_TEST(test_discovered_check);
+  RUN_TEST(test_double_check_only_king_can_move);
+  RUN_TEST(test_single_check_slider_can_block);
+  RUN_TEST(test_knight_check_no_blocking);
+  RUN_TEST(test_two_friendly_shielding_king_not_pinned);
+  RUN_TEST(test_ep_horizontal_pin_illegal);
+  RUN_TEST(test_getPossibleMoves_idempotent);
+  // ----- En passant legality -----
+  RUN_TEST(test_hasLegalEnPassantCapture_true);
+  RUN_TEST(test_hasLegalEnPassantCapture_false_no_target);
+  RUN_TEST(test_hasLegalEnPassantCapture_a_file);
+  RUN_TEST(test_hasLegalEnPassantCapture_h_file);
+  RUN_TEST(test_hasLegalEnPassantCapture_wrong_file);
+  RUN_TEST(test_hasLegalEnPassantCapture_black_h_file);
+  // ----- Square attack detection -----
+  RUN_TEST(test_isSquareUnderAttack_by_pawn);
+  RUN_TEST(test_isSquareUnderAttack_by_knight);
+  RUN_TEST(test_isSquareUnderAttack_not_attacked);
+  // ----- isValidMove direct -----
+  RUN_TEST(test_isValidMove_basic_valid);
+  RUN_TEST(test_isValidMove_illegal_destination);
+  RUN_TEST(test_isValidMove_empty_source);
+  // ----- isDraw -----
+  RUN_TEST(test_rules_isDraw_insufficient);
+  RUN_TEST(test_rules_isDraw_fifty_move);
+  RUN_TEST(test_rules_isDraw_false);
+  // ----- isGameOver -----
+  RUN_TEST(test_rules_isGameOver_checkmate);
+  RUN_TEST(test_rules_isGameOver_stalemate);
+  RUN_TEST(test_rules_isGameOver_in_progress);
+  // ----- isThreefoldRepetition -----
+  RUN_TEST(test_rules_isThreefoldRepetition_direct);
+  RUN_TEST(test_rules_isThreefoldRepetition_not_reached);
+  // ----- Castling (needsDefaultKings = true for the rest) -----
+  needsDefaultKings = true;
+  RUN_TEST(test_white_kingside_castle_available);
+  RUN_TEST(test_white_queenside_castle_available);
+  RUN_TEST(test_black_kingside_castle_available);
+  RUN_TEST(test_black_queenside_castle_available);
+  RUN_TEST(test_castle_blocked_by_piece);
+  RUN_TEST(test_castle_through_check_forbidden);
+  RUN_TEST(test_castle_while_in_check_forbidden);
+  RUN_TEST(test_castle_destination_under_attack);
+  RUN_TEST(test_no_castle_right_revoked);
+  RUN_TEST(test_queenside_blocked_b1);
+  RUN_TEST(test_partial_castling_rights_kingside_only);
+  // ----- En passant -----
+  RUN_TEST(test_en_passant_white_captures);
+  RUN_TEST(test_en_passant_black_captures);
+  RUN_TEST(test_en_passant_not_available);
+  RUN_TEST(test_ep_capture_leaves_king_in_check);
+  RUN_TEST(test_ep_a_file_boundary);
+  RUN_TEST(test_ep_h_file_boundary);
+  // ----- Helpers -----
+  RUN_TEST(test_isEnPassantMove_true);
+  RUN_TEST(test_isEnPassantMove_false_normal_capture);
+  RUN_TEST(test_isEnPassantMove_non_pawn);
+  RUN_TEST(test_isCastlingMove_true);
+  RUN_TEST(test_isCastlingMove_false);
+  RUN_TEST(test_isCastlingMove_non_king);
+  RUN_TEST(test_getEnPassantCapturedPawnRow);
 }

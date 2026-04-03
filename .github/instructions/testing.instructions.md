@@ -32,19 +32,18 @@ test/
 ├── test_shared.cpp                      Shared globals (bb, mailbox, needsDefaultKings)
 ├── test_core/                           Core library tests (lib/core/)
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
-│   ├── test_attacks.cpp                 attacks: leaper tables, slider rays, x-ray attacks, geometry rays (between, line), computeAll, SEE
+│   ├── test_attacks.cpp                 attacks: leaper tables, slider rays, x-ray attacks, between geometry, computeAll, SEE
 │   ├── test_bitboard.cpp                LibreChess: square mapping, bit ops, square-color masks, BitboardSet mutations
 │   ├── test_epd.cpp                     EPD parser: parseEPDLine (bm/am/id/c0/c9, quoted/comma-separated), validateEPDLine, accessors
 │   ├── test_evaluation.cpp              eval: material scoring, pawn structure, tapered evaluation, pawn/eval hash tables, trapped pieces, bad bishop, rook behind passer, protected passer, OCB scaling
 │   ├── test_eval_regression.cpp        eval regression: 17 fixed-position score assertions (symmetry, material, pawn structure, threats, phase tapering, bad bishop, rook behind passer, protected passer, OCB scaling)
 │   ├── test_fen.cpp                     FEN round-trip, boardToFEN/fenToBoard, validateFEN
-│   ├── test_iterator.cpp                Board iteration: forEachSquare, forEachPiece, somePiece, findPiece
-│   ├── test_movegen.cpp                 Move generation per piece type, captures, bulk generation, move flags, legal move queries
+│   ├── test_iterator.cpp                Board iteration: forEachSquare, forEachPiece
+│   ├── test_movegen.cpp                 Move generation per piece type, captures, bulk generation, staged generation, move flags, legal move queries
 │   ├── test_notation.cpp                Coordinate/SAN/LAN output and parsing, roundtrip verification
 │   ├── test_piece.cpp                   piece: type extraction, construction, predicates, FEN chars, material values, Zobrist index, color helpers
-│   ├── test_position.cpp                Position: moves, special moves, draws, FEN, reverseMove, king cache, MoveList, HashHistory
-│   ├── test_rules.cpp                   rules: check/checkmate/stalemate detection, pin-aware generation, castling, en passant, promotion, isDraw, isGameOver
-│   ├── test_utils.cpp                   utils: 50-move rule, castling rights strings, coordinate helpers, board transforms, special-move analysis
+│   ├── test_position.cpp                Position: moves, special moves, draws, FEN, reverseMove, king cache, MoveList, HashHistory, check/checkmate/stalemate detection, pin-aware generation, castling, en passant, promotion, isDraw, isGameOver
+│   ├── test_utils.cpp                   utils: 50-move rule, castling rights strings, coordinate helpers, board transforms, special-move analysis (via Position)
 │   └── test_zobrist.cpp                 Zobrist hashing: key determinism, computeHash, computePawnHash, position sensitivity
 ├── test_game/                           Game library tests (lib/game/)
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
@@ -74,9 +73,9 @@ Each library source file has a corresponding test file in the matching test suit
 | Source | Test Suite | Test File |
 |--------|-----------|-----------|
 | `lib/core/src/position.cpp` | `test_core/` | `test_position.cpp` |
-| `lib/core/src/movegen.cpp` + `rules.cpp` | `test_core/` | `test_movegen.cpp` + `test_rules.cpp` |
+| `lib/core/src/movegen.cpp` | `test_core/` | `test_movegen.cpp` |
 | `lib/core/src/piece.h` | `test_core/` | `test_piece.cpp` |
-| `lib/core/src/utils.cpp` | `test_core/` | `test_utils.cpp` |
+| `lib/core/src/utils.h` | `test_core/` | `test_utils.cpp` |
 | `lib/core/src/evaluation.cpp` | `test_core/` | `test_evaluation.cpp` |
 | `lib/core/src/fen.cpp` | `test_core/` | `test_fen.cpp` |
 | `lib/core/src/notation.cpp` | `test_core/` | `test_notation.cpp` |
@@ -112,13 +111,10 @@ Shared utilities available to all test files:
 ## Test Group Details
 
 ### Movegen (`test_movegen.cpp`)
-Move generation for each piece type (pawn, knight, bishop, rook, queen, king). Blocked paths, captures, initial pawn double-push, edge of board. Starting position move counts. Legal move queries (`hasAnyLegalMove`). Bulk move generation: `Move`/`MoveList` struct behavior, `generateAllMoves` (initial position count, under check evasions, double check king-only, stalemate zero moves, consistency with per-piece `getPossibleMoves`), `generateCaptures` (capture-only filtering, EP included, no quiet moves), move flag correctness (capture, EP, castling, promotion with all 4 piece types), promotion index round-trip.
-
-### Rules (`test_rules.cpp`)
-Check detection from every piece type. Checkmate positions. Stalemate positions. Move legality when king is in check — blocking, capturing attacker, king escape. Pin-aware generation: pinned piece cannot leave pin ray; pinned piece can move along pin ray; diagonal pin; double check (only king can move); single-check slider blocking (checkMask filtering); knight check no blocking; two-friendly shielding not pinned; EP horizontal pin. Idempotency (repeated calls produce identical results). King position finder. `isValidMove`, `isDraw`, `isGameOver`, threefold repetition. Castling: rights preservation, blocking pieces, through-check prevention, both colors, queenside/kingside. En passant: standard capture, edge cases. Promotion: all piece types.
+Move generation for each piece type (pawn, knight, bishop, rook, queen, king). Blocked paths, captures, initial pawn double-push, edge of board. Starting position move counts. Legal move queries (`hasAnyLegalMove`). Bulk move generation: `Move`/`MoveList` struct behavior, `generateAllMoves` (initial position count, under check evasions, double check king-only, stalemate zero moves, consistency with per-piece `getPossibleMoves`), `generateCaptures` (capture-only filtering, EP included, no quiet moves), move flag correctness (capture, EP, castling, promotion with all 4 piece types), promotion index round-trip. Staged move generation: `buildLegalityContext` + `generateCaptures(ctx)` + `generateQuiets(ctx)` produces same moves as `generateAllMoves` (initial position, complex middlegame, under check).
 
 ### Position (`test_position.cpp`)
-New game state. Basic moves and captures. En passant execution. Castling execution (both sides). Promotion with piece selection. Check and checkmate detection. Stalemate. 50-move draw. Insufficient material (K vs K, K+B vs K, K+N vs K, K+B vs K+B same-color). Threefold repetition via Zobrist. FEN loading and validation. Compact encode/decode. Board API queries. `reverseMove()` for normal/capture/en passant/castling/promotion. `applyMoveEntry()` replay. King cache (`kingRow`/`kingCol`) correctness after `newGame()`, `loadFEN()`, `makeMove()` (king/non-king), castling, and `reverseMove()`. `MoveList` struct (initial state, add/access, clear, capacity, integration with `getPossibleMoves`). `HashHistory` struct (initial state, add/read, MAX_SIZE constant).
+New game state. Basic moves and captures. En passant execution. Castling execution (both sides). Promotion with piece selection. Check and checkmate detection. Stalemate. 50-move draw. Insufficient material (K vs K, K+B vs K, K+N vs K, K+B vs K+B same-color). Threefold repetition via Zobrist. FEN loading and validation. Compact encode/decode. Board API queries. `reverseMove()` for normal/capture/en passant/castling/promotion. `applyMoveEntry()` replay. King cache (`kingRow`/`kingCol`) correctness after `newGame()`, `loadFEN()`, `makeMove()` (king/non-king), castling, and `reverseMove()`. `MoveList` struct (initial state, add/access, clear, capacity, integration with `getPossibleMoves`). `HashHistory` struct (initial state, add/read, MAX_SIZE constant). Incremental material tracking: `material()` matches `eval::computeMaterial()` at startpos, after capture, EP capture, promotion, make/unmake sequences, null move, and loadFEN. Position static methods for game-end detection: check detection from every piece type, checkmate/stalemate positions, move legality when king is in check (blocking, capturing, king escape), pin-aware generation (pinned piece restrictions, diagonal pin, double check king-only, single-check slider blocking, knight check no blocking, two-friendly shielding, EP horizontal pin), idempotency, `isValidMove`, `isDraw`, `isGameOver`, threefold repetition, castling (rights preservation, blocking, through-check prevention), en passant (standard capture, edge cases, `hasLegalEnPassantCapture` boundaries), promotion (all piece types), special-move helpers (`checkEnPassant`, `checkCastling`).
 
 ### Game (`test_game.cpp`)
 Lifecycle: `endGame()` with various results, `isGameOver()` state, move rejection after game-over, checkmate/stalemate/insufficient/fifty-move auto-set game-over, undo clears game-over, `newGame()`/`loadFEN()` reset game-over. Draw detection. Observer notification and batching. History integration. Undo/redo cursor. `getHistory()` in all three formats (coordinate, SAN, LAN).
@@ -130,7 +126,7 @@ Move log add/undo/redo. Cursor positioning. Branch-on-undo: adding a move at a b
 Persistence lifecycle with MockGameStorage. Header flush timing. Game replay from storage. Branch-truncation of storage. Game recording integration: startNewGame, endGame, resume, auto-finish. Compact 2-byte encode/decode stability. On-disk format compatibility.
 
 ### Utils (`test_utils.cpp`)
-50-move rule counter. Castling rights string formatting and parsing (`castlingCharToBit`, `hasCastlingRight`). Coordinate helpers (`squareName`, `fileChar`, `rankChar`, `fileIndex`, `rankIndex`, `isValidSquare`). Special-move analysis (`checkEnPassant`, `checkCastling`, `updateCastlingRights`). `applyBoardTransform`. `boardToText`. `positionState`. `gameResultName`. `isValidPromotionChar`.
+50-move rule counter. Castling rights string formatting and parsing (`castlingCharToBit`, `hasCastlingRight`). Coordinate helpers (`squareName`, `fileChar`, `rankChar`, `fileIndex`, `rankIndex`, `isValidSquare`). Special-move analysis via `Position` member methods (`checkEnPassant`, `checkCastling` — tests load FEN into a `Position` then call the member method). `updateCastlingRights`. `boardToText` (via `Position::boardToText()`). `positionState`. `gameResultName`. `isValidPromotionChar`.
 
 ### Evaluation (`test_evaluation.cpp`)
 Material evaluation scoring. Pawn structure evaluation (symmetry, passed pawn bonus, doubled/isolated penalties). Tapered evaluation (opening symmetry, endgame king centralization, phase-dependent king PST blend). Pawn-structure analysis functions: `isPassed`, `isIsolated`, `isDoubled`, `isBackward`. Positional terms: bishop pair bonus (single side / both sides), rook on open file, rook on semi-open file, rook on 7th rank, mobility (centralized vs edge pieces, MG/EG split weights), king safety (intact pawn shield), king danger (close piece scores higher, multiple zone attackers vs no attackers), knight outpost. Passed pawn rank scaling (advanced passer scores higher). Passed pawn king distance (own king close vs far from passer). Trapped pieces: bishop trapped on a7/h7 by enemy pawn, rook trapped by own uncastled king, symmetry. Pawn hash table: probe miss, store/probe round-trip, clear invalidation, integration with evaluatePosition. Eval hash table: probe miss, store/probe round-trip, clear invalidation, overwrite. Bad bishop (penalty per own pawn on same color complex). Rook behind passer (Tarrasch Rule, EG-only bonus for rook behind own passer vs rook in front). Protected passer (defended by a friendly pawn scores higher, MG only). Opposite-color bishop scaling (×0.75 reduction in endgame vs same-color bishops).
@@ -148,10 +144,10 @@ Round-trip: board → FEN → board. `boardToFEN()` output correctness. `fenToBo
 Coordinate notation output and parsing. SAN output (disambiguation, captures, castling, promotion). LAN output. Auto-format detection from input strings. Round-trip verification: format → parse → same move.
 
 ### Piece (`test_piece.cpp`)
-piece namespace: bit extraction (`pieceType()` for all 12 pieces + NONE, `pieceColor()`), construction (`makePiece()` round-trips), predicates (`isEmpty()`, `isWhite()`, `isBlack()`, `isColor()`), color flip (`~Color`, `~Piece` operator overloads), FEN char round-trip (`charToPiece()`/`pieceToChar()` for all valid chars, invalid chars, NONE), PieceType char conversion, material values (`pieceValue()`, `pieceTypeValue()` for all piece types), Zobrist index (`pieceZobristIndex()` for all pieces + NONE, `ZOBRIST_IDX_NONE` constant, `isValidZobristIndex()` bounds predicate), color helpers (`pawnDirection()`, `homeRow()`, `promotionRow()`, `colorName()`, `charToColor()`/`colorToChar()`, `getPieceColor`, `opponentColor`), zero-initialization safety, `isPromotion()` edge cases.
+piece namespace: bit extraction (`pieceType()` for all 12 pieces + NONE, `pieceColor()`), construction (`makePiece()` round-trips), predicates (`isEmpty()`), color flip (`~Color`, `~Piece` operator overloads), FEN char round-trip (`charToPiece()`/`pieceToChar()` for all valid chars, invalid chars, NONE), PieceType char conversion, Zobrist index (`pieceZobristIndex()` for all pieces + NONE, `ZOBRIST_IDX_NONE` constant, `isValidZobristIndex()` bounds predicate), color helpers (`pawnDirection()`, `homeRow()`, `promotionRow()`, `colorName()`, `colorToChar()`, `getPieceColor`, `opponentColor`), test-only `charToColor()` (via test_helpers.h), zero-initialization safety.
 
 ### Iterator (`test_iterator.cpp`)
-`forEachSquare` visits all 64 squares. `forEachPiece` skips empty. `somePiece` early-exit. `findPiece` locates specific pieces with max limit; returns 0 for `Piece::NONE` (bounds-safe).
+`forEachSquare` visits all 64 squares. `forEachPiece` skips empty.
 
 ### Zobrist (`test_zobrist.cpp`)
 Zobrist key determinism. `pieceZobristIndex` mapping. `computeHash` stability. Hash changes with turn flip, castling rights, en passant. Hash equality for identical positions. `computePawnHash`: determinism, different pawn placements produce different hashes, ignores non-pawn pieces, no pawns yields zero.
@@ -163,7 +159,7 @@ Exhaustive move-tree enumeration for 6 positions from the Chess Programming Wiki
 Square mapping roundtrip (`squareOf(rowOf(sq), colOf(sq)) == sq` for all 64). LERF anchor values (`squareOf(0,0) == SQ_A8`, `squareOf(7,0) == SQ_A1`). Bit manipulation (`popcount`, `lsb`, `popLsb`). Square-color masks (a1 dark, b1 light, popcount 32 each, no overlap). `BitboardSet` mutations (`setPiece`/`removePiece`/`movePiece` consistency, aggregate bitboard correctness).
 
 ### Attacks (`test_attacks.cpp`)
-Leaper attack tables (knight on e4, king on a1, pawn attacks per color). Slider attack functions (rook/bishop/queen on empty board and with blockers). Bulk slider correctness (all 64 squares × 5 occupancy patterns cross-checked against reference ray implementation for both rook and bishop). X-ray attack functions (`xrayRook`, `xrayBishop`). `between` geometry (file/rank/diagonal/anti-diagonal/adjacent/non-colinear). `line` geometry (rank/file/diagonal/non-colinear/endpoints). `computeAll` validation (initial knight attacks, pawn bulk attacks, color unions, kings-only board). SEE: pawn takes undefended knight, pawn takes defended rook, knight takes defended pawn (losing), queen takes defended pawn (losing), rook takes undefended bishop, en passant.
+Leaper attack tables (knight on e4, king on a1, pawn attacks per color). Slider attack functions (rook/bishop/queen on empty board and with blockers). Bulk slider correctness (all 64 squares × 5 occupancy patterns cross-checked against reference ray implementation for both rook and bishop). X-ray attack functions (`xrayRook`, `xrayBishop`). `between` geometry (file/rank/diagonal/anti-diagonal/adjacent/non-colinear). `computeAll` validation (initial knight attacks, pawn bulk attacks, color unions, kings-only board). SEE: pawn takes undefended knight, pawn takes defended rook, knight takes defended pawn (losing), queen takes defended pawn (losing), rook takes undefended bishop, en passant.
 
 ### EPD Parser (`test_epd.cpp`)
 `parseEPDLine`: basic FEN + bm opcode, multiple opcodes (bm + am + id + c0), quoted id strings, avoid move variations, comma-separated operands, c9 game result parsing (white win/draw/black win). `validateEPDLine`: valid/invalid FEN, missing fields. Accessors: `findOperation()` lookup, `id()` convenience, non-existent opcode returns nullptr yet `id()` returns empty.

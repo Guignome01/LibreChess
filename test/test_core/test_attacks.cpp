@@ -387,40 +387,6 @@ static void test_ray_between_not_colinear_returns_zero(void) {
 }
 
 // ---------------------------------------------------------------------------
-// line (full line geometry)
-// ---------------------------------------------------------------------------
-
-static void test_lineBB_same_rank(void) {
-  Square a1 = squareOf(7, 0), h1 = squareOf(7, 7);
-  TEST_ASSERT_EQUAL_UINT64(RANK_1, line(a1, h1));
-}
-
-static void test_lineBB_same_file(void) {
-  Square a1 = squareOf(7, 0), a8 = squareOf(0, 0);
-  TEST_ASSERT_EQUAL_UINT64(FILE_A, line(a1, a8));
-}
-
-static void test_lineBB_diagonal(void) {
-  Square a1 = squareOf(7, 0), h8 = squareOf(0, 7);
-  Bitboard expected = 0;
-  for (int i = 0; i < 8; i++)
-    expected |= squareBB(squareOf(7 - i, i));
-  TEST_ASSERT_EQUAL_UINT64(expected, line(a1, h8));
-}
-
-static void test_lineBB_non_colinear(void) {
-  Square a1 = squareOf(7, 0), b3 = squareOf(5, 1);
-  TEST_ASSERT_EQUAL_UINT64(0, line(a1, b3));
-}
-
-static void test_lineBB_includes_endpoints(void) {
-  Square c1 = squareOf(7, 2), f1 = squareOf(7, 5);
-  Bitboard ln = line(c1, f1);
-  TEST_ASSERT_NOT_EQUAL(0, ln & squareBB(c1));
-  TEST_ASSERT_NOT_EQUAL(0, ln & squareBB(f1));
-}
-
-// ---------------------------------------------------------------------------
 // computeAll (AttackInfo)
 // ---------------------------------------------------------------------------
 
@@ -632,12 +598,6 @@ void register_attacks_tests() {
   RUN_TEST(test_ray_between_anti_diagonal);
   RUN_TEST(test_ray_between_adjacent_returns_zero);
   RUN_TEST(test_ray_between_not_colinear_returns_zero);
-
-  RUN_TEST(test_lineBB_same_rank);
-  RUN_TEST(test_lineBB_same_file);
-  RUN_TEST(test_lineBB_diagonal);
-  RUN_TEST(test_lineBB_non_colinear);
-  RUN_TEST(test_lineBB_includes_endpoints);
 
   RUN_TEST(test_attackInfo_initial_position);
   RUN_TEST(test_attackInfo_pawn_attacks_bulk);

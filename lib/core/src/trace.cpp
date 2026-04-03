@@ -1010,7 +1010,7 @@ namespace tuning {
 int paramCount()              { return static_cast<int>(buildRegistry().size()); }
 const char* getName(int i)    { return buildRegistry()[i].name; }
 int getValue(int i)           { return *buildRegistry()[i].ptr; }
-void setValue(int i, int v)   { *buildRegistry()[i].ptr = v; }
+void setValue(int i, int v)   { *buildRegistry()[i].ptr = v; invalidatePSQT(); }
 int getDefault(int i)         { return buildRegistry()[i].defaultVal; }
 int getMin(int i)             { return buildRegistry()[i].min; }
 int getMax(int i)             { return buildRegistry()[i].max; }

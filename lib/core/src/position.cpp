@@ -4,10 +4,9 @@
 
 #include "evaluation.h"
 #include "fen.h"
+#include "movegen.h"
 
 namespace LibreChess {
-
-namespace zob = zobrist;
 
 // ---------------------------------------------------------------------------
 // Initial board layout
@@ -28,12 +27,9 @@ const Piece Position::INITIAL_BOARD[8][8] = {
 // Construction
 // ---------------------------------------------------------------------------
 
-Position::Position()
-    : currentTurn_(Color::WHITE),
-      hash_(0),
-      mgPST_(0),
-      egPST_(0) {
-  attacks::init();
+// Shared board initialization — populates bb_, mailbox_, kingSquare_[],
+// and material+PST accumulators from INITIAL_BOARD.
+void Position::initializeBoard() {
   bb_.clear();
   memset(mailbox_, 0, sizeof(mailbox_));
   for (int row = 0; row < 8; ++row)
@@ -47,8 +43,20 @@ Position::Position()
     }
   kingSquare_[0] = squareOf(7, 4);  // White king at e1
   kingSquare_[1] = squareOf(0, 4);  // Black king at e8
-  mgPST_ = eval::computeMaterialPST_MG(bb_);
-  egPST_ = eval::computeMaterialPST_EG(bb_);
+  auto pst = eval::computeMaterialPST(bb_);
+  mgPST_ = pst.mg;
+  egPST_ = pst.eg;
+  material_ = eval::computeMaterial(bb_);
+}
+
+Position::Position()
+    : currentTurn_(Color::WHITE),
+      hash_(0),
+      mgPST_(0),
+      egPST_(0),
+      material_(0) {
+  attacks::init();
+  initializeBoard();
 }
 
 // ---------------------------------------------------------------------------
@@ -56,25 +64,11 @@ Position::Position()
 // ---------------------------------------------------------------------------
 
 void Position::newGame() {
-  bb_.clear();
-  memset(mailbox_, 0, sizeof(mailbox_));
-  for (int row = 0; row < 8; ++row)
-    for (int col = 0; col < 8; ++col) {
-      Piece p = INITIAL_BOARD[row][col];
-      if (p != Piece::NONE) {
-        Square sq = squareOf(row, col);
-        bb_.setPiece(sq, p);
-        mailbox_[sq] = p;
-      }
-    }
+  initializeBoard();
   currentTurn_ = Color::WHITE;
   state_ = PositionState::initial();
   hashHistory_.count = 0;
-  kingSquare_[0] = squareOf(7, 4);
-  kingSquare_[1] = squareOf(0, 4);
-  hash_ = zob::computeHash(bb_, mailbox_, currentTurn_, state_);
-  mgPST_ = eval::computeMaterialPST_MG(bb_);
-  egPST_ = eval::computeMaterialPST_EG(bb_);
+  hash_ = zobrist::computeHash(bb_, mailbox_, currentTurn_, state_, false);
   recordPosition();
 }
 
@@ -106,9 +100,7 @@ bool Position::loadFEN(const std::string& fen) {
     return false;
   }
 
-  hash_ = zob::computeHash(bb_, mailbox_, currentTurn_, state_);
-  mgPST_ = eval::computeMaterialPST_MG(bb_);
-  egPST_ = eval::computeMaterialPST_EG(bb_);
+  recomputeDerived();
   recordPosition();
   return true;
 }
@@ -130,14 +122,52 @@ MoveResult Position::makeMove(int fromRow, int fromCol, int toRow, int toCol, ch
   if (!movegen::isValidMove(bb_, mailbox_, from, to, state_, kingSquare_[piece::raw(currentTurn_)]))
     return invalidMoveResult();
 
+  // --- Build Move flags from coordinates ---
+  uint8_t flags = 0;
+  Piece target = mailbox_[to];
+  bool isPawn = piece::pieceType(piece) == PieceType::PAWN;
+
+  if (target != Piece::NONE) {
+    flags |= MOVE_CAPTURE;
+  } else if (isPawn && fromCol != toCol) {
+    // Pawn captures diagonally to an empty square → en passant
+    flags |= MOVE_CAPTURE | MOVE_EP;
+  }
+
+  if (piece::pieceType(piece) == PieceType::KING && abs(toCol - fromCol) == 2)
+    flags |= MOVE_CASTLING;
+
+  if (isPawn && toRow == piece::promotionRow(piece::pieceColor(piece))) {
+    PieceType promoType = (promotion != ' ' && promotion != '\0')
+        ? piece::charToPieceType(promotion) : PieceType::QUEEN;
+    flags |= Move::promoFlags(Move::promoIndexFromType(promoType));
+  }
+
+  Move m(static_cast<uint8_t>(from), static_cast<uint8_t>(to), flags);
+
+  // --- Delegate board mutation to make(), cache for reverseMove() ---
+  UndoInfo undo = make(m);
+  undoCache_.move = m;
+  undoCache_.undo = undo;
+  undoCache_.postHash = hash_;
+  undoCache_.valid = true;
+
+  // --- Build MoveResult from Move flags ---
   MoveResult result;
   result.valid = true;
-  applyMoveToBoard(fromRow, fromCol, toRow, toCol, promotion, result);
+  result.isCapture = m.isCapture();
+  result.isEnPassant = m.isEP();
+  result.epCapturedRow = m.isEP()
+      ? (toRow - piece::pawnDirection(piece::pieceColor(piece))) : -1;
+  result.isCastling = m.isCastling();
+  result.isPromotion = m.isPromotion();
+  result.promotedTo = m.isPromotion()
+      ? piece::makePiece(piece::pieceColor(piece), Move::promoTypeFromIndex(m.promoIndex()))
+      : Piece::NONE;
 
-  advanceTurn();
-  recordPosition();
+  // --- Game-end detection ---
   char winner = ' ';
-  GameResult endResult = rules::isGameOver(
+  GameResult endResult = isGameOver(
       bb_, mailbox_, currentTurn_, state_, hashHistory_, winner);
   result.gameResult = endResult;
   result.winnerColor = winner;
@@ -158,6 +188,17 @@ MoveResult Position::makeMove(int fromRow, int fromCol, int toRow, int toCol, ch
 // ---------------------------------------------------------------------------
 
 void Position::reverseMove(const MoveEntry& entry) {
+  // 1-deep undo cache: if the cache is from this exact forward move
+  // (validated by matching post-move hash), delegate to unmake() for O(1)
+  // restoration.  Otherwise fall back to manual board reversal + full
+  // recomputation (e.g. multi-undo or FEN reload).
+  if (undoCache_.valid && hash_ == undoCache_.postHash) {
+    unmake(undoCache_.move, undoCache_.undo);
+    undoCache_.valid = false;
+    return;
+  }
+
+  // --- Cache-miss fallback: manual board reversal ---
   Square from = squareOf(entry.fromRow, entry.fromCol);
   Square to = squareOf(entry.toRow, entry.toCol);
 
@@ -178,8 +219,8 @@ void Position::reverseMove(const MoveEntry& entry) {
   }
 
   if (entry.isCastling) {
-    auto castle = utils::checkCastling(entry.fromRow, entry.fromCol,
-                                             entry.toRow, entry.toCol, entry.piece);
+    auto castle = checkCastling(entry.fromRow, entry.fromCol,
+                                entry.toRow, entry.toCol);
     if (castle.isCastling) {
       Square rookTo = squareOf(entry.toRow, castle.rookToCol);
       Square rookFrom = squareOf(entry.toRow, castle.rookFromCol);
@@ -198,14 +239,93 @@ void Position::reverseMove(const MoveEntry& entry) {
 
   if (hashHistory_.count > 0)
     hashHistory_.count--;
-  hash_ = zob::computeHash(bb_, mailbox_, currentTurn_, state_);
-  mgPST_ = eval::computeMaterialPST_MG(bb_);
-  egPST_ = eval::computeMaterialPST_EG(bb_);
+
+  recomputeDerived();
 }
 
 MoveResult Position::applyMoveEntry(const MoveEntry& entry) {
   return makeMove(entry.fromRow, entry.fromCol, entry.toRow, entry.toCol,
                   entry.isPromotion ? piece::pieceToChar(entry.promotion) : ' ');
+}
+
+// ---------------------------------------------------------------------------
+// Recompute all derived state (hash, PST accumulators, material) from scratch.
+// Used after bulk board mutations where incremental tracking is not possible:
+// FEN load, reverseMove() cache-miss fallback.
+// ---------------------------------------------------------------------------
+
+void Position::recomputeDerived() {
+  bool epLegal = state_.epRow >= 0 && state_.epCol >= 0 &&
+      movegen::hasLegalEnPassantCapture(bb_, mailbox_, currentTurn_, state_);
+  hash_ = zobrist::computeHash(bb_, mailbox_, currentTurn_, state_, epLegal);
+  auto pst = eval::computeMaterialPST(bb_);
+  mgPST_ = pst.mg;
+  egPST_ = pst.eg;
+  material_ = eval::computeMaterial(bb_);
+}
+
+// ---------------------------------------------------------------------------
+// Shared accumulator update — capture removal, piece movement, castling rook,
+// and promotion deltas for mgPST_, egPST_, material_.  Called by make() after
+// all board/hash/state changes are complete.
+//
+// Parameters:
+//   piece       — moving piece (pawn before promotion)
+//   from, to    — origin and destination squares
+//   captured    — captured piece (Piece::NONE if no capture)
+//   capturedSq  — square of captured piece (EP: pawn square; normal: to)
+//   isCastling  — whether this is a castling move
+//   promotedTo  — promoted piece (Piece::NONE if no promotion)
+//
+// Reference: https://www.chessprogramming.org/Incremental_Updates
+// ---------------------------------------------------------------------------
+
+void Position::updateAccumulators(Piece piece, Square from, Square to,
+                                  Piece captured, Square capturedSq,
+                                  bool isCastling, Piece promotedTo) {
+  // Capture: remove captured piece's contribution.
+  if (captured != Piece::NONE) {
+    int capIdx = piece::pieceZobristIndex(captured);
+    auto cap = eval::pieceSquareMGEG(capIdx, capturedSq);
+    mgPST_ -= cap.mg;
+    egPST_ -= cap.eg;
+    Color capColor = piece::pieceColor(captured);
+    int capSign = (capColor == Color::WHITE) ? 1 : -1;
+    material_ -= eval::materialValue(piece::pieceType(captured)) * capSign;
+  }
+
+  // Movement: piece from → to.
+  int pieceZIdx = piece::pieceZobristIndex(piece);
+  auto pFrom = eval::pieceSquareMGEG(pieceZIdx, from);
+  auto pTo = eval::pieceSquareMGEG(pieceZIdx, to);
+  mgPST_ += pTo.mg - pFrom.mg;
+  egPST_ += pTo.eg - pFrom.eg;
+
+  // Castling rook: derive rook squares from king movement.
+  if (isCastling) {
+    int fromCol = colOf(from);
+    int toCol = colOf(to);
+    int row = rowOf(from);
+    int rookFromCol = (toCol > fromCol) ? 7 : 0;
+    int rookToCol = (toCol > fromCol) ? 5 : 3;
+    Piece rook = piece::makePiece(piece::pieceColor(piece), PieceType::ROOK);
+    int rookZIdx = piece::pieceZobristIndex(rook);
+    auto rF = eval::pieceSquareMGEG(rookZIdx, squareOf(row, rookFromCol));
+    auto rT = eval::pieceSquareMGEG(rookZIdx, squareOf(row, rookToCol));
+    mgPST_ += rT.mg - rF.mg;
+    egPST_ += rT.eg - rF.eg;
+  }
+
+  // Promotion: swap pawn PST for promoted piece PST + material delta.
+  if (promotedTo != Piece::NONE) {
+    int promoIdx = piece::pieceZobristIndex(promotedTo);
+    auto promoPST = eval::pieceSquareMGEG(promoIdx, to);
+    mgPST_ += promoPST.mg - pTo.mg;
+    egPST_ += promoPST.eg - pTo.eg;
+    int colorSign = (piece::pieceColor(piece) == Color::WHITE) ? 1 : -1;
+    material_ += (eval::materialValue(piece::pieceType(promotedTo))
+                - eval::materialValue(PieceType::PAWN)) * colorSign;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -226,6 +346,7 @@ UndoInfo Position::make(Move m) {
   undo.historyCount = hashHistory_.count;
   undo.mgPST = mgPST_;
   undo.egPST = egPST_;
+  undo.material = material_;
 
   int fromRow = rowOf(from), fromCol = colOf(from);
   int toRow = rowOf(to), toCol = colOf(to);
@@ -236,12 +357,12 @@ UndoInfo Position::make(Move m) {
   bool isPromo = m.isPromotion();
 
   // --- Hash: remove old state keys ---
-  hash_ ^= zob::KEYS.castling[state_.castlingRights];
+  hash_ ^= zobrist::KEYS.castling[state_.castlingRights];
   if (state_.epRow >= 0 && state_.epCol >= 0 &&
       movegen::hasLegalEnPassantCapture(bb_, mailbox_, currentTurn_, state_))
-    hash_ ^= zob::KEYS.enPassant[state_.epCol];
+    hash_ ^= zobrist::KEYS.enPassant[state_.epCol];
 
-  // --- Determine captured piece ---
+  // --- Determine and remove captured piece ---
   // EP path safety contract: mailbox_[epSq] is guaranteed to hold a valid
   // enemy pawn (never NONE). This is enforced by the caller chain:
   //   • Game::makeMove() → Position::makeMove() → movegen::isValidMove()
@@ -255,27 +376,17 @@ UndoInfo Position::make(Move m) {
     capturedPiece = mailbox_[epSq];
     undo.captured = capturedPiece;
     undo.capturedSquare = epSq;
-
-    int capIdx = piece::pieceZobristIndex(capturedPiece);
-    mgPST_ -= eval::pieceSquareMG(capIdx, epSq);
-    egPST_ -= eval::pieceSquareEG(capIdx, epSq);
     bb_.removePiece(epSq, capturedPiece);
     mailbox_[epSq] = Piece::NONE;
   } else {
     capturedPiece = mailbox_[to];
     if (capturedPiece != Piece::NONE) {
       undo.captured = capturedPiece;
-      int capIdx = piece::pieceZobristIndex(capturedPiece);
-      mgPST_ -= eval::pieceSquareMG(capIdx, to);
-      egPST_ -= eval::pieceSquareEG(capIdx, to);
       bb_.removePiece(to, capturedPiece);
     }
   }
 
   // --- Move the piece ---
-  int pieceZIdx = piece::pieceZobristIndex(piece);
-  mgPST_ += eval::pieceSquareMG(pieceZIdx, to) - eval::pieceSquareMG(pieceZIdx, from);
-  egPST_ += eval::pieceSquareEG(pieceZIdx, to) - eval::pieceSquareEG(pieceZIdx, from);
   bb_.movePiece(from, to, piece);
   mailbox_[from] = Piece::NONE;
   mailbox_[to] = piece;
@@ -287,16 +398,13 @@ UndoInfo Position::make(Move m) {
     Piece rook = piece::makePiece(piece::pieceColor(piece), PieceType::ROOK);
     Square rookFrom = squareOf(fromRow, rookFromCol);
     Square rookTo = squareOf(fromRow, rookToCol);
-    int rookZIdx = piece::pieceZobristIndex(rook);
-    mgPST_ += eval::pieceSquareMG(rookZIdx, rookTo) - eval::pieceSquareMG(rookZIdx, rookFrom);
-    egPST_ += eval::pieceSquareEG(rookZIdx, rookTo) - eval::pieceSquareEG(rookZIdx, rookFrom);
     bb_.movePiece(rookFrom, rookTo, rook);
     mailbox_[rookFrom] = Piece::NONE;
     mailbox_[rookTo] = rook;
 
-    int rookIdx = piece::pieceZobristIndex(rook);
-    hash_ ^= zob::KEYS.pieces[rookIdx][rookFrom];
-    hash_ ^= zob::KEYS.pieces[rookIdx][rookTo];
+    int rookZIdx = piece::pieceZobristIndex(rook);
+    hash_ ^= zobrist::KEYS.pieces[rookZIdx][rookFrom];
+    hash_ ^= zobrist::KEYS.pieces[rookZIdx][rookTo];
   }
 
   // --- Update EP state ---
@@ -316,48 +424,51 @@ UndoInfo Position::make(Move m) {
     state_.halfmoveClock++;
 
   // --- Hash: piece movements ---
-  hash_ ^= zob::KEYS.pieces[pieceZIdx][from];
-  hash_ ^= zob::KEYS.pieces[pieceZIdx][to];
+  int pieceZIdx = piece::pieceZobristIndex(piece);
+  hash_ ^= zobrist::KEYS.pieces[pieceZIdx][from];
+  hash_ ^= zobrist::KEYS.pieces[pieceZIdx][to];
 
   if (capturedPiece != Piece::NONE) {
     int capIdx = piece::pieceZobristIndex(capturedPiece);
-    hash_ ^= zob::KEYS.pieces[capIdx][undo.capturedSquare];
+    hash_ ^= zobrist::KEYS.pieces[capIdx][undo.capturedSquare];
   }
 
   // --- Update castling rights ---
   state_.castlingRights = utils::updateCastlingRights(
-      state_.castlingRights, fromRow, fromCol, toRow, toCol, piece, capturedPiece);
+      state_.castlingRights, from, to);
 
   // --- Promotion ---
+  Piece promotedTo = Piece::NONE;
   if (isPromo) {
     PieceType promoType = Move::promoTypeFromIndex(m.promoIndex());
-    Piece promotedTo = piece::makePiece(piece::pieceColor(piece), promoType);
-
-    int promoIdx = piece::pieceZobristIndex(promotedTo);
-    mgPST_ += eval::pieceSquareMG(promoIdx, to) - eval::pieceSquareMG(pieceZIdx, to);
-    egPST_ += eval::pieceSquareEG(promoIdx, to) - eval::pieceSquareEG(pieceZIdx, to);
+    promotedTo = piece::makePiece(piece::pieceColor(piece), promoType);
     bb_.removePiece(to, piece);
     bb_.setPiece(to, promotedTo);
     mailbox_[to] = promotedTo;
 
     // Hash: swap pawn → promoted piece at destination
-    hash_ ^= zob::KEYS.pieces[pieceZIdx][to];
-    hash_ ^= zob::KEYS.pieces[promoIdx][to];
+    int promoIdx = piece::pieceZobristIndex(promotedTo);
+    hash_ ^= zobrist::KEYS.pieces[pieceZIdx][to];
+    hash_ ^= zobrist::KEYS.pieces[promoIdx][to];
   }
 
   // --- Hash: add new state keys ---
-  hash_ ^= zob::KEYS.castling[state_.castlingRights];
-  hash_ ^= zob::KEYS.sideToMove;
+  hash_ ^= zobrist::KEYS.castling[state_.castlingRights];
+  hash_ ^= zobrist::KEYS.sideToMove;
 
   // New EP key (checking with the next side to move = opponent)
   Color nextSide = ~currentTurn_;
   if (state_.epRow >= 0 && state_.epCol >= 0 &&
       movegen::hasLegalEnPassantCapture(bb_, mailbox_, nextSide, state_))
-    hash_ ^= zob::KEYS.enPassant[state_.epCol];
+    hash_ ^= zobrist::KEYS.enPassant[state_.epCol];
 
   // --- Update king cache ---
   if (piece::pieceType(piece) == PieceType::KING)
     kingSquare_[piece::raw(piece::pieceColor(piece))] = to;
+
+  // --- Incremental material+PST accumulators ---
+  updateAccumulators(piece, from, to, capturedPiece, undo.capturedSquare,
+                     isCastle, promotedTo);
 
   // --- Advance turn ---
   if (currentTurn_ == Color::BLACK)
@@ -423,6 +534,7 @@ void Position::unmake(Move m, const UndoInfo& undo) {
   hash_ = undo.hash;
   mgPST_ = undo.mgPST;
   egPST_ = undo.egPST;
+  material_ = undo.material;
   hashHistory_.count = undo.historyCount;
 }
 
@@ -444,12 +556,13 @@ UndoInfo Position::makeNullMove() {
   undo.capturedSquare = SQ_NONE;
   undo.mgPST = mgPST_;
   undo.egPST = egPST_;
+  undo.material = material_;
   undo.historyCount = hashHistory_.count;
 
   // Remove old EP key (if the current EP square is legal)
   if (state_.epRow >= 0 && state_.epCol >= 0 &&
       movegen::hasLegalEnPassantCapture(bb_, mailbox_, currentTurn_, state_))
-    hash_ ^= zob::KEYS.enPassant[state_.epCol];
+    hash_ ^= zobrist::KEYS.enPassant[state_.epCol];
 
   // Clear EP — null move resets en passant opportunity
   state_.epRow = -1;
@@ -457,7 +570,7 @@ UndoInfo Position::makeNullMove() {
 
   // Flip side to move
   currentTurn_ = ~currentTurn_;
-  hash_ ^= zob::KEYS.sideToMove;
+  hash_ ^= zobrist::KEYS.sideToMove;
 
   // Increment halfmove clock (null move is not a pawn move or capture)
   state_.halfmoveClock++;
@@ -472,6 +585,7 @@ void Position::unmakeNullMove(const UndoInfo& undo) {
   hash_ = undo.hash;
   mgPST_ = undo.mgPST;
   egPST_ = undo.egPST;
+  material_ = undo.material;
   hashHistory_.count = undo.historyCount;
 }
 
@@ -503,121 +617,192 @@ std::string Position::boardToText() const {
 }
 
 // ---------------------------------------------------------------------------
-// Internal: apply move to board with incremental Zobrist hash
+// Instance wrapper methods — delegate to static methods / movegen:: / attacks::.
+// Declared in position.h, defined here to avoid pulling movegen.h / attacks.h
+// into the header.
 // ---------------------------------------------------------------------------
 
-void Position::applyMoveToBoard(int fromRow, int fromCol, int toRow, int toCol,
-                                char promotion, MoveResult& result) {
-  Square from = squareOf(fromRow, fromCol);
-  Square to = squareOf(toRow, toCol);
-  Piece piece = mailbox_[from];
-  Piece capturedPiece = mailbox_[to];
+void Position::getPossibleMoves(int row, int col, MoveList& moves) const {
+  movegen::getPossibleMoves(bb_, mailbox_, row, col, state_, moves);
+}
 
-  // --- Analyze ---
-  auto ep = utils::checkEnPassant(fromRow, fromCol, toRow, toCol, piece, capturedPiece);
-  result.isEnPassant = ep.isCapture;
-  result.epCapturedRow = ep.capturedPawnRow;
-  result.isPromotion = false;
-  result.promotedTo = Piece::NONE;
+bool Position::inCheck() const {
+  return attacks::isSquareUnderAttack(bb_, kingSquare_[piece::raw(currentTurn_)], currentTurn_);
+}
 
-  auto castle = utils::checkCastling(fromRow, fromCol, toRow, toCol, piece);
-  result.isCastling = castle.isCastling;
+bool Position::isCheckmate() const {
+  return isCheckmate(bb_, mailbox_, currentTurn_, state_);
+}
 
-  // --- Hash: remove old state keys ---
-  hash_ ^= zob::KEYS.castling[state_.castlingRights];
-  if (state_.epRow >= 0 && state_.epCol >= 0 &&
-      movegen::hasLegalEnPassantCapture(bb_, mailbox_, currentTurn_, state_))
-    hash_ ^= zob::KEYS.enPassant[state_.epCol];
+bool Position::isFiftyMoves() const {
+  return isFiftyMoveRule(state_);
+}
 
-  // --- Update EP state ---
-  state_.epRow = ep.nextEpRow;
-  state_.epCol = ep.nextEpCol;
+bool Position::isDraw() const {
+  return isDraw(bb_, mailbox_, currentTurn_, state_, hashHistory_);
+}
 
-  // --- Halfmove clock ---
-  if (piece::pieceType(piece) == PieceType::PAWN || capturedPiece != Piece::NONE || ep.isCapture)
-    state_.halfmoveClock = 0;
-  else
-    state_.halfmoveClock++;
-
-  // --- Apply board transform ---
-  Piece actualCapture;
-  utils::applyBoardTransform(bb_, mailbox_, from, to, ep, castle, actualCapture);
-  result.isCapture = (actualCapture != Piece::NONE);
-
-  // --- Hash: piece movements ---
-  int pieceIdx = piece::pieceZobristIndex(piece);
-  hash_ ^= zob::KEYS.pieces[pieceIdx][from];
-  hash_ ^= zob::KEYS.pieces[pieceIdx][to];
-
-  if (actualCapture != Piece::NONE) {
-    int capIdx = piece::pieceZobristIndex(actualCapture);
-    Square capSq = ep.isCapture ? squareOf(ep.capturedPawnRow, colOf(to)) : to;
-    hash_ ^= zob::KEYS.pieces[capIdx][capSq];
-  }
-
-  if (castle.isCastling) {
-    Piece rook = piece::makePiece(piece::pieceColor(piece), PieceType::ROOK);
-    int rookIdx = piece::pieceZobristIndex(rook);
-    Square rookFrom = squareOf(fromRow, castle.rookFromCol);
-    Square rookTo = squareOf(fromRow, castle.rookToCol);
-    hash_ ^= zob::KEYS.pieces[rookIdx][rookFrom];
-    hash_ ^= zob::KEYS.pieces[rookIdx][rookTo];
-  }
-
-  // --- Update castling rights ---
-  state_.castlingRights = utils::updateCastlingRights(
-      state_.castlingRights, fromRow, fromCol, toRow, toCol, piece, actualCapture);
-
-  // --- Promotion ---
-  if (piece::isPromotion(piece, toRow)) {
-    result.isPromotion = true;
-    Color pieceColor = piece::pieceColor(piece);
-    Piece promotedTo;
-    if (promotion != ' ' && promotion != '\0')
-      promotedTo = piece::makePiece(pieceColor, piece::charToPieceType(promotion));
-    else
-      promotedTo = piece::makePiece(pieceColor, PieceType::QUEEN);
-    result.promotedTo = promotedTo;
-
-    bb_.removePiece(to, piece);
-    bb_.setPiece(to, promotedTo);
-    mailbox_[to] = promotedTo;
-
-    // Hash: swap pawn → promoted piece at destination
-    hash_ ^= zob::KEYS.pieces[pieceIdx][to];
-    hash_ ^= zob::KEYS.pieces[piece::pieceZobristIndex(promotedTo)][to];
-  }
-
-  // --- Hash: add new state keys ---
-  hash_ ^= zob::KEYS.castling[state_.castlingRights];
-
-  // Toggle side to move
-  hash_ ^= zob::KEYS.sideToMove;
-
-  // New EP key (checking with the next side to move = opponent)
-  Color nextSide = ~currentTurn_;
-  if (state_.epRow >= 0 && state_.epCol >= 0 &&
-      movegen::hasLegalEnPassantCapture(bb_, mailbox_, nextSide, state_))
-    hash_ ^= zob::KEYS.enPassant[state_.epCol];
-
-  // --- Update king cache ---
-  if (piece::pieceType(piece) == PieceType::KING)
-    kingSquare_[piece::raw(piece::pieceColor(piece))] = to;
-
-  // --- Recompute material+PST accumulators ---
-  mgPST_ = eval::computeMaterialPST_MG(bb_);
-  egPST_ = eval::computeMaterialPST_EG(bb_);
+bool Position::isRepetition() const {
+  return isThreefoldRepetition(hashHistory_);
 }
 
 // ---------------------------------------------------------------------------
-// Internal: turn advancement + position recording
+// Static game-state detection — check, checkmate, stalemate, draw conditions.
+//
+// Raw bitboard + mailbox interface, testable without constructing a Position.
+// Previously in the rules:: namespace; merged here because all callers are
+// Position methods and the functions operate on Position's own data types.
+//
+// Delegates to movegen::hasAnyLegalMove for checkmate/stalemate detection.
+// Delegates to attacks::isSquareUnderAttack for check detection.
 // ---------------------------------------------------------------------------
 
-void Position::advanceTurn() {
-  if (currentTurn_ == Color::BLACK)
-    state_.fullmoveClock++;
-  currentTurn_ = ~currentTurn_;
+bool Position::isCheck(const BitboardSet& bb, Color kingColor) {
+  int kidx = piece::pieceZobristIndex(piece::makePiece(kingColor, PieceType::KING));
+  Bitboard kingBB = bb.byPiece[kidx];
+  if (!kingBB) return false;
+  return attacks::isSquareUnderAttack(bb, lsb(kingBB), kingColor);
 }
+
+bool Position::isCheckmate(const BitboardSet& bb, const Piece mailbox[],
+                           Color kingColor, const PositionState& state) {
+  return isCheck(bb, kingColor) && !movegen::hasAnyLegalMove(bb, mailbox, kingColor, state);
+}
+
+bool Position::isStalemate(const BitboardSet& bb, const Piece mailbox[],
+                           Color colorToMove, const PositionState& state) {
+  return !isCheck(bb, colorToMove) && !movegen::hasAnyLegalMove(bb, mailbox, colorToMove, state);
+}
+
+bool Position::isInsufficientMaterial(const BitboardSet& bb) {
+  // Any pawns, rooks, or queens → sufficient material
+  int pIdx = piece::pieceZobristIndex(Piece::W_PAWN);
+  if (bb.byPiece[pIdx] | bb.byPiece[pIdx + 6]) return false;
+
+  int rIdx = piece::pieceZobristIndex(Piece::W_ROOK);
+  if (bb.byPiece[rIdx] | bb.byPiece[rIdx + 6]) return false;
+
+  int qIdx = piece::pieceZobristIndex(Piece::W_QUEEN);
+  if (bb.byPiece[qIdx] | bb.byPiece[qIdx + 6]) return false;
+
+  int wKnightIdx = piece::pieceZobristIndex(Piece::W_KNIGHT);
+  int wBishopIdx = piece::pieceZobristIndex(Piece::W_BISHOP);
+  int bKnightIdx = piece::pieceZobristIndex(Piece::B_KNIGHT);
+  int bBishopIdx = piece::pieceZobristIndex(Piece::B_BISHOP);
+
+  int whiteMinors = popcount(bb.byPiece[wKnightIdx]) + popcount(bb.byPiece[wBishopIdx]);
+  int blackMinors = popcount(bb.byPiece[bKnightIdx]) + popcount(bb.byPiece[bBishopIdx]);
+
+  if (whiteMinors > 1 || blackMinors > 1) return false;
+
+  // K vs K
+  if (whiteMinors == 0 && blackMinors == 0) return true;
+
+  // K+minor vs K
+  if ((whiteMinors == 1 && blackMinors == 0) ||
+      (whiteMinors == 0 && blackMinors == 1))
+    return true;
+
+  // K+B vs K+B with same-color bishops
+  if (whiteMinors == 1 && blackMinors == 1) {
+    Bitboard wb = bb.byPiece[wBishopIdx];
+    Bitboard bBish = bb.byPiece[bBishopIdx];
+    if (wb && bBish) {
+      bool wOnDark = (wb & DARK_SQUARES) != 0;
+      bool bOnDark = (bBish & DARK_SQUARES) != 0;
+      return wOnDark == bOnDark;
+    }
+  }
+
+  return false;
+}
+
+bool Position::isThreefoldRepetition(const HashHistory& hashes) {
+  if (hashes.count < 5) return false;
+
+  uint64_t current = hashes.keys[hashes.count - 1];
+  int count = 1;
+
+  for (int i = hashes.count - 3; i >= 0; i -= 2) {
+    if (hashes.keys[i] == current) {
+      count++;
+      if (count >= 3) return true;
+    }
+  }
+  return false;
+}
+
+bool Position::isFiftyMoveRule(const PositionState& state) {
+  return state.halfmoveClock >= 100;
+}
+
+bool Position::isDraw(const BitboardSet& bb, const Piece mailbox[], Color colorToMove,
+                      const PositionState& state, const HashHistory& hashes) {
+  return isStalemate(bb, mailbox, colorToMove, state)
+      || isFiftyMoveRule(state)
+      || isInsufficientMaterial(bb)
+      || isThreefoldRepetition(hashes);
+}
+
+GameResult Position::isGameOver(const BitboardSet& bb, const Piece mailbox[],
+                                Color colorToMove, const PositionState& state,
+                                const HashHistory& hashes, char& winner) {
+  int kidx = piece::pieceZobristIndex(piece::makePiece(colorToMove, PieceType::KING));
+  Bitboard kingBB = bb.byPiece[kidx];
+  if (!kingBB) {
+    winner = ' ';
+    return GameResult::IN_PROGRESS;
+  }
+  Square kingSq = lsb(kingBB);
+
+  bool inCheck = attacks::isSquareUnderAttack(bb, kingSq, colorToMove);
+  bool hasLegal = movegen::hasAnyLegalMove(bb, mailbox, colorToMove, state);
+
+  if (!hasLegal) {
+    if (inCheck) {
+      winner = piece::colorToChar(~colorToMove);
+      return GameResult::CHECKMATE;
+    } else {
+      winner = 'd';
+      return GameResult::STALEMATE;
+    }
+  }
+  if (isFiftyMoveRule(state)) {
+    winner = 'd';
+    return GameResult::DRAW_50;
+  }
+  if (isInsufficientMaterial(bb)) {
+    winner = 'd';
+    return GameResult::DRAW_INSUFFICIENT;
+  }
+  if (isThreefoldRepetition(hashes)) {
+    winner = 'd';
+    return GameResult::DRAW_3FOLD;
+  }
+  winner = ' ';
+  return GameResult::IN_PROGRESS;
+}
+
+// ---------------------------------------------------------------------------
+// En passant / castling analysis — thin wrappers over utils:: free functions.
+// Row/col API preserved for callers; delegates to Square-based free functions.
+// ---------------------------------------------------------------------------
+
+EnPassantInfo Position::checkEnPassant(int fromRow, int fromCol,
+                                       int toRow, int toCol) const {
+  return utils::checkEnPassant(mailbox_, squareOf(fromRow, fromCol),
+                               squareOf(toRow, toCol));
+}
+
+CastlingInfo Position::checkCastling(int fromRow, int fromCol,
+                                     int toRow, int toCol) const {
+  return utils::checkCastling(mailbox_, squareOf(fromRow, fromCol),
+                              squareOf(toRow, toCol));
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers
+// ---------------------------------------------------------------------------
 
 void Position::recordPosition() {
   if (state_.halfmoveClock == 0 && hashHistory_.count > 0)

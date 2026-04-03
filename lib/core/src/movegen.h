@@ -7,13 +7,18 @@
 // All functions are stateless: board representation (BitboardSet + mailbox)
 // and position state are passed in as parameters.
 //
-// Two generation modes:
+// Three generation modes:
 //   • Per-piece: getPossibleMoves() — legal moves for one piece (LED hints).
 //   • Bulk: generateAllMoves() / generateCaptures() — full position
 //     enumeration for search and game-end detection.
+//   • Staged: buildLegalityContext() once, then generateCaptures() and
+//     generateQuiets() reusing the same context (avoids double pin/check
+//     computation in staged move pickers).
 //
 // Also provides single-move validation (isValidMove) and the EP legality
 // query used by Zobrist hashing (hasLegalEnPassantCapture).
+//
+// Reference: https://www.chessprogramming.org/Move_Generation#Staged_move_generation
 // ---------------------------------------------------------------------------
 
 #include "attacks.h"
@@ -23,6 +28,34 @@
 
 namespace LibreChess {
 namespace movegen {
+
+// ---------------------------------------------------------------------------
+// Legality context — pin + check data built once per position.
+//
+// Shared across staged generation phases (captures, then quiets) so the
+// expensive pin detection and check mask computation happens only once.
+// ---------------------------------------------------------------------------
+
+// Up to 8 absolute pins possible (4 orthogonal + 4 diagonal rays from king).
+struct PinData {
+  Bitboard pinned;      // bitset of all pinned friendly piece squares
+  Bitboard pinRay[8];   // legal-move mask per pinned piece (king→pinner ray, inclusive)
+  Square pinnedSq[8];   // the pinned piece square corresponding to pinRay[i]
+  int count;            // number of recorded pins (≤ 8)
+};
+
+// Pre-computed legality context: checker info + pin data + check mask.
+// Built once per position, shared by staged capture/quiet generation.
+struct LegalityContext {
+  Square kingSq;
+  Bitboard checkMask;   // ~0ULL if not in check, between(king,checker)|checker if single check
+  PinData pinData;
+  int checkerCount;     // 0 = not in check, 1 = single check, 2+ = double check
+};
+
+// Build the legality context for `color` in the given position.
+LegalityContext buildLegalityContext(const BitboardSet& bb, Color color,
+                                    Square kingSq);
 
 // ---------------------------------------------------------------------------
 // Per-piece legal move generation
@@ -45,9 +78,26 @@ void generateAllMoves(const BitboardSet& bb, const Piece mailbox[],
                       MoveList& moves);
 
 // Captures and capture-promotions only (for quiescence search).
+// Self-contained: builds its own LegalityContext internally.
 void generateCaptures(const BitboardSet& bb, const Piece mailbox[],
                       Color color, const PositionState& state,
                       MoveList& moves);
+
+// ---------------------------------------------------------------------------
+// Staged move generation (reuses pre-built LegalityContext)
+// ---------------------------------------------------------------------------
+
+// Captures and capture-promotions only, using a pre-built context.
+void generateCaptures(const BitboardSet& bb, const Piece mailbox[],
+                      Color color, const PositionState& state,
+                      const LegalityContext& ctx, MoveList& moves);
+
+// Quiet (non-capture) moves only, using a pre-built context.
+// Excludes captures and capture-promotions — only quiet moves and
+// underpromotions.
+void generateQuiets(const BitboardSet& bb, const Piece mailbox[],
+                    Color color, const PositionState& state,
+                    const LegalityContext& ctx, MoveList& moves);
 
 // ---------------------------------------------------------------------------
 // Single-move validation
@@ -69,7 +119,7 @@ bool isValidMove(const BitboardSet& bb, const Piece mailbox[],
 // ---------------------------------------------------------------------------
 
 // Does `color` have at least one legal move?
-// Used by rules::isCheckmate / rules::isStalemate.
+// Used by Position::isCheckmate / Position::isStalemate.
 bool hasAnyLegalMove(const BitboardSet& bb, const Piece mailbox[],
                      Color color, const PositionState& state);
 

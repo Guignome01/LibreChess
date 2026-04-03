@@ -24,7 +24,6 @@ namespace LibreChess {
 using Square = int;  // 0-63 (LERF), or SQ_NONE
 
 constexpr Square SQ_A1 = 0;
-constexpr Square SQ_B1 = 1;
 constexpr Square SQ_H1 = 7;
 constexpr Square SQ_A8 = 56;
 constexpr Square SQ_H8 = 63;

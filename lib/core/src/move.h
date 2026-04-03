@@ -92,7 +92,6 @@ struct MoveList {
   // UI adapter — extract target coordinates for LED/sensor code.
   int targetRow(int i) const { return rowOf(moves[i].to); }
   int targetCol(int i) const { return colOf(moves[i].to); }
-  Square target(int i) const { return static_cast<Square>(moves[i].to); }
 };
 
 // ---------------------------------------------------------------------------

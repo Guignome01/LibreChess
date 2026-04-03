@@ -42,14 +42,16 @@ inline uint8_t castlingCharToBit(char c) {
     case 'Q': return 0x02;
     case 'k': return 0x04;
     case 'q': return 0x08;
-    default: return 0;
+    default:  return 0;
   }
 }
 
 inline bool hasCastlingRight(uint8_t castlingRights, Color color, bool kingSide) {
-  char c = kingSide ? (color == Color::WHITE ? 'K' : 'k')
-                    : (color == Color::WHITE ? 'Q' : 'q');
-  return (castlingRights & castlingCharToBit(c)) != 0;
+  // Direct bit lookup: [raw(Color)][kingSide] → castling bitmask.
+  // [WHITE][queenside=0]=Q(0x02), [WHITE][kingside=1]=K(0x01)
+  // [BLACK][queenside=0]=q(0x08), [BLACK][kingside=1]=k(0x04)
+  static constexpr uint8_t BIT[2][2] = {{0x02, 0x01}, {0x08, 0x04}};
+  return (castlingRights & BIT[raw(color)][kingSide]) != 0;
 }
 
 inline std::string castlingRightsToString(uint8_t rights) {
@@ -79,96 +81,100 @@ inline std::string squareName(int row, int col) {
 }
 
 // ---------------------------------------------------------------------------
-// En passant analysis — combines EP-capture detection and EP-target setting
-// into one return value so callers don't scatter multiple inline checks.
+// Castling rights update — lookup table approach.
+//
+// A move FROM or TO a special square (king start, rook corner) masks out
+// the corresponding castling bits.  For non-special squares the mask is
+// 0xFF (no-op AND).  This replaces 8 if-statements with two table lookups.
+//
+// Castling bits: 0x01=WK, 0x02=WQ, 0x04=BK, 0x08=BQ.
+// Reference: https://www.chessprogramming.org/Castling_Rights
 // ---------------------------------------------------------------------------
 
-struct EnPassantInfo {
-  bool isCapture;       // This move is an EP capture
-  int capturedPawnRow;  // Row of captured EP pawn (-1 if not EP)
-  int nextEpRow;        // EP target row for the *next* move (-1 if none)
-  int nextEpCol;        // EP target col for the *next* move (-1 if none)
-};
+// Square-based overload — preferred when LERF squares are already available.
+inline uint8_t updateCastlingRights(uint8_t rights, Square from, Square to) {
+  // clang-format off
+  static constexpr uint8_t CASTLING_MASK[64] = {
+    // Rank 1: a1       b1    c1    d1    e1          f1    g1    h1
+       0xFD, 0xFF, 0xFF, 0xFF, 0xFC, 0xFF, 0xFF, 0xFE,
+    // Ranks 2–7
+       0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+       0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+       0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+       0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+       0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+       0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    // Rank 8: a8       b8    c8    d8    e8          f8    g8    h8
+       0xF7, 0xFF, 0xFF, 0xFF, 0xF3, 0xFF, 0xFF, 0xFB
+  };
+  // clang-format on
+  return rights & CASTLING_MASK[from] & CASTLING_MASK[to];
+}
 
-inline EnPassantInfo checkEnPassant(int fromRow, int fromCol, int toRow, int toCol, Piece piece, Piece targetSquare) {
+// ---------------------------------------------------------------------------
+// En passant / castling detection — pure functions over mailbox + squares.
+// Shared by Position member methods (row/col API) and movegen (Square API).
+// Reference: https://www.chessprogramming.org/En_passant
+// Reference: https://www.chessprogramming.org/Castling
+// ---------------------------------------------------------------------------
+
+/// Detect whether a move is an en passant capture or creates an EP target.
+/// @param mailbox  64-element piece array (LERF indexed)
+/// @param from     origin square
+/// @param to       destination square
+/// @return EnPassantInfo with isCapture, capturedPawnRow, nextEpRow/Col
+inline EnPassantInfo checkEnPassant(const Piece mailbox[], Square from,
+                                    Square to) {
+  Piece movedPiece = mailbox[from];
+  Piece targetPiece = mailbox[to];
+
   EnPassantInfo info{};
   info.capturedPawnRow = -1;
   info.nextEpRow = -1;
   info.nextEpCol = -1;
 
-  bool isPawn = piece::pieceType(piece) == PieceType::PAWN;
+  bool isPawn = piece::pieceType(movedPiece) == PieceType::PAWN;
 
   // En passant: pawn captures diagonally to an empty square
-  info.isCapture = isPawn && fromCol != toCol && targetSquare == Piece::NONE;
+  info.isCapture = isPawn && colOf(from) != colOf(to) &&
+                   targetPiece == Piece::NONE;
   if (info.isCapture)
-    info.capturedPawnRow = toRow - piece::pawnDirection(piece::pieceColor(piece));
+    info.capturedPawnRow =
+        rowOf(to) - piece::pawnDirection(piece::pieceColor(movedPiece));
 
   // Pawn double-push creates an EP target for the opponent
-  if (isPawn && abs(toRow - fromRow) == 2) {
-    info.nextEpRow = (fromRow + toRow) / 2;
-    info.nextEpCol = fromCol;
+  int rowDiff = rowOf(to) - rowOf(from);
+  if (isPawn && (rowDiff == 2 || rowDiff == -2)) {
+    info.nextEpRow = (rowOf(from) + rowOf(to)) / 2;
+    info.nextEpCol = colOf(from);
   }
 
   return info;
 }
 
-// ---------------------------------------------------------------------------
-// Castling analysis — combines castling detection + rook positions so the
-// board layer can apply the move in one pass.
-// ---------------------------------------------------------------------------
+/// Detect whether a move is castling and determine rook source/dest columns.
+/// @param mailbox  64-element piece array (LERF indexed)
+/// @param from     origin square (king's square)
+/// @param to       destination square
+/// @return CastlingInfo with isCastling, rookFromCol, rookToCol
+inline CastlingInfo checkCastling(const Piece mailbox[], Square from,
+                                  Square to) {
+  Piece movedPiece = mailbox[from];
 
-struct CastlingInfo {
-  bool isCastling;   // This move is castling
-  int rookFromCol;   // Rook source column (-1 if not castling)
-  int rookToCol;     // Rook destination column (-1 if not castling)
-};
-
-inline CastlingInfo checkCastling(int fromRow, int fromCol, int toRow, int toCol, Piece piece) {
   CastlingInfo info{};
   info.rookFromCol = -1;
   info.rookToCol = -1;
 
-  info.isCastling = piece::pieceType(piece) == PieceType::KING &&
-                    fromRow == toRow && (toCol - fromCol == 2 || toCol - fromCol == -2);
+  int colDiff = colOf(to) - colOf(from);
+  info.isCastling = piece::pieceType(movedPiece) == PieceType::KING &&
+                    rowOf(from) == rowOf(to) &&
+                    (colDiff == 2 || colDiff == -2);
   if (info.isCastling) {
-    int deltaCol = toCol - fromCol;
-    info.rookFromCol = (deltaCol == 2) ? 7 : 0;
-    info.rookToCol = (deltaCol == 2) ? 5 : 3;
+    info.rookFromCol = (colDiff == 2) ? 7 : 0;
+    info.rookToCol = (colDiff == 2) ? 5 : 3;
   }
 
   return info;
-}
-
-// ---------------------------------------------------------------------------
-// Castling rights update — pure function returning new rights bitmask.
-// ---------------------------------------------------------------------------
-
-inline uint8_t updateCastlingRights(uint8_t rights, int fromRow, int fromCol, int toRow, int toCol, Piece movedPiece, Piece capturedPiece) {
-  // King moved — lose both rights for that color
-  if (movedPiece == Piece::W_KING)
-    rights &= ~(0x01 | 0x02);
-  else if (movedPiece == Piece::B_KING)
-    rights &= ~(0x04 | 0x08);
-
-  // Rook moved from corner — lose that side's right
-  if (movedPiece == Piece::W_ROOK) {
-    if (fromRow == 7 && fromCol == 7) rights &= ~0x01;
-    if (fromRow == 7 && fromCol == 0) rights &= ~0x02;
-  } else if (movedPiece == Piece::B_ROOK) {
-    if (fromRow == 0 && fromCol == 7) rights &= ~0x04;
-    if (fromRow == 0 && fromCol == 0) rights &= ~0x08;
-  }
-
-  // Rook captured on corner — lose that side's right
-  if (capturedPiece == Piece::W_ROOK) {
-    if (toRow == 7 && toCol == 7) rights &= ~0x01;
-    if (toRow == 7 && toCol == 0) rights &= ~0x02;
-  } else if (capturedPiece == Piece::B_ROOK) {
-    if (toRow == 0 && toCol == 7) rights &= ~0x04;
-    if (toRow == 0 && toCol == 0) rights &= ~0x08;
-  }
-
-  return rights;
 }
 
 // --- General-purpose board queries ---
@@ -183,20 +189,6 @@ inline bool isValidPromotionChar(char c) {
   char lower = static_cast<char>(tolower(c));
   return lower == 'q' || lower == 'r' || lower == 'b' || lower == 'n';
 }
-
-// ---------------------------------------------------------------------------
-// Board transform — minimal move application on BitboardSet + mailbox.
-// Moves the piece, handles castling rook, and removes en-passant captured pawn.
-// Sets capturedPiece to the piece actually captured (including EP captures).
-// Does NOT update PositionState, promotion, or MoveResult — callers handle those.
-// ---------------------------------------------------------------------------
-void applyBoardTransform(BitboardSet& bb, Piece mailbox[],
-                         Square from, Square to,
-                         const EnPassantInfo& ep, const CastlingInfo& castle,
-                         Piece& capturedPiece);
-
-// Format the board as a human-readable text block for debugging.
-std::string boardToText(const Piece mailbox[]);
 
 }  // namespace utils
 }  // namespace LibreChess

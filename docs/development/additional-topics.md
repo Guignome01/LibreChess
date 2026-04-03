@@ -103,15 +103,15 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 |-----------|------|----------|
 | Engine (Position w/ HashHistory 256) | ~2,350 B | **heap** (`std::unique_ptr`) |
 | MoveList rootMoves | 658 B | stack |
-| Per-ply negamax (MovePicker w/ int16_t arrays + locals) | ~2,200 B × depth | stack |
+| Per-ply negamax (MovePicker w/ int16_t arrays + locals) | ~1,950 B × depth | stack |
 | Per-ply quiescence (MoveList + int16_t scores + locals) | ~1,200 B × QS depth | stack |
-| At depth 15 + 6 ext + 8 QS | ~57 KiB | stack |
-| SearchState (history + killers + countermoves + PV table) | ~39 KiB | **heap** (`std::unique_ptr`) |
+| At depth 15 + 6 ext + 8 QS | ~51 KiB | stack |
+| SearchState (history + killers + countermoves + PV table) | ~35 KiB | **heap** (`std::unique_ptr`) |
 | Transposition table | varies | **heap** (`new[]`) |
 
 ### Per-Ply Recursion Breakdown
 
-**negamax** (≈2,200 B per ply):
+**negamax** (≈1,950 B per ply):
 
 | Component | Size |
 |-----------|------|
@@ -119,7 +119,7 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 | MovePicker.scores[218] (int16_t) | 436 B |
 | MovePicker.seeValues[218] (int16_t) | 436 B |
 | MovePicker other fields | ~100 B |
-| quietsSearched[64] + capturesSearched[64] | 384 B |
+| PackedMove quietsSearched[32] + capturesSearched[32] | 128 B |
 | UndoInfo + local variables | ~186 B |
 
 **quiescence** (≈1,200 B per ply):

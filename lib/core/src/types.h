@@ -88,30 +88,12 @@ enum class GameResult : uint8_t {
   ABORTED = 9
 };
 
-// Human-readable name for a GameResult value.
-inline const char* gameResultName(GameResult result) {
-  static constexpr const char* NAMES[] = {
-      "In progress",                  // 0 = IN_PROGRESS
-      "Checkmate",                    // 1 = CHECKMATE
-      "Stalemate",                    // 2 = STALEMATE
-      "Draw (50-move rule)",          // 3 = DRAW_50
-      "Draw (threefold repetition)",  // 4 = DRAW_3FOLD
-      "Resignation",                  // 5 = RESIGNATION
-      "Draw (insufficient material)", // 6 = DRAW_INSUFFICIENT
-      "Draw (agreement)",             // 7 = DRAW_AGREEMENT
-      "Timeout",                      // 8 = TIMEOUT
-      "Aborted",                      // 9 = ABORTED
-  };
-  auto idx = static_cast<uint8_t>(result);
-  return (idx < sizeof(NAMES) / sizeof(NAMES[0])) ? NAMES[idx] : "Unknown";
-}
-
 // ---------------------------------------------------------------------------
 // Position state
 // ---------------------------------------------------------------------------
 
 // Complete position state for chess operations.
-// rules:: is stateless; the caller supplies a PositionState for
+// Position's static methods are stateless; the caller supplies a PositionState for
 // position-dependent queries (castling rights, en passant target).
 // Position owns the authoritative instance and also uses
 // halfmoveClock / fullmoveClock for FEN serialization and draw detection.
@@ -140,6 +122,29 @@ enum class MoveFormat : uint8_t {
   COORDINATE = 0,  // "e2e4", "e7e8q"  (UCI protocol notation)
   SAN = 1,         // "e4", "Nxf3", "O-O", "e8=Q+"  (Standard Algebraic)
   LAN = 2          // "e2-e4", "Ng1xf3", "O-O", "e7-e8=Q+"  (Long Algebraic)
+};
+
+// ---------------------------------------------------------------------------
+// En passant analysis — combines EP-capture detection and EP-target setting
+// into one return value so callers don't scatter multiple inline checks.
+// ---------------------------------------------------------------------------
+
+struct EnPassantInfo {
+  bool isCapture;       // This move is an EP capture
+  int capturedPawnRow;  // Row of captured EP pawn (-1 if not EP)
+  int nextEpRow;        // EP target row for the *next* move (-1 if none)
+  int nextEpCol;        // EP target col for the *next* move (-1 if none)
+};
+
+// ---------------------------------------------------------------------------
+// Castling analysis — combines castling detection + rook positions so the
+// board layer can apply the move in one pass.
+// ---------------------------------------------------------------------------
+
+struct CastlingInfo {
+  bool isCastling;   // This move is castling
+  int rookFromCol;   // Rook source column (-1 if not castling)
+  int rookToCol;     // Rook destination column (-1 if not castling)
 };
 
 }  // namespace LibreChess

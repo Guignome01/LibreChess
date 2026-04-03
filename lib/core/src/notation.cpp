@@ -5,7 +5,6 @@
 #include "move.h"
 #include "iterator.h"
 #include "movegen.h"
-#include "rules.h"
 #include "utils.h"
 
 using namespace LibreChess;

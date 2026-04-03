@@ -134,12 +134,12 @@ static void test_bitboardset_setPiece_removePiece(void) {
   TEST_ASSERT_EQUAL_INT(1, popcount(bb.occupied));
 
   // pieceOn should find it
-  Piece found = bb.pieceOn(e4);
+  Piece found = pieceOn(bb, e4);
   TEST_ASSERT_ENUM_EQ(Piece::W_KNIGHT, found);
 
   bb.removePiece(e4, Piece::W_KNIGHT);
   TEST_ASSERT_EQUAL_UINT64(0, bb.occupied);
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, bb.pieceOn(e4));
+  TEST_ASSERT_ENUM_EQ(Piece::NONE, pieceOn(bb, e4));
 }
 
 static void test_bitboardset_movePiece(void) {
@@ -151,8 +151,8 @@ static void test_bitboardset_movePiece(void) {
   bb.movePiece(e2, e4, Piece::W_PAWN);
 
   TEST_ASSERT_EQUAL_UINT64(squareBB(e4), bb.occupied);
-  TEST_ASSERT_ENUM_EQ(Piece::NONE, bb.pieceOn(e2));
-  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, bb.pieceOn(e4));
+  TEST_ASSERT_ENUM_EQ(Piece::NONE, pieceOn(bb, e2));
+  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, pieceOn(bb, e4));
 }
 
 static void test_bitboardset_multiple_pieces(void) {
@@ -166,8 +166,8 @@ static void test_bitboardset_multiple_pieces(void) {
   TEST_ASSERT_EQUAL_INT(2, popcount(bb.occupied));
   TEST_ASSERT_EQUAL_INT(1, popcount(bb.byColor[0]));  // 1 white piece
   TEST_ASSERT_EQUAL_INT(1, popcount(bb.byColor[1]));  // 1 black piece
-  TEST_ASSERT_ENUM_EQ(Piece::W_KING, bb.pieceOn(e1));
-  TEST_ASSERT_ENUM_EQ(Piece::B_QUEEN, bb.pieceOn(d8));
+  TEST_ASSERT_ENUM_EQ(Piece::W_KING, pieceOn(bb, e1));
+  TEST_ASSERT_ENUM_EQ(Piece::B_QUEEN, pieceOn(bb, d8));
 }
 
 static void test_bitboardset_clear(void) {

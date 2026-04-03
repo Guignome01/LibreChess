@@ -208,8 +208,9 @@ struct SearchState {
 
   // --- Move ordering heuristics ---
   // Killer moves: two per ply, quiet moves that caused beta cutoffs.
+  // Stored as PackedMove (2 bytes) for compactness; unpacked in MovePicker.
   // Reference: https://www.chessprogramming.org/Killer_Move
-  Move killers[MAX_PLY][2];
+  PackedMove killers[MAX_PLY][2];
 
   // History heuristic: [color][from][to] — accumulated quiet move scores.
   // Reference: https://www.chessprogramming.org/History_Heuristic
@@ -238,9 +239,10 @@ struct SearchState {
   // pv[ply] holds the PV line starting at that ply; pvLength[ply] holds
   // the number of moves in that line.  Updated in negamax when alpha
   // improves; copied to SearchResult after each completed iteration.
-  // Memory: MAX_PLY × MAX_PLY × sizeof(Move) ≈ 12 KiB (heap-allocated).
+  // Stored as PackedMove (2 bytes) to reduce heap footprint.
+  // Memory: MAX_PLY × MAX_PLY × sizeof(PackedMove) ≈ 8 KiB (heap-allocated).
   // Reference: https://www.chessprogramming.org/Triangular_PV-Table
-  Move pv[MAX_PLY][MAX_PLY];
+  PackedMove pv[MAX_PLY][MAX_PLY];
   int pvLength[MAX_PLY];
 
   // Initialize killer and history tables to zero.

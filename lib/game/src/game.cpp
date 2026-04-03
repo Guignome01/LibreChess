@@ -236,13 +236,6 @@ bool Game::parseCoordinate(const std::string& move, int& fromRow, int& fromCol,
   return notation::parseCoordinate(move, fromRow, fromCol, toRow, toCol, promotion);
 }
 
-bool Game::parseMove(const std::string& move, int& fromRow, int& fromCol,
-                          int& toRow, int& toCol, char& promotion) const {
-  return notation::parseMove(board_.bitboards(), board_.mailbox(),
-                                  board_.positionState(), board_.currentTurn(),
-                                  move, fromRow, fromCol, toRow, toCol, promotion);
-}
-
 // ---------------------------------------------------------------------------
 // Replay
 // ---------------------------------------------------------------------------

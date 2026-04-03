@@ -595,6 +595,10 @@ struct MovePicker {
   int badCapIdx;     // next bad capture index
   int quietIdx;      // next quiet move index
 
+  // Legality context built once per position (in INIT_CAPTURES stage).
+  // Reused by INIT_QUIETS to avoid recomputing pin/check masks.
+  movegen::LegalityContext legalCtx;
+
   // SEE of the last move returned (SEE_NOT_COMPUTED for non-captures).
   int16_t lastSee;
 
@@ -615,8 +619,8 @@ struct MovePicker {
     ttMove = tt;
     hasTT  = (tt.from != 0 || tt.to != 0);
 
-    killer0 = ssRef.killers[p][0];
-    killer1 = ssRef.killers[p][1];
+    killer0 = unpackMove(ssRef.killers[p][0]);
+    killer1 = unpackMove(ssRef.killers[p][1]);
 
     hasCounter = false;
     if (!isEmpty(prevPiece)) {
@@ -781,7 +785,13 @@ private:
   // -----------------------------------------------------------------------
 
   void initCaptures() {
-    movegen::generateCaptures(*bb, mailbox, side, *posState, moves);
+    // Build the legality context once — reused in initQuiets().
+    int kidx = pieceZobristIndex(makePiece(side, PieceType::KING));
+    Bitboard kingBB = bb->byPiece[kidx];
+    Square kingSq = kingBB ? lsb(kingBB) : static_cast<Square>(0);
+    legalCtx = movegen::buildLegalityContext(*bb, side, kingSq);
+
+    movegen::generateCaptures(*bb, mailbox, side, *posState, legalCtx, moves);
     totalCaps = moves.count;
 
     for (int i = 0; i < totalCaps; ++i) {
@@ -818,19 +828,18 @@ private:
   }
 
   // -----------------------------------------------------------------------
-  // Generate all legal moves, filter out captures (already handled) and
-  // append the remaining quiet moves after the captures section.
+  // Generate quiet moves using the pre-built LegalityContext from
+  // initCaptures.  Appended after the captures section.
   // Score quiets with the history heuristic.
   // -----------------------------------------------------------------------
 
   void initQuiets() {
-    MoveList allMoves;
-    movegen::generateAllMoves(*bb, mailbox, side, *posState, allMoves);
+    MoveList quietMoves;
+    movegen::generateQuiets(*bb, mailbox, side, *posState, legalCtx, quietMoves);
 
     uint8_t c = raw(side);
-    for (int i = 0; i < allMoves.count; ++i) {
-      const Move& m = allMoves.moves[i];
-      if (m.isCapture()) continue;  // already in capture stages
+    for (int i = 0; i < quietMoves.count; ++i) {
+      const Move& m = quietMoves.moves[i];
       int idx = moves.count;
       moves.moves[idx] = m;
       scores[idx] = ss->history[c][m.from][m.to];
@@ -844,9 +853,10 @@ private:
 // Update killer moves: slot the new killer into position 0, shifting the
 // old one to position 1.  Avoids duplicates.
 inline void updateKillers(Move m, int ply, SearchState& state) {
-  if (!(m == state.killers[ply][0])) {
+  PackedMove pm = packMove(m);
+  if (pm != state.killers[ply][0]) {
     state.killers[ply][1] = state.killers[ply][0];
-    state.killers[ply][0] = m;
+    state.killers[ply][0] = pm;
   }
 }
 
@@ -867,21 +877,13 @@ inline void updateHistory(int16_t& h, int bonus) {
 
 // ---------------------------------------------------------------------------
 // Material-only evaluation from the side-to-move perspective.
-// Counts material using eval::materialValue() — the single source of truth
-// for piece values.  No positional terms; used by lazy evaluation to decide
-// if the full eval is worth computing.
+// Uses Position's incremental material accumulator — no popcount calls.
+// Reference: https://www.chessprogramming.org/Incremental_Updates
+// Reference: https://www.chessprogramming.org/Lazy_Evaluation
 // ---------------------------------------------------------------------------
 
 int lazyEval(const Position& pos) {
-  const BitboardSet& bb = pos.bitboards();
-  int score = 0;
-  // PieceType enum: PAWN=1 .. QUEEN=5, matching byPiece index + 1.
-  for (int i = 0; i < 6; ++i) {
-    int val = eval::materialValue(static_cast<PieceType>(i + 1));
-    score += popcount(bb.byPiece[i]) * val;
-    score -= popcount(bb.byPiece[i + 6]) * val;
-  }
-  return (pos.sideToMove() == Color::WHITE) ? score : -score;
+  return (pos.sideToMove() == Color::WHITE) ? pos.material() : -pos.material();
 }
 
 // ---------------------------------------------------------------------------
@@ -1350,11 +1352,14 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   int movesSearched = 0;
 
   // Track quiet moves searched for history gravity (penalize on cutoff).
-  Move quietsSearched[64];
+  // Stored as PackedMove to reduce per-ply stack footprint; capped at 32
+  // entries (cutoffs beyond 32 moves are rare and penalty accuracy loss is
+  // negligible).
+  PackedMove quietsSearched[32];
   int quietCount = 0;
 
   // Track captures searched for capture history gravity (penalize on cutoff).
-  Move capturesSearched[64];
+  PackedMove capturesSearched[32];
   int captureCount = 0;
 
   while (true) {
@@ -1524,12 +1529,12 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     if (state.stopped) return 0;
 
     // Track quiet moves for history gravity.
-    if (!m.isCapture() && !m.isPromotion() && quietCount < 64)
-      quietsSearched[quietCount++] = m;
+    if (!m.isCapture() && !m.isPromotion() && quietCount < 32)
+      quietsSearched[quietCount++] = packMove(m);
 
     // Track captures for capture history gravity.
-    if (m.isCapture() && captureCount < 64)
-      capturesSearched[captureCount++] = m;
+    if (m.isCapture() && captureCount < 32)
+      capturesSearched[captureCount++] = packMove(m);
 
     ++movesSearched;
 
@@ -1540,12 +1545,12 @@ int negamax(Position& pos, int depth, int alpha, int beta,
         alpha = score;
 
         // Collect principal variation: this move + the child's PV line.
-        state.pv[ply][0] = m;
+        state.pv[ply][0] = packMove(m);
         int childLen = (ply + 1 < MAX_PLY) ? state.pvLength[ply + 1] : 0;
         if (childLen < 0) childLen = 0;
         if (childLen > MAX_PLY - 1 - ply) childLen = MAX_PLY - 1 - ply;
         std::memcpy(&state.pv[ply][1], &state.pv[ply + 1][0],
-                    childLen * sizeof(Move));
+                    childLen * sizeof(PackedMove));
         state.pvLength[ply] = childLen + 1;
 
         if (alpha >= beta) {
@@ -1562,7 +1567,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
             if (isValidZobristIndex(chIdx) && vi >= 0 && vi < 6)
               updateHistory(state.captureHistory[chIdx][vi][m.to], bonus);
             for (int ci = 0; ci < captureCount - 1; ++ci) {
-              const Move& cm = capturesSearched[ci];
+              const Move cm = unpackMove(capturesSearched[ci]);
               int prevIdx = pieceZobristIndex(pos.mailbox()[cm.from]);
               PieceType prevVictim = cm.isEP() ? PieceType::PAWN
                                                : pieceType(pos.mailbox()[cm.to]);
@@ -1580,11 +1585,11 @@ int negamax(Position& pos, int depth, int alpha, int beta,
             // that failed to cause a cutoff.  The cutoff move itself (last
             // entry in quietsSearched) is excluded — it received the bonus.
             Color side = pos.sideToMove();
-            for (int q = 0; q < quietCount - 1; ++q)
+            for (int q = 0; q < quietCount - 1; ++q) {
+              Move qm = unpackMove(quietsSearched[q]);
               updateHistory(
-                  state.history[raw(side)][quietsSearched[q].from]
-                               [quietsSearched[q].to],
-                  -bonus);
+                  state.history[raw(side)][qm.from][qm.to], -bonus);
+            }
 
             // Store as countermove for the opponent's previous (piece, toSq).
             // On future visits, this move will be tried earlier when the same
@@ -1627,20 +1632,6 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   }
 
   return bestScore;
-}
-
-// ---------------------------------------------------------------------------
-// Search a single root move and return its score.
-// ---------------------------------------------------------------------------
-
-int searchRootMove(Position& pos, Move m, int depth,
-                   int alpha, int beta, SearchState& state) {
-  Piece movingPiece = pos.mailbox()[m.from];
-  UndoInfo undo = pos.make(m);
-  int score = -negamax(pos, depth - 1, -beta, -alpha, 1, state,
-                       movingPiece, m.to);
-  pos.unmake(m, undo);
-  return score;
 }
 
 }  // anonymous namespace
@@ -1763,8 +1754,11 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
       secondBestScore = -INF_SCORE;
 
       for (int i = 0; i < rootMoves.count; ++i) {
-        int score = searchRootMove(pos, rootMoves.moves[i], depth,
-                                   alpha, beta, state);
+        Piece movingPiece = pos.mailbox()[rootMoves.moves[i].from];
+        UndoInfo undo = pos.make(rootMoves.moves[i]);
+        int score = -negamax(pos, depth - 1, -beta, -alpha, 1, state,
+                             movingPiece, rootMoves.moves[i].to);
+        pos.unmake(rootMoves.moves[i], undo);
         if (state.stopped) break;
 
         if (score > iterBestScore) {
@@ -1773,12 +1767,12 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
           iterBestMove = rootMoves.moves[i];
 
           // Build root PV: this root move + child PV from ply 1.
-          state.pv[0][0] = rootMoves.moves[i];
+          state.pv[0][0] = packMove(rootMoves.moves[i]);
           int childLen = state.pvLength[1];
           if (childLen < 0) childLen = 0;
           if (childLen > MAX_PLY - 1) childLen = MAX_PLY - 1;
           std::memcpy(&state.pv[0][1], &state.pv[1][0],
-                      childLen * sizeof(Move));
+                      childLen * sizeof(PackedMove));
           state.pvLength[0] = childLen + 1;
 
           if (score > alpha) alpha = score;
@@ -1819,11 +1813,12 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
     result.nodes    = state.nodes;
     prevScore       = iterBestScore;
 
-    // Copy principal variation from this iteration's PV table.
+    // Unpack principal variation from this iteration's PV table.
     result.pvLength = state.pvLength[0];
     if (result.pvLength < 0) result.pvLength = 0;
     if (result.pvLength > MAX_PLY) result.pvLength = MAX_PLY;
-    std::memcpy(result.pv, state.pv[0], result.pvLength * sizeof(Move));
+    for (int i = 0; i < result.pvLength; ++i)
+      result.pv[i] = unpackMove(state.pv[0][i]);
 
     // --- Root move reordering ---
     // Move the best move to index 0 so it is searched first at the next

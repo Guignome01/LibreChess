@@ -400,7 +400,7 @@ void test_initial_position_white_moves(void) {
   // Each of the 8 pawns has 2 moves, each of 2 knights has 2 moves = 20 total
   int totalMoves = 0;
   iterator::forEachPiece(bb, mailbox, [&](int row, int col, Piece piece) {
-    if (!piece::isWhite(piece)) return;
+    if (piece::pieceColor(piece) != Color::WHITE) return;
     MoveList moves;
     movegen::getPossibleMoves(bb, mailbox, row, col, flags, moves);
     totalMoves += moves.count;
@@ -414,7 +414,7 @@ void test_initial_position_black_moves(void) {
 
   int totalMoves = 0;
   iterator::forEachPiece(bb, mailbox, [&](int row, int col, Piece piece) {
-    if (!piece::isBlack(piece)) return;
+    if (piece::pieceColor(piece) != Color::BLACK) return;
     MoveList moves;
     movegen::getPossibleMoves(bb, mailbox, row, col, flags, moves);
     totalMoves += moves.count;
@@ -634,7 +634,7 @@ void test_generateAllMoves_matches_perPiece(void) {
   // Count via per-piece getPossibleMoves
   int perPieceCount = 0;
   iterator::forEachPiece(bb, mailbox, [&](int r, int c, Piece piece) {
-    if (!piece::isWhite(piece)) return;
+    if (piece::pieceColor(piece) != Color::WHITE) return;
     MoveList moves;
     movegen::getPossibleMoves(bb, mailbox, r, c, state, moves);
     perPieceCount += moves.count;
@@ -649,7 +649,7 @@ void test_generateAllMoves_matches_perPiece(void) {
   // Verify every bulk move has a from-square belonging to a white piece
   for (int i = 0; i < bulk.count; i++) {
     Piece p = mailbox[bulk.moves[i].from];
-    TEST_ASSERT_TRUE(piece::isWhite(p));
+    TEST_ASSERT_TRUE(piece::pieceColor(p) == Color::WHITE);
   }
 }
 
@@ -777,6 +777,112 @@ void test_hasAnyLegalMove_in_check_with_escape(void) {
   TEST_ASSERT_TRUE(movegen::hasAnyLegalMove(bb, mailbox, Color::WHITE, flags));
 }
 
+// ---------------------------------------------------------------------------
+// Staged move generation (captures vs. quiets with shared LegalityContext)
+// ---------------------------------------------------------------------------
+
+// staged captures + quiets == generateAllMoves in the initial position.
+void test_staged_matches_all_moves_initial(void) {
+  setupInitialBoard(bb, mailbox);
+  PositionState flags{0x0F, -1, -1, 0, 1};
+
+  MoveList allMoves;
+  movegen::generateAllMoves(bb, mailbox, Color::WHITE, flags, allMoves);
+
+  int kidx = piece::pieceZobristIndex(piece::makePiece(Color::WHITE, PieceType::KING));
+  Square kingSq = lsb(bb.byPiece[kidx]);
+  movegen::LegalityContext ctx = movegen::buildLegalityContext(bb, Color::WHITE, kingSq);
+
+  MoveList caps, quiets;
+  movegen::generateCaptures(bb, mailbox, Color::WHITE, flags, ctx, caps);
+  movegen::generateQuiets(bb, mailbox, Color::WHITE, flags, ctx, quiets);
+
+  // No captures in initial position, 20 quiets
+  TEST_ASSERT_EQUAL_INT(0, caps.count);
+  TEST_ASSERT_EQUAL_INT(allMoves.count, caps.count + quiets.count);
+}
+
+// staged captures + quiets == generateAllMoves in a complex middlegame.
+void test_staged_matches_all_moves_middlegame(void) {
+  clearBoard(bb, mailbox);
+  // Kiwipete position: r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq -
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "a1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "h1");
+  placePiece(bb, mailbox, Piece::W_QUEEN, "f3");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "d2");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "e2");
+  placePiece(bb, mailbox, Piece::W_KNIGHT, "c3");
+  placePiece(bb, mailbox, Piece::W_KNIGHT, "e5");
+  placePiece(bb, mailbox, Piece::W_PAWN, "a2");
+  placePiece(bb, mailbox, Piece::W_PAWN, "b2");
+  placePiece(bb, mailbox, Piece::W_PAWN, "c2");
+  placePiece(bb, mailbox, Piece::W_PAWN, "d5");
+  placePiece(bb, mailbox, Piece::W_PAWN, "e4");
+  placePiece(bb, mailbox, Piece::W_PAWN, "f2");
+  placePiece(bb, mailbox, Piece::W_PAWN, "g2");
+  placePiece(bb, mailbox, Piece::W_PAWN, "h2");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_ROOK, "a8");
+  placePiece(bb, mailbox, Piece::B_ROOK, "h8");
+  placePiece(bb, mailbox, Piece::B_QUEEN, "e7");
+  placePiece(bb, mailbox, Piece::B_BISHOP, "a6");
+  placePiece(bb, mailbox, Piece::B_BISHOP, "g7");
+  placePiece(bb, mailbox, Piece::B_KNIGHT, "b6");
+  placePiece(bb, mailbox, Piece::B_KNIGHT, "f6");
+  placePiece(bb, mailbox, Piece::B_PAWN, "a7");
+  placePiece(bb, mailbox, Piece::B_PAWN, "b4");
+  placePiece(bb, mailbox, Piece::B_PAWN, "c7");
+  placePiece(bb, mailbox, Piece::B_PAWN, "d7");
+  placePiece(bb, mailbox, Piece::B_PAWN, "e6");
+  placePiece(bb, mailbox, Piece::B_PAWN, "f7");
+  placePiece(bb, mailbox, Piece::B_PAWN, "g6");
+  placePiece(bb, mailbox, Piece::B_PAWN, "h3");
+  PositionState flags{0x0F, -1, -1, 0, 1};
+
+  MoveList allMoves;
+  movegen::generateAllMoves(bb, mailbox, Color::WHITE, flags, allMoves);
+
+  int kidx = piece::pieceZobristIndex(piece::makePiece(Color::WHITE, PieceType::KING));
+  Square kingSq = lsb(bb.byPiece[kidx]);
+  movegen::LegalityContext ctx = movegen::buildLegalityContext(bb, Color::WHITE, kingSq);
+
+  MoveList caps, quiets;
+  movegen::generateCaptures(bb, mailbox, Color::WHITE, flags, ctx, caps);
+  movegen::generateQuiets(bb, mailbox, Color::WHITE, flags, ctx, quiets);
+
+  TEST_ASSERT_EQUAL_INT(allMoves.count, caps.count + quiets.count);
+
+  // Verify no overlap: every capture is a capture, every quiet is not.
+  for (int i = 0; i < caps.count; i++)
+    TEST_ASSERT_TRUE(caps.moves[i].isCapture() || caps.moves[i].isPromotion());
+  for (int i = 0; i < quiets.count; i++)
+    TEST_ASSERT_TRUE(!quiets.moves[i].isCapture() && !quiets.moves[i].isPromotion());
+}
+
+// staged captures + quiets == generateAllMoves when in check.
+void test_staged_matches_all_moves_in_check(void) {
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_ROOK, "e4");  // checks white king
+  placePiece(bb, mailbox, Piece::W_KNIGHT, "d3"); // can block or capture
+  PositionState flags{0x00, -1, -1, 0, 1};
+
+  MoveList allMoves;
+  movegen::generateAllMoves(bb, mailbox, Color::WHITE, flags, allMoves);
+
+  int kidx = piece::pieceZobristIndex(piece::makePiece(Color::WHITE, PieceType::KING));
+  Square kingSq = lsb(bb.byPiece[kidx]);
+  movegen::LegalityContext ctx = movegen::buildLegalityContext(bb, Color::WHITE, kingSq);
+
+  MoveList caps, quiets;
+  movegen::generateCaptures(bb, mailbox, Color::WHITE, flags, ctx, caps);
+  movegen::generateQuiets(bb, mailbox, Color::WHITE, flags, ctx, quiets);
+
+  TEST_ASSERT_EQUAL_INT(allMoves.count, caps.count + quiets.count);
+}
+
 void register_movegen_tests() {
   needsDefaultKings = true;
 
@@ -853,4 +959,9 @@ void register_movegen_tests() {
   RUN_TEST(test_has_legal_moves_initial);
   RUN_TEST(test_no_legal_moves_stalemate);
   RUN_TEST(test_hasAnyLegalMove_in_check_with_escape);
+
+  // Staged move generation (captures + quiets via LegalityContext)
+  RUN_TEST(test_staged_matches_all_moves_initial);
+  RUN_TEST(test_staged_matches_all_moves_middlegame);
+  RUN_TEST(test_staged_matches_all_moves_in_check);
 }

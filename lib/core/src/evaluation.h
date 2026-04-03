@@ -118,17 +118,23 @@ int evaluatePosition(const BitboardSet& bb,
 int evaluatePosition(const BitboardSet& bb, int mgMatPST, int egMatPST,
                      PawnHashTable* pawnHash = nullptr);
 
-// Material + PST contribution of a single piece at a given square.
-// White-relative: positive for white pieces, negative for black.
-// `pieceIdx` is the piece's Zobrist index (0–5 = white P..K, 6–11 = black).
-// Used by Position for incremental updates on make/unmake.
-int pieceSquareMG(int pieceIdx, Square sq);
-int pieceSquareEG(int pieceIdx, Square sq);
+// Combined MG+EG material+PST score for a single piece.
+// Returns both scores in one call, halving index arithmetic when both
+// MG and EG are needed (e.g. incremental updates in make/unmake).
+// Reference: https://www.chessprogramming.org/Piece-Square_Tables
+struct PSQTPair { int mg; int eg; };
+PSQTPair pieceSquareMGEG(int pieceIdx, Square sq);
 
-// Full material+PST sum computed from scratch.  Used to initialize
-// Position's incremental accumulators.
-int computeMaterialPST_MG(const BitboardSet& bb);
-int computeMaterialPST_EG(const BitboardSet& bb);
+// Full material+PST sum computed from scratch in a single pass.
+// Returns both MG and EG scores.  Used to initialize Position's
+// incremental accumulators.
+PSQTPair computeMaterialPST(const BitboardSet& bb);
+
+// Pure material sum (no PST), computed from scratch.  White-relative
+// centipawns (positive = White has more material).  Used to initialize
+// Position's incremental material accumulator.
+// Reference: https://www.chessprogramming.org/Incremental_Updates
+int computeMaterial(const BitboardSet& bb);
 
 // Material value for a piece type, in centipawns.
 // Provides a single source of truth for piece values used by evaluation,
@@ -159,6 +165,13 @@ constexpr int MAX_PHASE    = 24;
 constexpr int KING_DANGER_TABLE_SIZE = 13;
 
 #ifdef TUNING
+
+// Invalidate flat PSQT lookup tables after parameter changes.
+// Must be called after modifying any MATERIAL or PST value so that
+// subsequent pieceSquareMG/EG/MGEG and computeMaterialPST calls
+// use the updated values.
+void invalidatePSQT();
+
 namespace tuning {
 
 int paramCount();

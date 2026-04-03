@@ -1,13 +1,10 @@
 #include "zobrist.h"
 
-#include "iterator.h"
-#include "movegen.h"
-
 namespace LibreChess {
 namespace zobrist {
 
 uint64_t computeHash(const BitboardSet& bb, const Piece mailbox[],
-                     Color turn, const PositionState& state) {
+                     Color turn, const PositionState& state, bool epLegal) {
   uint64_t hash = 0;
 
   // Iterate occupied squares via bitboard serialization for LERF indexing.
@@ -20,7 +17,7 @@ uint64_t computeHash(const BitboardSet& bb, const Piece mailbox[],
 
   hash ^= KEYS.castling[state.castlingRights];
 
-  if (movegen::hasLegalEnPassantCapture(bb, mailbox, turn, state))
+  if (epLegal)
     hash ^= KEYS.enPassant[state.epCol];
 
   if (turn == Color::BLACK) hash ^= KEYS.sideToMove;

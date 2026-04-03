@@ -1,7 +1,6 @@
 #include "bot_mode.h"
 #include "game.h"
 
-namespace piece = LibreChess::piece;
 #include "led_colors.h"
 #include "system_utils.h"
 #include "wifi_manager_esp32.h"
@@ -42,8 +41,8 @@ void BotMode::begin() {
 
   playerColor_ = initResult.playerColor;
   logger_.infof("Player: %s, Engine: %s",
-                              piece::colorName(playerColor()),
-                              piece::colorName(~playerColor()));
+                              Game::colorName(playerColor()),
+                              Game::colorName(~playerColor()));
 
   if (initResult.canResume && tryResumeGame()) {
     // Resumed from flash — skip new game
@@ -89,7 +88,7 @@ void BotMode::update() {
       MoveResult result = applyMove(fromRow, fromCol, toRow, toCol);
 
       // Notify provider (Lichess sends the move to the server)
-      std::string coord = Game::toCoordinate(fromRow, fromCol, toRow, toCol, piece::pieceToChar(result.promotedTo));
+      std::string coord = Game::toCoordinate(fromRow, fromCol, toRow, toCol, Game::pieceToChar(result.promotedTo));
       if (!provider_->onPlayerMoveApplied(coord)) {
         abortWithError("Failed to send move to server");
         return;
@@ -147,9 +146,9 @@ void BotMode::applyEngineMove(const std::string& move) {
   Piece piece = chess_->getSquare(fromRow, fromCol);
   Color engineColor = ~playerColor();
 
-  if (piece::isEmpty(piece) || piece::pieceColor(piece) != engineColor) {
+  if (Game::isEmptySquare(piece) || Game::pieceColor(piece) != engineColor) {
     logger_.errorf("BotMode: engine move from invalid square (%d,%d) piece='%c'",
-                                 fromRow, fromCol, piece::pieceToChar(piece));
+                                 fromRow, fromCol, Game::pieceToChar(piece));
     return;
   }
 

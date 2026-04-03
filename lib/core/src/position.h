@@ -9,7 +9,7 @@
 //
 // Two move interfaces:
 //   • makeMove(row, col, row, col, promotion) — validated move for game play.
-//     Delegates to rules:: for legality, detects game-end conditions, returns
+//     Detects game-end conditions, returns
 //     a full MoveResult with UI metadata.  Used by Game.
 //   • make(Move) / unmake(Move, UndoInfo) — raw make/unmake for search.
 //     No validation, no game-end detection, incremental hash.  Caller
@@ -23,13 +23,10 @@
 #include <cstring>
 #include <string>
 
-#include "attacks.h"
 #include "bitboard.h"
 #include "iterator.h"
 #include "utils.h"
 #include "move.h"
-#include "movegen.h"
-#include "rules.h"
 #include "types.h"
 #include "zobrist.h"
 
@@ -47,6 +44,7 @@ struct UndoInfo {
   int historyCount;       // hashHistory_.count before the move
   int mgPST;              // material+PST midgame before the move
   int egPST;              // material+PST endgame before the move
+  int material;           // material score before the move
 };
 
 // ---------------------------------------------------------------------------
@@ -93,13 +91,11 @@ class Position {
     return mailbox_[squareOf(row, col)];
   }
 
-  Piece pieceOn(Square sq) const { return mailbox_[sq]; }
   Color currentTurn() const { return currentTurn_; }
   Color sideToMove() const { return currentTurn_; }
 
   int kingRow(Color c) const { return rowOf(kingSquare_[piece::raw(c)]); }
   int kingCol(Color c) const { return colOf(kingSquare_[piece::raw(c)]); }
-  Square kingSquare(Color c) const { return kingSquare_[piece::raw(c)]; }
 
   uint8_t getCastlingRights() const { return state_.castlingRights; }
   const PositionState& positionState() const { return state_; }
@@ -111,7 +107,7 @@ class Position {
   const Piece* mailbox() const { return mailbox_; }
 
   uint64_t hash() const { return hash_; }
-  bool isRepetition() const { return rules::isThreefoldRepetition(hashHistory_); }
+  bool isRepetition() const;
 
   // Incremental material+PST accumulators (white-relative centipawns).
   // Updated on make/unmake; used by the search to skip the per-piece loop
@@ -119,67 +115,48 @@ class Position {
   int mgPST() const { return mgPST_; }
   int egPST() const { return egPST_; }
 
-  // --- Convenience wrappers (delegate to movegen:: / utils::) ---
+  // Incremental material accumulator (white-relative centipawns, MG values).
+  // Updated on make/unmake for captures and promotions only.  Used by lazy
+  // evaluation in search to avoid 12 popcount calls per node.
+  // Reference: https://www.chessprogramming.org/Incremental_Updates
+  int material() const { return material_; }
 
-  void getPossibleMoves(int row, int col, MoveList& moves) const {
-    movegen::getPossibleMoves(bb_, mailbox_, row, col, state_, moves);
-  }
+  // --- Convenience wrappers (delegate to static methods / movegen:: / attacks::) ---
+  // Instance methods for callers who already have a Position object.
 
-  bool isCheck(Color kingColor) const {
-    return attacks::isSquareUnderAttack(bb_, kingSquare_[piece::raw(kingColor)], kingColor);
-  }
+  void getPossibleMoves(int row, int col, MoveList& moves) const;
+  bool inCheck() const;
+  bool isCheckmate() const;
+  bool isFiftyMoves() const;
+  bool isDraw() const;
 
-  bool inCheck() const {
-    return attacks::isSquareUnderAttack(bb_, kingSquare_[piece::raw(currentTurn_)], currentTurn_);
-  }
+  // --- Static game-state detection (raw bitboard + mailbox interface) ---
+  // Testable without constructing a Position object.
+  // Bodies in position.cpp to avoid movegen.h/attacks.h includes in this header.
 
-  bool isCheckmate() const {
-    return rules::isCheckmate(bb_, mailbox_, currentTurn_, state_);
-  }
+  static bool isCheck(const BitboardSet& bb, Color kingColor);
 
-  bool isStalemate() const {
-    return rules::isStalemate(bb_, mailbox_, currentTurn_, state_);
-  }
+  static bool isCheckmate(const BitboardSet& bb, const Piece mailbox[],
+                           Color kingColor, const PositionState& state);
+  static bool isStalemate(const BitboardSet& bb, const Piece mailbox[],
+                           Color colorToMove, const PositionState& state);
 
-  bool isInsufficientMaterial() const {
-    return rules::isInsufficientMaterial(bb_);
-  }
+  static bool isInsufficientMaterial(const BitboardSet& bb);
+  static bool isThreefoldRepetition(const HashHistory& hashes);
+  static bool isFiftyMoveRule(const PositionState& state);
 
-  bool isFiftyMoves() const {
-    return rules::isFiftyMoveRule(state_);
-  }
+  static bool isDraw(const BitboardSet& bb, const Piece mailbox[],
+                     Color colorToMove, const PositionState& state,
+                     const HashHistory& hashes);
 
-  bool isThreefoldRepetition() const {
-    return rules::isThreefoldRepetition(hashHistory_);
-  }
-
-  bool isDraw() const {
-    return rules::isDraw(bb_, mailbox_, currentTurn_, state_, hashHistory_);
-  }
-
-  bool isAttacked(int row, int col, Color byColor) const {
-    Color defendingColor = ~byColor;
-    return attacks::isSquareUnderAttack(bb_, row, col, defendingColor);
-  }
-
-  int findPiece(Piece target, int positions[][2], int maxPositions) const {
-    return iterator::findPiece(bb_, target, positions, maxPositions);
-  }
+  static GameResult isGameOver(const BitboardSet& bb, const Piece mailbox[],
+                                Color colorToMove, const PositionState& state,
+                                const HashHistory& hashes, char& winner);
 
   std::string boardToText() const;
 
-  int moveNumber() const { return state_.fullmoveClock; }
-
-  utils::EnPassantInfo checkEnPassant(int fromRow, int fromCol, int toRow, int toCol) const {
-    return utils::checkEnPassant(fromRow, fromCol, toRow, toCol,
-                                      mailbox_[squareOf(fromRow, fromCol)],
-                                      mailbox_[squareOf(toRow, toCol)]);
-  }
-
-  utils::CastlingInfo checkCastling(int fromRow, int fromCol, int toRow, int toCol) const {
-    return utils::checkCastling(fromRow, fromCol, toRow, toCol,
-                                     mailbox_[squareOf(fromRow, fromCol)]);
-  }
+  EnPassantInfo checkEnPassant(int fromRow, int fromCol, int toRow, int toCol) const;
+  CastlingInfo checkCastling(int fromRow, int fromCol, int toRow, int toCol) const;
 
   // --- Board iteration ---
 
@@ -188,21 +165,35 @@ class Position {
     iterator::forEachSquare(mailbox_, static_cast<Fn&&>(fn));
   }
 
-  template <typename Fn>
-  void forEachPiece(Fn&& fn) const {
-    iterator::forEachPiece(bb_, mailbox_, static_cast<Fn&&>(fn));
-  }
-
-  template <typename Fn>
-  bool somePiece(Fn&& fn) const {
-    return iterator::somePiece(bb_, mailbox_, static_cast<Fn&&>(fn));
-  }
-
   // --- Constants ---
 
   static const Piece INITIAL_BOARD[8][8];
 
  private:
+  // ---------------------------------------------------------------------------
+  // UndoCache — 1-deep cache for O(1) state restoration in reverseMove.
+  //
+  // Stores the Move + UndoInfo from the most recent makeMove(), plus the
+  // post-move hash for cache validation.  On cache-hit, reverseMove()
+  // delegates to unmake() — one well-tested path for both game and search.
+  // On cache-miss (multi-undo, FEN reload), falls back to manual board
+  // reversal + full recomputation.
+  //
+  // This is a pragmatic ESP32-optimized variant of the CPW-recommended
+  // undo-stack pattern.  The search path (make/unmake) stores a full UndoInfo
+  // per ply; the game path (makeMove/reverseMove) uses this 1-deep cache to
+  // avoid O(N) memory while still achieving O(1) restoration for the hot path
+  // (perft, immediate undo).
+  //
+  // Reference: https://www.chessprogramming.org/Copy-Make
+  // ---------------------------------------------------------------------------
+  struct UndoCache {
+    Move move;           // Move that was applied
+    UndoInfo undo;       // Full undo state from make()
+    uint64_t postHash;   // Zobrist hash after the move (validation key)
+    bool valid;          // Whether cache contains valid data
+  };
+
   BitboardSet bb_;
   Piece mailbox_[64];
   Color currentTurn_;
@@ -212,10 +203,24 @@ class Position {
   HashHistory hashHistory_;
   int mgPST_;    // incremental material+PST midgame accumulator
   int egPST_;    // incremental material+PST endgame accumulator
+  int material_; // incremental pure material accumulator (white-relative)
+  UndoCache undoCache_{};  // 1-deep cache for reverseMove()
 
   void recordPosition();
-  void applyMoveToBoard(int fromRow, int fromCol, int toRow, int toCol, char promotion, MoveResult& result);
-  void advanceTurn();
+  void initializeBoard();
+
+  // Recompute hash, PST accumulators, and material from scratch.
+  // Used after bulk board mutations (FEN load, reverseMove cache-miss)
+  // where incremental tracking is not possible.
+  void recomputeDerived();
+
+  // Shared incremental update for mgPST_, egPST_, material_ accumulators.
+  // Called by make() with the move's captured piece, castling flag, and
+  // promoted piece (Piece::NONE when not applicable).
+  // Castling rook squares are derived from king from/to when isCastling.
+  void updateAccumulators(Piece piece, Square from, Square to,
+                          Piece captured, Square capturedSq,
+                          bool isCastling, Piece promotedTo);
 };
 
 }  // namespace LibreChess

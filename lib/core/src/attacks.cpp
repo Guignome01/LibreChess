@@ -207,8 +207,8 @@ Bitboard xrayBishop(Bitboard occupied, Bitboard friendly, Square sq) {
 // ---------------------------------------------------------------------------
 
 Bitboard between(Square s1, Square s2) {
-  int r1 = static_cast<int>(s1) / 8, c1 = static_cast<int>(s1) % 8;
-  int r2 = static_cast<int>(s2) / 8, c2 = static_cast<int>(s2) % 8;
+  int r1 = rowOf(s1), c1 = colOf(s1);
+  int r2 = rowOf(s2), c2 = colOf(s2);
   int dr = r2 - r1, dc = c2 - c1;
 
   if (dr != 0 && dc != 0 && (dr < 0 ? -dr : dr) != (dc < 0 ? -dc : dc))
@@ -218,20 +218,6 @@ Bitboard between(Square s1, Square s2) {
   if (dr == 0 || dc == 0)
     return rook(s1, b2) & rook(s2, b1);
   return bishop(s1, b2) & bishop(s2, b1);
-}
-
-Bitboard line(Square s1, Square s2) {
-  int r1 = static_cast<int>(s1) / 8, c1 = static_cast<int>(s1) % 8;
-  int r2 = static_cast<int>(s2) / 8, c2 = static_cast<int>(s2) % 8;
-  int dr = r2 - r1, dc = c2 - c1;
-
-  if (dr != 0 && dc != 0 && (dr < 0 ? -dr : dr) != (dc < 0 ? -dc : dc))
-    return 0;
-
-  Bitboard endpoints = squareBB(s1) | squareBB(s2);
-  if (dr == 0 || dc == 0)
-    return (rook(s1, 0) & rook(s2, 0)) | endpoints;
-  return (bishop(s1, 0) & bishop(s2, 0)) | endpoints;
 }
 
 // ---------------------------------------------------------------------------
@@ -308,20 +294,16 @@ Bitboard attackersOfSquare(const BitboardSet& bb, Square sq,
   Color defending = ~attackingColor;
   Bitboard attackers = 0;
 
-  int pawnIdx = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::PAWN));
-  attackers |= PAWN[piece::raw(defending)][sq] & bb.byPiece[pawnIdx];
+  // Zobrist indices are contiguous per color: white 0-5, black 6-11.
+  // base + offset replaces 6× makePiece + pieceZobristIndex calls.
+  int base = piece::raw(attackingColor) * 6;
 
-  int knightIdx = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::KNIGHT));
-  attackers |= KNIGHT[sq] & bb.byPiece[knightIdx];
+  attackers |= PAWN[piece::raw(defending)][sq] & bb.byPiece[base + 0];
+  attackers |= KNIGHT[sq] & bb.byPiece[base + 1];
+  attackers |= KING[sq] & bb.byPiece[base + 5];
 
-  int kingIdx = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::KING));
-  attackers |= KING[sq] & bb.byPiece[kingIdx];
-
-  int rookIdx   = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::ROOK));
-  int queenIdx  = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::QUEEN));
-  int bishopIdx = piece::pieceZobristIndex(piece::makePiece(attackingColor, PieceType::BISHOP));
-  Bitboard rookQueens   = bb.byPiece[rookIdx]   | bb.byPiece[queenIdx];
-  Bitboard bishopQueens = bb.byPiece[bishopIdx] | bb.byPiece[queenIdx];
+  Bitboard rookQueens   = bb.byPiece[base + 3] | bb.byPiece[base + 4];
+  Bitboard bishopQueens = bb.byPiece[base + 2] | bb.byPiece[base + 4];
   attackers |= rook(sq, bb.occupied)   & rookQueens;
   attackers |= bishop(sq, bb.occupied) & bishopQueens;
 
@@ -347,11 +329,14 @@ bool isSquareUnderAttack(const BitboardSet& bb, Square sq, Color defendingColor)
 // Reference: https://www.chessprogramming.org/Static_Exchange_Evaluation
 // ---------------------------------------------------------------------------
 
-// SEE piece value lookup — uses eval::materialValue() for consistency with
-// the evaluation function.  King uses a sentinel value (captures by king
-// are always favorable if legal — the king can never be recaptured).
+// SEE piece values: delegates to eval::materialValue() for consistency with
+// the evaluation function.  King uses a large sentinel so "capturing a king"
+// always wins — this handles positions where the king itself is an attacker
+// (legal only on the last capture).
+static constexpr int SEE_KING_VALUE = 20000;
+
 static int seeValue(PieceType pt) {
-  if (pt == PieceType::KING) return 20000;
+  if (pt == PieceType::KING) return SEE_KING_VALUE;
   return eval::materialValue(pt);
 }
 

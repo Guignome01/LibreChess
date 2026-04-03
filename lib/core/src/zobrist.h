@@ -59,12 +59,13 @@ static constexpr Keys KEYS PROGMEM = Keys();
 // ---------------------------------------------------------------------------
 // Full-board hash computation (for initialization and debug verification).
 // Uses BitboardSet + mailbox with LERF square indexing.
-// The EP legality check (hasLegalEnPassantCapture) is defined in movegen:: —
-// this function is NOT inline because it needs the full movegen:: definition.
+// `epLegal` indicates whether the current EP square (if any) has at least one
+// legal en passant capture.  The caller must check this via
+// movegen::hasLegalEnPassantCapture() — keeping that dependency out of zobrist.
 // ---------------------------------------------------------------------------
 
 uint64_t computeHash(const BitboardSet& bb, const Piece mailbox[],
-                     Color turn, const PositionState& state);
+                     Color turn, const PositionState& state, bool epLegal);
 
 // Compute a pawn-only Zobrist hash.  XORs piece keys for all white and black
 // pawns — used as the lookup key for the pawn hash table.  Pawn structures

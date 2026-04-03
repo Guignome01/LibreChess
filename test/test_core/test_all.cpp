@@ -24,7 +24,6 @@ void register_movegen_tests();
 void register_notation_tests();
 void register_piece_tests();
 void register_position_tests();
-void register_rules_tests();
 void register_utils_tests();
 void register_zobrist_tests();
 
@@ -35,7 +34,6 @@ int main(int argc, char** argv) {
   register_utils_tests();
   register_attacks_tests();
   register_movegen_tests();
-  register_rules_tests();
   register_epd_tests();
   register_eval_regression_tests();
   register_evaluation_tests();

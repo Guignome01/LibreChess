@@ -15,7 +15,7 @@ static void setUpGame(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Threefold repetition (detected via rules::isGameOver)
+// Threefold repetition (detected via Position::isGameOver)
 // ---------------------------------------------------------------------------
 
 void test_game_threefold_repetition(void) {
@@ -557,42 +557,6 @@ void test_game_makeMove_string_promotion(void) {
 }
 
 // ---------------------------------------------------------------------------
-// parseMove() instance method
-// ---------------------------------------------------------------------------
-
-void test_game_parseMove_coordinate(void) {
-  setUpGame();
-  int fr, fc, tr, tc;
-  char promo;
-  bool ok = game.parseMove("e2e4", fr, fc, tr, tc, promo);
-  TEST_ASSERT_TRUE(ok);
-  TEST_ASSERT_EQUAL_INT(6, fr);
-  TEST_ASSERT_EQUAL_INT(4, fc);
-  TEST_ASSERT_EQUAL_INT(4, tr);
-  TEST_ASSERT_EQUAL_INT(4, tc);
-}
-
-void test_game_parseMove_san(void) {
-  setUpGame();
-  int fr, fc, tr, tc;
-  char promo;
-  bool ok = game.parseMove("Nf3", fr, fc, tr, tc, promo);
-  TEST_ASSERT_TRUE(ok);
-  TEST_ASSERT_EQUAL_INT(7, fr);  // g1
-  TEST_ASSERT_EQUAL_INT(6, fc);
-  TEST_ASSERT_EQUAL_INT(5, tr);  // f3
-  TEST_ASSERT_EQUAL_INT(5, tc);
-}
-
-void test_game_parseMove_invalid(void) {
-  setUpGame();
-  int fr, fc, tr, tc;
-  char promo;
-  bool ok = game.parseMove("Zz9", fr, fc, tr, tc, promo);
-  TEST_ASSERT_FALSE(ok);
-}
-
-// ---------------------------------------------------------------------------
 // board() / history() accessors
 // ---------------------------------------------------------------------------
 
@@ -735,11 +699,6 @@ void register_game_tests() {
   RUN_TEST(test_game_makeMove_string_invalid);
   RUN_TEST(test_game_makeMove_string_empty);
   RUN_TEST(test_game_makeMove_string_promotion);
-
-  // parseMove() instance method
-  RUN_TEST(test_game_parseMove_coordinate);
-  RUN_TEST(test_game_parseMove_san);
-  RUN_TEST(test_game_parseMove_invalid);
 
   // board() / history() accessors
   RUN_TEST(test_game_board_accessor);

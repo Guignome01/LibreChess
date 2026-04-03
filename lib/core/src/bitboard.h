@@ -173,24 +173,6 @@ struct BitboardSet {
     occupied ^= fromTo;
   }
 
-  // Identify which piece sits on a square by scanning all 12 bitboards.
-  // Returns Piece::NONE if the square is empty.
-  // This is O(12) — use the mailbox for hot-path lookups instead.
-  Piece pieceOn(Square sq) const {
-    Bitboard bit = squareBB(sq);
-    if (!(occupied & bit)) return Piece::NONE;
-    for (int i = 0; i < NUM_PIECE_BOARDS; ++i) {
-      if (byPiece[i] & bit) {
-        // Reverse the Zobrist index back to a Piece.
-        // Index 0-5 = white PAWN..KING, 6-11 = black PAWN..KING.
-        Color c = (i < 6) ? Color::WHITE : Color::BLACK;
-        auto t = static_cast<PieceType>((i % 6) + 1);
-        return piece::makePiece(c, t);
-      }
-    }
-    return Piece::NONE;  // should not reach here if occupied is correct
-  }
-
   // Reset all bitboards to empty.
   void clear() {
     for (int i = 0; i < NUM_PIECE_BOARDS; ++i) byPiece[i] = 0;

@@ -70,8 +70,6 @@ class Game {
   static std::string toCoordinate(int fromRow, int fromCol, int toRow, int toCol, char promotion = ' ');
   static bool parseCoordinate(const std::string& move, int& fromRow, int& fromCol,
                               int& toRow, int& toCol, char& promotion);
-  bool parseMove(const std::string& move, int& fromRow, int& fromCol,
-                 int& toRow, int& toCol, char& promotion) const;
 
   // --- Replay ---
 
@@ -100,7 +98,6 @@ class Game {
   const PositionState& positionState() const { return board_.positionState(); }
   std::string getFen() const;
   int getEvaluation() const;
-  float getEvaluationFloat() const { return getEvaluation() / 100.0f; }
 
   // --- Convenience wrappers ---
 
@@ -108,22 +105,7 @@ class Game {
     board_.getPossibleMoves(row, col, moves);
   }
 
-  bool isCheck(Color kingColor) const { return board_.isCheck(kingColor); }
-  bool inCheck() const { return board_.inCheck(); }
-  bool isCheckmate() const { return board_.isCheckmate(); }
-  bool isStalemate() const { return board_.isStalemate(); }
-  bool isInsufficientMaterial() const { return board_.isInsufficientMaterial(); }
-  bool isFiftyMoves() const { return board_.isFiftyMoves(); }
   bool isDraw() const { return board_.isDraw(); }
-  bool isThreefoldRepetition() const { return board_.isThreefoldRepetition(); }
-
-  bool isAttacked(int row, int col, Color byColor) const {
-    return board_.isAttacked(row, col, byColor);
-  }
-
-  int findPiece(Piece target, int positions[][2], int maxPositions) const {
-    return board_.findPiece(target, positions, maxPositions);
-  }
 
   std::string boardToText() const { return board_.boardToText(); }
 
@@ -134,23 +116,27 @@ class Game {
     iterator::forEachSquare(board_.mailbox(), static_cast<Fn&&>(fn));
   }
 
-  template <typename Fn>
-  void forEachPiece(Fn&& fn) const {
-    iterator::forEachPiece(board_.bitboards(), board_.mailbox(), static_cast<Fn&&>(fn));
-  }
 
-  template <typename Fn>
-  bool somePiece(Fn&& fn) const {
-    return iterator::somePiece(board_.bitboards(), board_.mailbox(), static_cast<Fn&&>(fn));
-  }
 
-  int moveNumber() const { return board_.moveNumber(); }
-
-  utils::EnPassantInfo checkEnPassant(int fromRow, int fromCol, int toRow, int toCol) const {
+  EnPassantInfo checkEnPassant(int fromRow, int fromCol, int toRow, int toCol) const {
     return board_.checkEnPassant(fromRow, fromCol, toRow, toCol);
   }
 
-  utils::CastlingInfo checkCastling(int fromRow, int fromCol, int toRow, int toCol) const {
+  // --- Piece & coordinate utilities ---
+  // Static helpers re-exported from lib/core so firmware never needs to
+  // include piece.h or utils.h directly.
+
+  static bool isEmptySquare(Piece p) { return p == Piece::NONE; }
+  static Color pieceColor(Piece p) { return piece::pieceColor(p); }
+  static PieceType pieceType(Piece p) { return piece::pieceType(p); }
+  static char pieceToChar(Piece p) { return piece::pieceToChar(p); }
+  static const char* colorName(Color c) { return piece::colorName(c); }
+  static std::string squareName(int row, int col) { return utils::squareName(row, col); }
+  static char fileChar(int col) { return utils::fileChar(col); }
+  static char rankChar(int row) { return utils::rankChar(row); }
+
+  CastlingInfo checkCastling(int fromRow, int fromCol,
+                             int toRow, int toCol) const {
     return board_.checkCastling(fromRow, fromCol, toRow, toCol);
   }
 
