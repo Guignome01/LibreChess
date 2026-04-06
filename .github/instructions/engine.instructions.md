@@ -69,11 +69,11 @@ API modules handle raw HTTP + TLS. Providers handle chess-domain logic and FreeR
 
 `LibreChessProvider` runs the search in a FreeRTOS task (`lcTask`) with a 64 KiB stack. The Engine is heap-allocated via `std::unique_ptr` with explicit `reset()` before `vTaskDelete(nullptr)` to ensure destructor runs (releases TT, pawn hash, eval hash). Major allocations:
 
-- **SearchState** (~35 KiB: `history[2][64][64]` = 16 KiB, `killers[64][2]` = 256 B via `PackedMove`, `countermoves[12][64]` = 1.5 KiB, `staticEvals[64]` = 128 B, PV table 64×64×2 = 8 KiB via `PackedMove`) — **heap-allocated** via `std::unique_ptr` in `findBestMove()`.
+- **SearchState** (~33 KiB: `history[2][64][64]` = 16 KiB, `killers[64][2]` = 256 B via `PackedMove`, `countermoves[12][64]` = 1.5 KiB, `staticEvals[64]` = 128 B, PV table 64×32×2 = 4 KiB via `PackedMove`, `MAX_PV_LEN=32`) — **heap-allocated** via `std::unique_ptr` in `findBestMove()`.
 - **Transposition table** — heap-allocated (`new TTEntry[]`), dynamically sized to available heap (reserves extra 16 KiB for eval hash tables), capped at 128 KiB.
 - **Pawn hash table** — 8 KiB (1024 entries × 8B `PawnEntry`), heap-allocated by `Engine`. Caches pawn structure MG/EG scores; ~95%+ hit rate.
 - **Eval hash table** — 8 KiB (1024 entries × 8B `EvalEntry`), heap-allocated by `Engine`. Caches full `evaluatePosition()` results.
-- **Engine** (owns Position + TT + pawn/eval hash tables) — **heap-allocated** via `std::unique_ptr` in `taskFunction()`. Position contains `HashHistory` (256 × 8B = 2 KiB) plus board state (~300B).
+- **Engine** (owns Position + TT + pawn/eval hash tables) — **heap-allocated** via `std::unique_ptr` in `taskFunction()`. Position contains `HashHistory` (128 × 8B = 1 KiB) plus board state (~300B).
 - **Per-ply negamax** — ~1,950 B per ply (MovePicker with MoveList 658B + int16_t scores[218] 436B + int16_t seeValues[218] 436B + other fields + PackedMove quietsSearched[32] + capturesSearched[32] 128B + UndoInfo + locals). Uses `int16_t` arrays to reduce per-ply stack footprint (all score values fit: MVV-LVA ≤ 600, SEE ≤ 900, history ≤ ±7000).
 - **Per-ply quiescence** — ~1.2 KiB per ply (MoveList 658B + int16_t capScores[218] 436B + UndoInfo + locals).
 

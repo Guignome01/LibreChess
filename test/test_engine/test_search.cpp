@@ -24,8 +24,8 @@ static search::SearchResult searchFEN(const char* fen, int depth) {
 
 // Convert a Move to UCI coordinate string for readable assertions.
 static std::string moveToStr(Move m) {
-  return notation::toCoordinate(rowOf(m.from), colOf(m.from),
-                                rowOf(m.to), colOf(m.to));
+  return notation::toCoordinate(rowOf(m.from), fileOf(m.from),
+                                rowOf(m.to), fileOf(m.to));
 }
 
 // ===========================================================================

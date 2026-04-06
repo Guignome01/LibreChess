@@ -57,47 +57,44 @@ static PerftResult perft(Position& pos, int depth) {
   Color turn = pos.currentTurn();
   PositionState prevState = pos.positionState();
 
-  for (int row = 0; row < 8; row++) {
-    for (int col = 0; col < 8; col++) {
-      Piece piece = pos.getSquare(row, col);
-      if (piece == Piece::NONE) continue;
-      if (piece::pieceColor(piece) != turn) continue;
+  for (Square sq = 0; sq < 64; sq++) {
+    Piece piece = pos.getSquare(sq);
+    if (piece == Piece::NONE) continue;
+    if (piece::pieceColor(piece) != turn) continue;
 
-      MoveList moves;
-      pos.getPossibleMoves(row, col, moves);
+    MoveList moves;
+    pos.getPossibleMoves(sq, moves);
 
-      for (int i = 0; i < moves.count; i++) {
-        int toRow = moves.targetRow(i);
-        int toCol = moves.targetCol(i);
-        Move m = moves.moves[i];
+    for (int i = 0; i < moves.count; i++) {
+      Move m = moves.moves[i];
+      Square toSq = static_cast<Square>(m.to);
 
-        // Map promotion index to character for makeMove
-        static constexpr char PROMO_CHARS[] = {'n', 'b', 'r', 'q'};
-        char promoPiece = m.isPromotion() ? PROMO_CHARS[m.promoIndex()] : ' ';
-        Piece targetPiece = pos.getSquare(toRow, toCol);
+      // Map promotion index to character for makeMove
+      static constexpr char PROMO_CHARS[] = {'n', 'b', 'r', 'q'};
+      char promoPiece = m.isPromotion() ? PROMO_CHARS[m.promoIndex()] : ' ';
+      Piece targetPiece = pos.getSquare(toSq);
 
-        MoveResult mr = pos.makeMove(row, col, toRow, toCol, promoPiece);
-        if (!mr.valid) continue;
+      MoveResult mr = pos.makeMove(sq, toSq, promoPiece);
+      if (!mr.valid()) continue;
 
-        MoveEntry entry = MoveEntry::build(row, col, toRow, toCol,
-                                           piece, targetPiece,
-                                           mr, prevState);
+      MoveEntry entry = MoveEntry::build(sq, toSq,
+                                         piece, targetPiece,
+                                         mr, prevState);
 
-        if (depth == 1) {
-          // Leaf move — count node and move-type properties
-          result.nodes++;
-          if (mr.isCapture) result.captures++;
-          if (mr.isEnPassant) result.ep++;
-          if (mr.isCastling) result.castles++;
-          if (mr.isPromotion) result.promotions++;
-          if (mr.isCheck) result.checks++;
-          if (mr.gameResult == GameResult::CHECKMATE) result.checkmates++;
-        } else {
-          result += perft(pos, depth - 1);
-        }
-
-        pos.reverseMove(entry);
+      if (depth == 1) {
+        // Leaf move — count node and move-type properties
+        result.nodes++;
+        if (mr.isCapture()) result.captures++;
+        if (mr.isEnPassant()) result.ep++;
+        if (mr.isCastling()) result.castles++;
+        if (mr.isPromotion()) result.promotions++;
+        if (mr.isCheck()) result.checks++;
+        if (mr.gameResult == GameResult::CHECKMATE) result.checkmates++;
+      } else {
+        result += perft(pos, depth - 1);
       }
+
+      pos.reverseMove(entry);
     }
   }
   return result;

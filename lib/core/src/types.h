@@ -16,6 +16,20 @@
 namespace LibreChess {
 
 // ---------------------------------------------------------------------------
+// Square type (used by PositionState, EnPassantInfo, CastlingInfo)
+// ---------------------------------------------------------------------------
+// Defined here (foundation layer) so bitboard.h can include piece.h → types.h
+// without circular dependencies.  Canonical definition; bitboard.h re-uses it.
+//
+// uint8_t is sufficient for 0-63 (valid squares) plus the SQ_NONE sentinel.
+// Arithmetic on squares (e.g. sq + NORTH) promotes to int automatically;
+// cast back to Square on assignment when needed.
+
+using Square = uint8_t;  // 0-63 (LERF), or SQ_NONE (255)
+
+constexpr Square SQ_NONE = 255;
+
+// ---------------------------------------------------------------------------
 // Core chess enums
 // ---------------------------------------------------------------------------
 
@@ -99,10 +113,9 @@ enum class GameResult : uint8_t {
 // halfmoveClock / fullmoveClock for FEN serialization and draw detection.
 struct PositionState {
   uint8_t castlingRights = 0x0F;  // KQkq bitmask (bits 0-3)
-  int8_t epRow = -1;              // en passant target row (-1 if none, 0-7)
-  int8_t epCol = -1;              // en passant target col (-1 if none, 0-7)
-  int halfmoveClock = 0;          // half-move clock (50-move rule)
-  int fullmoveClock = 1;          // full-move counter (starts at 1)
+  Square epSquare = SQ_NONE;      // en passant target square (SQ_NONE if none)
+  uint8_t halfmoveClock = 0;      // half-move clock (50-move rule, max 100)
+  uint16_t fullmoveClock = 1;     // full-move counter (starts at 1)
 
   // Standard starting position state (identical to default construction).
   static PositionState initial() { return {}; }
@@ -111,7 +124,7 @@ struct PositionState {
 // Fixed-capacity Zobrist hash history for threefold repetition detection.
 // Replaces the coupled (uint64_t*, int) parameter pattern.
 struct HashHistory {
-  static constexpr int MAX_SIZE = 256;
+  static constexpr int MAX_SIZE = 128;
 
   uint64_t keys[MAX_SIZE];
   int count = 0;
@@ -127,24 +140,25 @@ enum class MoveFormat : uint8_t {
 // ---------------------------------------------------------------------------
 // En passant analysis — combines EP-capture detection and EP-target setting
 // into one return value so callers don't scatter multiple inline checks.
+// Reference: https://www.chessprogramming.org/En_passant
 // ---------------------------------------------------------------------------
 
 struct EnPassantInfo {
-  bool isCapture;       // This move is an EP capture
-  int capturedPawnRow;  // Row of captured EP pawn (-1 if not EP)
-  int nextEpRow;        // EP target row for the *next* move (-1 if none)
-  int nextEpCol;        // EP target col for the *next* move (-1 if none)
+  bool isCapture;                        // This move is an EP capture
+  Square capturedPawnSq = SQ_NONE;       // Square of captured EP pawn
+  Square nextEpSquare = SQ_NONE;         // EP target square for the *next* move
 };
 
 // ---------------------------------------------------------------------------
-// Castling analysis — combines castling detection + rook positions so the
+// Castling analysis — combines castling detection + rook squares so the
 // board layer can apply the move in one pass.
+// Reference: https://www.chessprogramming.org/Castling
 // ---------------------------------------------------------------------------
 
 struct CastlingInfo {
-  bool isCastling;   // This move is castling
-  int rookFromCol;   // Rook source column (-1 if not castling)
-  int rookToCol;     // Rook destination column (-1 if not castling)
+  bool isCastling;                     // This move is castling
+  Square rookFromSq = SQ_NONE;         // Rook source square
+  Square rookToSq = SQ_NONE;           // Rook destination square
 };
 
 }  // namespace LibreChess

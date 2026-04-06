@@ -19,7 +19,6 @@ void register_epd_tests();
 void register_eval_regression_tests();
 void register_evaluation_tests();
 void register_fen_tests();
-void register_iterator_tests();
 void register_movegen_tests();
 void register_notation_tests();
 void register_piece_tests();
@@ -39,7 +38,6 @@ int main(int argc, char** argv) {
   register_evaluation_tests();
   register_fen_tests();
   register_notation_tests();
-  register_iterator_tests();
   register_zobrist_tests();
   register_position_tests();
   return UNITY_END();

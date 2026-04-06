@@ -30,6 +30,19 @@ namespace LibreChess {
 namespace movegen {
 
 // ---------------------------------------------------------------------------
+// Filter mode — selects which move categories to emit.
+//
+// Used by internal move enumeration to support staged generation (captures
+// first, then quiets) without duplicating filtering logic.
+// ---------------------------------------------------------------------------
+
+enum class FilterMode {
+  ALL             = 0,  // All legal moves
+  CAPTURES_PROMOS = 1,  // Captures and promotions only (quiescence)
+  QUIETS          = 2   // Quiet non-capture non-promotion moves only
+};
+
+// ---------------------------------------------------------------------------
 // Legality context — pin + check data built once per position.
 //
 // Shared across staged generation phases (captures, then quiets) so the
@@ -61,10 +74,10 @@ LegalityContext buildLegalityContext(const BitboardSet& bb, Color color,
 // Per-piece legal move generation
 // ---------------------------------------------------------------------------
 
-// Returns only legal moves for the piece at (row, col).
+// Returns only legal moves for the piece at the given square.
 // Uses pin+check mask filtering with copy-make fallback for king and EP moves.
 void getPossibleMoves(const BitboardSet& bb, const Piece mailbox[],
-                      int row, int col, const PositionState& state,
+                      Square sq, const PositionState& state,
                       MoveList& moves);
 
 // ---------------------------------------------------------------------------
@@ -103,10 +116,10 @@ void generateQuiets(const BitboardSet& bb, const Piece mailbox[],
 // Single-move validation
 // ---------------------------------------------------------------------------
 
-// Validate that moving (fromRow,fromCol)→(toRow,toCol) is legal.
+// Validate that a move from `from` to `to` is legal.
 // Finds king square internally.
 bool isValidMove(const BitboardSet& bb, const Piece mailbox[],
-                 int fromRow, int fromCol, int toRow, int toCol,
+                 Square from, Square to,
                  const PositionState& state);
 
 // Validate with pre-found king square (avoids redundant king search).

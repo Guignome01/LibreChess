@@ -69,11 +69,29 @@ inline uint8_t castlingRightsFromString(const std::string& rightsStr) {
   return rights;
 }
 
-// Coordinate helpers — single source of truth for the row/col ↔ rank/file mapping.
-// Board convention: row 0 = rank 8 (black back rank), col 0 = file 'a'.
-inline constexpr char fileChar(int col) { return 'a' + col; }
-inline constexpr char rankChar(int row) { return '1' + (7 - row); }
+// ---------------------------------------------------------------------------
+// Coordinate helpers
+// ---------------------------------------------------------------------------
+
+// LERF-native helpers (canonical — use in new code).
+// file 0 = 'a', rank 0 = '1'.
+inline constexpr char fileChar(int file) { return 'a' + file; }
+inline constexpr char rankCharFromRank(int rank) { return '1' + rank; }
 inline constexpr int fileIndex(char file) { return file - 'a'; }
+inline constexpr int rankIndexFromChar(char rank) { return rank - '1'; }
+
+/// Square name from LERF Square (e.g. SQ_E4 → "e4").
+/// Reference: https://www.chessprogramming.org/Square_Mapping_Considerations
+inline std::string squareName(Square sq) {
+  return {fileChar(fileOf(sq)), rankCharFromRank(rankOf(sq))};
+}
+
+// Legacy display-oriented helpers (row/col ↔ LERF conversion).
+// row 0 = rank 8 (black back rank), col 0 = file 'a'.
+// Used at display boundaries (notation, game layer, firmware readouts).
+// Core internals use rankOf/fileOf/makeSquare instead.
+// squareOf/rowOf live in bitboard.h (LibreChess:: namespace).
+inline constexpr char rankChar(int row) { return '1' + (7 - row); }
 inline constexpr int rankIndex(char rank) { return 8 - (rank - '0'); }
 
 inline std::string squareName(int row, int col) {
@@ -122,56 +140,61 @@ inline uint8_t updateCastlingRights(uint8_t rights, Square from, Square to) {
 /// @param mailbox  64-element piece array (LERF indexed)
 /// @param from     origin square
 /// @param to       destination square
-/// @return EnPassantInfo with isCapture, capturedPawnRow, nextEpRow/Col
+/// @return EnPassantInfo with isCapture, capturedPawnSq, nextEpSquare
+/// Reference: https://www.chessprogramming.org/En_passant
 inline EnPassantInfo checkEnPassant(const Piece mailbox[], Square from,
                                     Square to) {
   Piece movedPiece = mailbox[from];
   Piece targetPiece = mailbox[to];
 
   EnPassantInfo info{};
-  info.capturedPawnRow = -1;
-  info.nextEpRow = -1;
-  info.nextEpCol = -1;
 
   bool isPawn = piece::pieceType(movedPiece) == PieceType::PAWN;
 
   // En passant: pawn captures diagonally to an empty square
-  info.isCapture = isPawn && colOf(from) != colOf(to) &&
+  info.isCapture = isPawn && fileOf(from) != fileOf(to) &&
                    targetPiece == Piece::NONE;
-  if (info.isCapture)
-    info.capturedPawnRow =
-        rowOf(to) - piece::pawnDirection(piece::pieceColor(movedPiece));
+  if (info.isCapture) {
+    // Captured pawn is one rank behind the EP target (opposite of pawn direction)
+    int capturedRank = rankOf(to) +
+        (piece::pieceColor(movedPiece) == Color::WHITE ? -1 : 1);
+    info.capturedPawnSq = makeSquare(capturedRank, fileOf(to));
+  }
 
   // Pawn double-push creates an EP target for the opponent
-  int rowDiff = rowOf(to) - rowOf(from);
-  if (isPawn && (rowDiff == 2 || rowDiff == -2)) {
-    info.nextEpRow = (rowOf(from) + rowOf(to)) / 2;
-    info.nextEpCol = colOf(from);
+  int rankDiff = rankOf(to) - rankOf(from);
+  if (isPawn && (rankDiff == 2 || rankDiff == -2)) {
+    int epRank = (rankOf(from) + rankOf(to)) / 2;
+    info.nextEpSquare = makeSquare(epRank, fileOf(from));
   }
 
   return info;
 }
 
-/// Detect whether a move is castling and determine rook source/dest columns.
+/// Detect whether a move is castling and determine rook source/dest squares.
 /// @param mailbox  64-element piece array (LERF indexed)
 /// @param from     origin square (king's square)
 /// @param to       destination square
-/// @return CastlingInfo with isCastling, rookFromCol, rookToCol
+/// @return CastlingInfo with isCastling, rookFromSq, rookToSq
+/// Reference: https://www.chessprogramming.org/Castling
 inline CastlingInfo checkCastling(const Piece mailbox[], Square from,
                                   Square to) {
   Piece movedPiece = mailbox[from];
 
   CastlingInfo info{};
-  info.rookFromCol = -1;
-  info.rookToCol = -1;
 
-  int colDiff = colOf(to) - colOf(from);
+  int fileDiff = fileOf(to) - fileOf(from);
   info.isCastling = piece::pieceType(movedPiece) == PieceType::KING &&
-                    rowOf(from) == rowOf(to) &&
-                    (colDiff == 2 || colDiff == -2);
+                    rankOf(from) == rankOf(to) &&
+                    (fileDiff == 2 || fileDiff == -2);
   if (info.isCastling) {
-    info.rookFromCol = (colDiff == 2) ? 7 : 0;
-    info.rookToCol = (colDiff == 2) ? 5 : 3;
+    int rank = rankOf(from);
+    // Kingside: rook h-file (7) → f-file (5)
+    // Queenside: rook a-file (0) → d-file (3)
+    int rookFromFile = (fileDiff == 2) ? 7 : 0;
+    int rookToFile   = (fileDiff == 2) ? 5 : 3;
+    info.rookFromSq = makeSquare(rank, rookFromFile);
+    info.rookToSq   = makeSquare(rank, rookToFile);
   }
 
   return info;
@@ -184,10 +207,68 @@ inline constexpr bool isValidSquare(int row, int col) {
   return (unsigned)row < 8 && (unsigned)col < 8;
 }
 
+// ---------------------------------------------------------------------------
+// King square resolution — finds the king square for a given color.
+//
+// The king is located via the bitboard set.  Returns false (and leaves
+// `kingSq` unmodified) if no king is present for the given color.
+//
+// This is the single source of truth for the repeated "find king → lsb"
+// pattern used throughout movegen and search.
+//
+// Reference: https://www.chessprogramming.org/King_Pattern
+// ---------------------------------------------------------------------------
+inline bool resolveKingSquare(const BitboardSet& bb, Color color,
+                              Square& kingSq) {
+  int kidx = piece::pieceIndex(piece::makePiece(color, PieceType::KING));
+  Bitboard kingBB = bb.byPiece[kidx];
+  if (!kingBB) return false;
+  kingSq = lsb(kingBB);
+  return true;
+}
+
 // Is char a valid promotion piece letter? (case-insensitive: q, r, b, n)
 inline bool isValidPromotionChar(char c) {
   char lower = static_cast<char>(tolower(c));
   return lower == 'q' || lower == 'r' || lower == 'b' || lower == 'n';
+}
+
+// Round down to the nearest power of 2.  Used by TranspositionTable,
+// PawnHashTable, and EvalHashTable for fast modular indexing.
+inline int roundDownPow2(int n) {
+  if (n <= 0) return 0;
+  int v = 1;
+  while (v * 2 <= n) v *= 2;
+  return v;
+}
+
+// ---------------------------------------------------------------------------
+// Board iteration helpers — bitboard-based traversal.
+//
+// forEachSquare: iterates all 64 squares reading from the mailbox.
+// forEachPiece:  iterates only occupied squares via popLsb serialization.
+//
+// Callbacks receive (Square sq, Piece piece) using LERF square indexing.
+// ---------------------------------------------------------------------------
+
+// Iterate all 64 squares in LERF order (a1=0 → h8=63).
+// Callback: fn(Square sq, Piece piece)
+template <typename Fn>
+inline void forEachSquare(const Piece mailbox[], Fn&& fn) {
+  for (Square sq = 0; sq < 64; ++sq)
+    fn(sq, mailbox[sq]);
+}
+
+// Iterate only occupied squares via bitboard serialization.
+// Callback: fn(Square sq, Piece piece)
+template <typename Fn>
+inline void forEachPiece(const BitboardSet& bb,
+                         const Piece mailbox[], Fn&& fn) {
+  Bitboard occ = bb.occupied;
+  while (occ) {
+    Square sq = popLsb(occ);
+    fn(sq, mailbox[sq]);
+  }
 }
 
 }  // namespace utils

@@ -119,8 +119,8 @@ static std::string moveToStr(Move m) {
     static constexpr char PROMO_CHARS[] = {'n', 'b', 'r', 'q'};
     promo = PROMO_CHARS[m.promoIndex()];
   }
-  return notation::toCoordinate(rowOf(m.from), colOf(m.from), rowOf(m.to),
-                                colOf(m.to), promo);
+  return notation::toCoordinate(rowOf(m.from), fileOf(m.from), rowOf(m.to),
+                                fileOf(m.to), promo);
 }
 
 /// Parse a SAN move string into coordinate notation using the given position.

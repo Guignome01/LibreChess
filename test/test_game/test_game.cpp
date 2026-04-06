@@ -149,16 +149,14 @@ void test_game_history_correct_fields(void) {
   game.makeMove(6, 4, 4, 4);  // e4
 
   const MoveEntry& m = game.history().getMove(0);
-  TEST_ASSERT_EQUAL(6, m.fromRow);
-  TEST_ASSERT_EQUAL(4, m.fromCol);
-  TEST_ASSERT_EQUAL(4, m.toRow);
-  TEST_ASSERT_EQUAL(4, m.toCol);
+  TEST_ASSERT_EQUAL(squareOf(6, 4), m.from);
+  TEST_ASSERT_EQUAL(squareOf(4, 4), m.to);
   TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, m.piece);
   TEST_ASSERT_ENUM_EQ(Piece::NONE, m.captured);
-  TEST_ASSERT_FALSE(m.isCapture);
-  TEST_ASSERT_FALSE(m.isEnPassant);
-  TEST_ASSERT_FALSE(m.isCastling);
-  TEST_ASSERT_FALSE(m.isPromotion);
+  TEST_ASSERT_FALSE(m.isCapture());
+  TEST_ASSERT_FALSE(m.isEnPassant());
+  TEST_ASSERT_FALSE(m.isCastling());
+  TEST_ASSERT_FALSE(m.isPromotion());
 }
 
 void test_game_history_capture_recorded(void) {
@@ -169,7 +167,7 @@ void test_game_history_capture_recorded(void) {
   game.makeMove(4, 4, 3, 3);  // exd5 (capture)
 
   const MoveEntry& m = game.history().getMove(2);
-  TEST_ASSERT_TRUE(m.isCapture);
+  TEST_ASSERT_TRUE(m.isCapture());
   TEST_ASSERT_ENUM_EQ(Piece::B_PAWN, m.captured);  // captured black pawn
   TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, m.piece);     // white pawn captured
 }
@@ -184,10 +182,10 @@ void test_game_history_en_passant_recorded(void) {
   game.makeMove(3, 4, 2, 3);  // exd6 (en passant)
 
   const MoveEntry& m = game.history().getMove(4);
-  TEST_ASSERT_TRUE(m.isEnPassant);
-  TEST_ASSERT_TRUE(m.isCapture);
+  TEST_ASSERT_TRUE(m.isEnPassant());
+  TEST_ASSERT_TRUE(m.isCapture());
   TEST_ASSERT_ENUM_EQ(Piece::B_PAWN, m.captured);  // captured black pawn
-  TEST_ASSERT_EQUAL(3, m.epCapturedRow);
+  TEST_ASSERT_EQUAL(squareOf(3, 3), m.epCapturedSq);
 }
 
 void test_game_history_castling_recorded(void) {
@@ -197,9 +195,9 @@ void test_game_history_castling_recorded(void) {
   game.makeMove(7, 4, 7, 6);  // O-O (white kingside)
 
   const MoveEntry& m = game.history().lastMove();
-  TEST_ASSERT_TRUE(m.isCastling);
+  TEST_ASSERT_TRUE(m.isCastling());
   TEST_ASSERT_ENUM_EQ(Piece::W_KING, m.piece);
-  TEST_ASSERT_FALSE(m.isCapture);
+  TEST_ASSERT_FALSE(m.isCapture());
 }
 
 void test_game_history_promotion_recorded(void) {
@@ -209,7 +207,7 @@ void test_game_history_promotion_recorded(void) {
   game.makeMove(1, 0, 0, 0, 'q');  // a8=Q
 
   const MoveEntry& m = game.history().lastMove();
-  TEST_ASSERT_TRUE(m.isPromotion);
+  TEST_ASSERT_TRUE(m.isPromotion());
   TEST_ASSERT_ENUM_EQ(Piece::W_QUEEN, m.promotion);
   TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, m.piece);
 }
@@ -221,7 +219,7 @@ void test_game_history_check_recorded(void) {
   game.makeMove(6, 4, 1, 4);  // Re8+ (check)
 
   const MoveEntry& m = game.history().lastMove();
-  TEST_ASSERT_TRUE(m.isCheck);
+  TEST_ASSERT_TRUE(m.isCheck());
 }
 
 void test_game_history_new_game_clears(void) {
@@ -259,7 +257,7 @@ void test_game_history_invalid_move_not_recorded(void) {
   setUpGame();
   // Try an illegal move
   MoveResult r = game.makeMove(6, 4, 3, 4);  // e2-e5 (illegal: 3 squares)
-  TEST_ASSERT_FALSE(r.valid);
+  TEST_ASSERT_FALSE(r.valid());
   TEST_ASSERT_EQUAL(0, game.history().moveCount());
 }
 
@@ -272,10 +270,8 @@ void test_game_history_last_move_after_sequence(void) {
   TEST_ASSERT_EQUAL(3, game.history().moveCount());
   const MoveEntry& last = game.history().lastMove();
   TEST_ASSERT_ENUM_EQ(Piece::W_KNIGHT, last.piece);
-  TEST_ASSERT_EQUAL(7, last.fromRow);
-  TEST_ASSERT_EQUAL(6, last.fromCol);
-  TEST_ASSERT_EQUAL(5, last.toRow);
-  TEST_ASSERT_EQUAL(5, last.toCol);
+  TEST_ASSERT_EQUAL(squareOf(7, 6), last.from);
+  TEST_ASSERT_EQUAL(squareOf(5, 5), last.to);
 }
 
 void test_game_batch_first_last_single_observer(void) {
@@ -385,7 +381,7 @@ void test_game_move_after_game_over_rejected(void) {
   setUpGame();
   game.endGame(GameResult::RESIGNATION, 'b');
   MoveResult r = game.makeMove(6, 4, 4, 4);  // e2e4
-  TEST_ASSERT_FALSE(r.valid);
+  TEST_ASSERT_FALSE(r.valid());
 }
 
 void test_game_end_game_preserves_fen(void) {
@@ -422,7 +418,7 @@ void test_game_checkmate_sets_game_over(void) {
   game.makeMove(7, 3, 3, 7);  // Qh5
   game.makeMove(1, 1, 2, 1);  // b6
   MoveResult r = game.makeMove(3, 7, 1, 5);  // Qxf7#
-  TEST_ASSERT_TRUE(r.valid);
+  TEST_ASSERT_TRUE(r.valid());
   TEST_ASSERT_TRUE(game.isGameOver());
   TEST_ASSERT_EQUAL(GameResult::CHECKMATE, game.gameResult());
   TEST_ASSERT_EQUAL('w', game.winnerColor());
@@ -432,7 +428,7 @@ void test_game_stalemate_sets_game_over(void) {
   setUpGame();
   game.loadFEN("k7/8/2K5/8/8/8/8/1Q6 w - - 0 1");
   MoveResult r = game.makeMove(7, 1, 2, 1);  // Qb1-b6 stalemates black
-  TEST_ASSERT_TRUE(r.valid);
+  TEST_ASSERT_TRUE(r.valid());
   TEST_ASSERT_TRUE(game.isGameOver());
   TEST_ASSERT_EQUAL(GameResult::STALEMATE, game.gameResult());
   TEST_ASSERT_TRUE(game.isDraw());
@@ -442,7 +438,7 @@ void test_game_insufficient_material_sets_game_over(void) {
   setUpGame();
   game.loadFEN("4k3/8/8/8/8/8/8/4K3 w - - 0 1");
   MoveResult r = game.makeMove(7, 4, 7, 3);  // Ke1-d1
-  TEST_ASSERT_TRUE(r.valid);
+  TEST_ASSERT_TRUE(r.valid());
   TEST_ASSERT_TRUE(game.isGameOver());
   TEST_ASSERT_EQUAL(GameResult::DRAW_INSUFFICIENT, game.gameResult());
   TEST_ASSERT_TRUE(game.isDraw());
@@ -452,7 +448,7 @@ void test_game_fifty_move_sets_game_over(void) {
   setUpGame();
   game.loadFEN("4k3/8/8/8/8/8/8/R3K3 w - - 99 50");
   MoveResult r = game.makeMove(7, 0, 7, 1);  // Ra1-b1 (clock hits 100)
-  TEST_ASSERT_TRUE(r.valid);
+  TEST_ASSERT_TRUE(r.valid());
   TEST_ASSERT_TRUE(game.isGameOver());
   TEST_ASSERT_EQUAL(GameResult::DRAW_50, game.gameResult());
   TEST_ASSERT_TRUE(game.isDraw());
@@ -530,7 +526,7 @@ void test_game_san_check_suffix(void) {
 void test_game_makeMove_string_coordinate(void) {
   setUpGame();
   MoveResult r = game.makeMove("e2e4");
-  TEST_ASSERT_TRUE(r.valid);
+  TEST_ASSERT_TRUE(r.valid());
   TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, game.getSquare(4, 4));
   TEST_ASSERT_ENUM_EQ(Color::BLACK, game.currentTurn());
 }
@@ -538,21 +534,21 @@ void test_game_makeMove_string_coordinate(void) {
 void test_game_makeMove_string_invalid(void) {
   setUpGame();
   MoveResult r = game.makeMove("xxxx");
-  TEST_ASSERT_FALSE(r.valid);
+  TEST_ASSERT_FALSE(r.valid());
 }
 
 void test_game_makeMove_string_empty(void) {
   setUpGame();
   MoveResult r = game.makeMove("");
-  TEST_ASSERT_FALSE(r.valid);
+  TEST_ASSERT_FALSE(r.valid());
 }
 
 void test_game_makeMove_string_promotion(void) {
   setUpGame();
   game.loadFEN("8/4P3/8/8/8/8/4p3/4K2k w - - 0 1");
   MoveResult r = game.makeMove("e7e8q");
-  TEST_ASSERT_TRUE(r.valid);
-  TEST_ASSERT_TRUE(r.isPromotion);
+  TEST_ASSERT_TRUE(r.valid());
+  TEST_ASSERT_TRUE(r.isPromotion());
   TEST_ASSERT_ENUM_EQ(Piece::W_QUEEN, game.getSquare(0, 4));
 }
 
@@ -563,7 +559,7 @@ void test_game_makeMove_string_promotion(void) {
 void test_game_board_accessor(void) {
   setUpGame();
   const Position& b = game.board();
-  TEST_ASSERT_ENUM_EQ(Piece::W_KING, b.getSquare(7, 4));
+  TEST_ASSERT_ENUM_EQ(Piece::W_KING, b.getSquare(squareOf(7, 4)));
   TEST_ASSERT_ENUM_EQ(Color::WHITE, b.currentTurn());
 }
 

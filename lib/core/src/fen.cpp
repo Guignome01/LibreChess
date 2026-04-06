@@ -22,18 +22,18 @@ std::string boardToFEN(const Piece mailbox[], Color currentTurn, const PositionS
   using namespace LibreChess;
   std::string fen;
 
-  // Board position — rank 8 first (row 0), rank 1 last (row 7).
+  // Board position — rank 8 first, rank 1 last.
   int emptyCount = 0;
-  for (int row = 0; row < 8; ++row) {
-    if (row > 0) {
+  for (int rank = 7; rank >= 0; --rank) {
+    if (rank < 7) {
       if (emptyCount > 0) {
         fen += std::to_string(emptyCount);
         emptyCount = 0;
       }
       fen += '/';
     }
-    for (int col = 0; col < 8; ++col) {
-      Piece piece = mailbox[squareOf(row, col)];
+    for (int file = 0; file < 8; ++file) {
+      Piece piece = mailbox[makeSquare(rank, file)];
       if (piece == Piece::NONE) {
         emptyCount++;
       } else {
@@ -59,10 +59,10 @@ std::string boardToFEN(const Piece mailbox[], Color currentTurn, const PositionS
     fen += " KQkq";
 
   // En passant target square
-  if (state != nullptr && state->epRow >= 0 && state->epCol >= 0) {
+  if (state != nullptr && state->epSquare != SQ_NONE) {
     fen += ' ';
-    fen += utils::fileChar(state->epCol);
-    fen += utils::rankChar(state->epRow);
+    fen += utils::fileChar(fileOf(state->epSquare));
+    fen += utils::rankCharFromRank(rankOf(state->epSquare));
   } else {
     fen += " -";
   }
@@ -93,22 +93,22 @@ void fenToBoard(const std::string& fen, BitboardSet& bb, Piece mailbox[],
   memset(mailbox, 0, 64 * sizeof(Piece));
 
   // Parse ranks (rank 8 first, rank 1 last)
-  int row = 0;
-  int col = 0;
-  for (size_t i = 0; i < boardPart.length() && row < 8; i++) {
+  int rank = 7;
+  int file = 0;
+  for (size_t i = 0; i < boardPart.length() && rank >= 0; i++) {
     char c = boardPart[i];
     if (c == '/') {
-      row++;
-      col = 0;
+      rank--;
+      file = 0;
     } else if (c >= '1' && c <= '8') {
-      col += c - '0';
+      file += c - '0';
     } else {
       Piece p = piece::charToPiece(c);
-      if (p != Piece::NONE && utils::isValidSquare(row, col)) {
-        Square sq = squareOf(row, col);
+      if (p != Piece::NONE && rank >= 0 && file >= 0 && file < 8) {
+        Square sq = makeSquare(rank, file);
         bb.setPiece(sq, p);
         mailbox[sq] = p;
-        col++;
+        file++;
       }
     }
   }
@@ -131,11 +131,10 @@ void fenToBoard(const std::string& fen, BitboardSet& bb, Piece mailbox[],
     char file = enPassantSquare[0];
     char rankCh = enPassantSquare[1];
     if (file >= 'a' && file <= 'h' && rankCh >= '1' && rankCh <= '8') {
-      int epCol = utils::fileIndex(file);
-      int epRow = utils::rankIndex(rankCh);
+      int epFile = utils::fileIndex(file);
+      int epRank = utils::rankIndexFromChar(rankCh);
       if (state != nullptr) {
-        state->epRow = epRow;
-        state->epCol = epCol;
+        state->epSquare = makeSquare(epRank, epFile);
       }
     }
   }
@@ -153,21 +152,25 @@ void fenToBoard(const std::string& fen, BitboardSet& bb, Piece mailbox[],
   }
 }
 
-bool validateFEN(const std::string& fen) {
-  if (fen.empty()) return false;
+// ---------------------------------------------------------------------------
+// FEN validation sub-routines
+//
+// Each validator checks one field of a Forsyth–Edwards Notation string.
+// Together they form the complete syntax check for validateFEN().
+//
+// Reference: https://www.chessprogramming.org/Forsyth-Edwards_Notation
+// ---------------------------------------------------------------------------
 
-  // Extract board part (before first space)
-  size_t spacePos = fen.find(' ');
-  std::string boardPart = (spacePos != std::string::npos) ? fen.substr(0, spacePos) : fen;
-
-  // Must have exactly 7 '/' separators (8 ranks)
+// Validate the board (piece placement) field.
+// Must contain exactly 7 '/' separators.  Each rank must sum to 8 squares
+// and contain only valid piece characters (rnbqkpRNBQKP) and digits 1-8.
+static bool validateBoardField(const std::string& boardPart) {
   int slashCount = 0;
   for (char c : boardPart) {
     if (c == '/') slashCount++;
   }
   if (slashCount != 7) return false;
 
-  // Validate each rank sums to 8 and contains only valid characters
   int col = 0;
   for (char c : boardPart) {
     if (c == '/') {
@@ -181,7 +184,55 @@ bool validateFEN(const std::string& fen) {
       return false;
     }
   }
-  if (col != 8) return false;
+  return col == 8;
+}
+
+// Validate the active color field.  Must be exactly "w" or "b".
+static bool validateTurnField(const std::string& field) {
+  return field == "w" || field == "b";
+}
+
+// Validate the castling availability field.
+// Must be "-" or a combination of K, Q, k, q with no duplicates.
+static bool validateCastlingField(const std::string& field) {
+  if (field == "-") return true;
+  uint8_t seen = 0;
+  for (char c : field) {
+    uint8_t bit = utils::castlingCharToBit(c);
+    if (!bit) return false;
+    if (seen & bit) return false;
+    seen |= bit;
+  }
+  return true;
+}
+
+// Validate the en passant target square field.
+// Must be "-" or a two-character algebraic square on rank 3 or 6.
+static bool validateEPField(const std::string& field) {
+  if (field == "-") return true;
+  if (field.length() != 2) return false;
+  if (field[0] < 'a' || field[0] > 'h') return false;
+  return field[1] == '3' || field[1] == '6';
+}
+
+// Validate a clock field (halfmove clock or fullmove number).
+// Must be a non-empty string of digits.
+static bool validateClockField(const std::string& field) {
+  if (field.empty()) return false;
+  for (char c : field) {
+    if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+  }
+  return true;
+}
+
+bool validateFEN(const std::string& fen) {
+  if (fen.empty()) return false;
+
+  // Extract board part (before first space)
+  size_t spacePos = fen.find(' ');
+  std::string boardPart = (spacePos != std::string::npos) ? fen.substr(0, spacePos) : fen;
+
+  if (!validateBoardField(boardPart)) return false;
 
   // Remaining fields are optional — if only the board part is given, accept it
   if (spacePos == std::string::npos || spacePos + 1 >= fen.size()) return true;
@@ -190,44 +241,24 @@ bool validateFEN(const std::string& fen) {
 
   // Turn field
   std::string turnField = nextToken(remaining);
-  if (turnField != "w" && turnField != "b") return false;
+  if (!validateTurnField(turnField)) return false;
 
   // Castling field (optional from here)
   if (remaining.empty()) return true;
-  std::string castlingField = nextToken(remaining);
-  if (castlingField != "-") {
-    uint8_t seen = 0;
-    for (char c : castlingField) {
-      uint8_t bit = utils::castlingCharToBit(c);
-      if (!bit) return false;
-      if (seen & bit) return false;  // duplicate
-      seen |= bit;
-    }
-  }
+  if (!validateCastlingField(nextToken(remaining))) return false;
 
   // En passant field
   if (remaining.empty()) return true;
-  std::string epField = nextToken(remaining);
-  if (epField != "-") {
-    if (epField.length() != 2) return false;
-    if (epField[0] < 'a' || epField[0] > 'h') return false;
-    if (epField[1] != '3' && epField[1] != '6') return false;
-  }
+  if (!validateEPField(nextToken(remaining))) return false;
 
   // Halfmove clock
   if (remaining.empty()) return true;
-  std::string halfmoveField = nextToken(remaining);
-  for (char c : halfmoveField) {
-    if (!std::isdigit(static_cast<unsigned char>(c))) return false;
-  }
+  if (!validateClockField(nextToken(remaining))) return false;
 
   // Fullmove number
   if (remaining.empty()) return true;
   std::string fullmoveField = nextToken(remaining);
-  if (fullmoveField.empty()) return false;
-  for (char c : fullmoveField) {
-    if (!std::isdigit(static_cast<unsigned char>(c))) return false;
-  }
+  if (!validateClockField(fullmoveField)) return false;
   if (std::stoi(fullmoveField) < 1) return false;
 
   return true;

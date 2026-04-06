@@ -117,7 +117,7 @@ void test_toSAN_pawn_capture(void) {
   Position b;
   b.loadFEN("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2");
   MoveEntry m = makeEntry(4, 4, 3, 3, Piece::W_PAWN, Piece::B_PAWN);
-  m.isCapture = true;
+  m.flags |= ME_CAPTURE;
   std::string san = notation::toSAN(b.bitboards(), b.mailbox(), b.positionState(), m);
   TEST_ASSERT_EQUAL_STRING("exd5", san.c_str());
 }
@@ -126,7 +126,7 @@ void test_toSAN_kingside_castling(void) {
   Position b;
   b.loadFEN("r1bqk1nr/ppppbppp/2n5/4p3/4P3/5N2/PPPPBPPP/RNBQK2R w KQkq - 4 4");
   MoveEntry m = makeEntry(7, 4, 7, 6, Piece::W_KING);
-  m.isCastling = true;
+  m.flags |= ME_CASTLING;
   std::string san = notation::toSAN(b.bitboards(), b.mailbox(), b.positionState(), m);
   TEST_ASSERT_EQUAL_STRING("O-O", san.c_str());
 }
@@ -135,7 +135,7 @@ void test_toSAN_queenside_castling(void) {
   Position b;
   b.loadFEN("r3kbnr/pppqpppp/2n5/3p1b2/3P1B2/2N5/PPPQPPPP/R3KBNR w KQkq - 6 5");
   MoveEntry m = makeEntry(7, 4, 7, 2, Piece::W_KING);
-  m.isCastling = true;
+  m.flags |= ME_CASTLING;
   std::string san = notation::toSAN(b.bitboards(), b.mailbox(), b.positionState(), m);
   TEST_ASSERT_EQUAL_STRING("O-O-O", san.c_str());
 }
@@ -144,7 +144,7 @@ void test_toSAN_promotion(void) {
   Position b;
   b.loadFEN("8/4P3/8/8/8/8/4p3/4K2k w - - 0 1");
   MoveEntry m = makeEntry(1, 4, 0, 4, Piece::W_PAWN, Piece::NONE, Piece::W_QUEEN);
-  m.isPromotion = true;
+  m.flags |= ME_PROMOTION;
   std::string san = notation::toSAN(b.bitboards(), b.mailbox(), b.positionState(), m);
   TEST_ASSERT_EQUAL_STRING("e8=Q", san.c_str());
 }
@@ -176,7 +176,7 @@ void test_toSAN_rook_capture(void) {
   Position b;
   b.loadFEN("4k3/8/8/4p3/8/8/8/4K2R w K - 0 1");
   MoveEntry m = makeEntry(7, 7, 3, 4, Piece::W_ROOK, Piece::B_PAWN);
-  m.isCapture = true;
+  m.flags |= ME_CAPTURE;
   std::string san = notation::toSAN(b.bitboards(), b.mailbox(), b.positionState(), m);
   TEST_ASSERT_EQUAL_STRING("Rxe5", san.c_str());
 }
@@ -199,35 +199,35 @@ void test_toLAN_knight_move(void) {
 
 void test_toLAN_capture(void) {
   MoveEntry m = makeEntry(5, 5, 3, 4, Piece::W_KNIGHT, Piece::B_PAWN);
-  m.isCapture = true;
+  m.flags |= ME_CAPTURE;
   std::string lan = notation::toLAN(m);
   TEST_ASSERT_EQUAL_STRING("Nf3xe5", lan.c_str());
 }
 
 void test_toLAN_kingside_castling(void) {
   MoveEntry m = makeEntry(7, 4, 7, 6, Piece::W_KING);
-  m.isCastling = true;
+  m.flags |= ME_CASTLING;
   std::string lan = notation::toLAN(m);
   TEST_ASSERT_EQUAL_STRING("O-O", lan.c_str());
 }
 
 void test_toLAN_queenside_castling(void) {
   MoveEntry m = makeEntry(7, 4, 7, 2, Piece::W_KING);
-  m.isCastling = true;
+  m.flags |= ME_CASTLING;
   std::string lan = notation::toLAN(m);
   TEST_ASSERT_EQUAL_STRING("O-O-O", lan.c_str());
 }
 
 void test_toLAN_promotion(void) {
   MoveEntry m = makeEntry(1, 4, 0, 4, Piece::W_PAWN, Piece::NONE, Piece::W_QUEEN);
-  m.isPromotion = true;
+  m.flags |= ME_PROMOTION;
   std::string lan = notation::toLAN(m);
   TEST_ASSERT_EQUAL_STRING("e7-e8=Q", lan.c_str());
 }
 
 void test_toLAN_pawn_capture(void) {
   MoveEntry m = makeEntry(4, 4, 3, 3, Piece::W_PAWN, Piece::B_PAWN);
-  m.isCapture = true;
+  m.flags |= ME_CAPTURE;
   std::string lan = notation::toLAN(m);
   TEST_ASSERT_EQUAL_STRING("e4xd5", lan.c_str());
 }
@@ -527,9 +527,9 @@ void test_roundtrip_san_scholar_mate(void) {
 
   for (int i = 0; i < 7; ++i) {
     Step& s = steps[i];
-    MoveEntry m = makeEntry(s.fr, s.fc, s.tr, s.tc, b.getSquare(s.fr, s.fc), s.captured, s.promo);
-    m.isCastling = s.castle;
-    m.isEnPassant = s.ep;
+    MoveEntry m = makeEntry(s.fr, s.fc, s.tr, s.tc, b.getSquare(squareOf(s.fr, s.fc)), s.captured, s.promo);
+    if (s.castle) m.flags |= ME_CASTLING;
+    if (s.ep) m.flags |= ME_EP;
 
     std::string san = notation::toSAN(b.bitboards(), b.mailbox(), b.positionState(), m);
     TEST_ASSERT_EQUAL_STRING(s.expectedSAN, san.c_str());
@@ -545,7 +545,7 @@ void test_roundtrip_san_scholar_mate(void) {
 
     // Apply the move to advance the board
     char promoChar = piece::pieceToChar(s.promo);
-    b.makeMove(s.fr, s.fc, s.tr, s.tc, promoChar);
+    b.makeMove(squareOf(s.fr, s.fc), squareOf(s.tr, s.tc), promoChar);
   }
 }
 
@@ -558,8 +558,8 @@ void test_toSAN_en_passant(void) {
   Position b;
   b.loadFEN("rnbqkbnr/ppp1pppp/8/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 3");
   MoveEntry m = makeEntry(3, 4, 2, 3, Piece::W_PAWN, Piece::B_PAWN);
-  m.isEnPassant = true;
-  m.epCapturedRow = 3;
+  m.flags |= ME_EP;
+  m.epCapturedSq = squareOf(3, 3);
   std::string san = notation::toSAN(b.bitboards(), b.mailbox(), b.positionState(), m);
   TEST_ASSERT_EQUAL_STRING("exd6", san.c_str());
 }
@@ -569,8 +569,8 @@ void test_toSAN_promotion_with_capture(void) {
   Position b;
   b.loadFEN("4rb2/3P4/8/8/8/8/8/4K2k w - - 0 1");
   MoveEntry m = makeEntry(1, 3, 0, 4, Piece::W_PAWN, Piece::B_ROOK, Piece::W_QUEEN);
-  m.isCapture = true;
-  m.isPromotion = true;
+  m.flags |= ME_CAPTURE;
+  m.flags |= ME_PROMOTION;
   std::string san = notation::toSAN(b.bitboards(), b.mailbox(), b.positionState(), m);
   TEST_ASSERT_EQUAL_STRING("dxe8=Q", san.c_str());
 }
@@ -658,16 +658,16 @@ void test_parseSAN_queenside_castling_with_zeros(void) {
 
 void test_toLAN_en_passant(void) {
   MoveEntry m = makeEntry(3, 4, 2, 3, Piece::W_PAWN, Piece::B_PAWN);
-  m.isCapture = true;
-  m.isEnPassant = true;
+  m.flags |= ME_CAPTURE;
+  m.flags |= ME_EP;
   std::string lan = notation::toLAN(m);
   TEST_ASSERT_EQUAL_STRING("e5xd6", lan.c_str());
 }
 
 void test_toLAN_promotion_with_capture(void) {
   MoveEntry m = makeEntry(1, 3, 0, 4, Piece::W_PAWN, Piece::B_ROOK, Piece::W_QUEEN);
-  m.isCapture = true;
-  m.isPromotion = true;
+  m.flags |= ME_CAPTURE;
+  m.flags |= ME_PROMOTION;
   std::string lan = notation::toLAN(m);
   TEST_ASSERT_EQUAL_STRING("d7xe8=Q", lan.c_str());
 }

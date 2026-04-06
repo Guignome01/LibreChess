@@ -1,4 +1,5 @@
 #include "zobrist.h"
+#include "piece.h"
 
 namespace LibreChess {
 namespace zobrist {
@@ -11,14 +12,14 @@ uint64_t computeHash(const BitboardSet& bb, const Piece mailbox[],
   Bitboard occ = bb.occupied;
   while (occ) {
     Square sq = popLsb(occ);
-    int idx = piece::pieceZobristIndex(mailbox[sq]);
+    int idx = piece::pieceIndex(mailbox[sq]);
     hash ^= KEYS.pieces[idx][sq];
   }
 
   hash ^= KEYS.castling[state.castlingRights];
 
   if (epLegal)
-    hash ^= KEYS.enPassant[state.epCol];
+    hash ^= KEYS.enPassant[fileOf(state.epSquare)];
 
   if (turn == Color::BLACK) hash ^= KEYS.sideToMove;
 
@@ -33,16 +34,16 @@ uint64_t computeHash(const BitboardSet& bb, const Piece mailbox[],
 uint64_t computePawnHash(const BitboardSet& bb) {
   uint64_t hash = 0;
 
-  Bitboard wp = bb.byPiece[0];   // White pawns (pieceZobristIndex = 0)
+  Bitboard wp = bb.byPiece[piece::pieceIndex('P')];
   while (wp) {
     Square sq = popLsb(wp);
-    hash ^= KEYS.pieces[0][sq];
+    hash ^= KEYS.pieces[piece::pieceIndex('P')][sq];
   }
 
-  Bitboard bp = bb.byPiece[6];   // Black pawns (pieceZobristIndex = 6)
+  Bitboard bp = bb.byPiece[piece::pieceIndex('p')];
   while (bp) {
     Square sq = popLsb(bp);
-    hash ^= KEYS.pieces[6][sq];
+    hash ^= KEYS.pieces[piece::pieceIndex('p')][sq];
   }
 
   return hash;

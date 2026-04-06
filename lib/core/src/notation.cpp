@@ -3,9 +3,8 @@
 #include <cctype>
 
 #include "move.h"
-#include "iterator.h"
-#include "movegen.h"
 #include "utils.h"
+#include "movegen.h"
 
 using namespace LibreChess;
 
@@ -20,7 +19,7 @@ static void stripCheckSuffix(std::string& s) {
 
 // Castling notation: kingside "O-O", queenside "O-O-O".
 static std::string castlingNotation(const MoveEntry& move) {
-  return (move.toCol > move.fromCol) ? "O-O" : "O-O-O";
+  return (fileOf(move.to) > fileOf(move.from)) ? "O-O" : "O-O-O";
 }
 
 // ---------------------------------------------------------------------------
@@ -44,7 +43,7 @@ std::string toCoordinate(int fromRow, int fromCol, int toRow, int toCol, char pr
 
 std::string toLAN(const MoveEntry& move) {
   // Castling
-  if (move.isCastling) {
+  if (move.isCastling()) {
     return castlingNotation(move);
   }
 
@@ -57,21 +56,141 @@ std::string toLAN(const MoveEntry& move) {
   }
 
   // Origin square
-  result += utils::squareName(move.fromRow, move.fromCol);
+  result += utils::squareName(move.from);
 
   // Separator: 'x' for captures, '-' otherwise
-  result += move.isCapture ? 'x' : '-';
+  result += move.isCapture() ? 'x' : '-';
 
   // Destination square
-  result += utils::squareName(move.toRow, move.toCol);
+  result += utils::squareName(move.to);
 
   // Promotion suffix
-  if (move.isPromotion && move.promotion != Piece::NONE) {
+  if (move.isPromotion() && move.promotion != Piece::NONE) {
     result += '=';
     result += piece::pieceTypeToChar(piece::pieceType(move.promotion));
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// SAN helpers — shared by toSAN (output) and parseSAN (input)
+// ---------------------------------------------------------------------------
+
+// Check if a character is a piece letter (NBRQK — not P, pawns are implicit)
+static bool isPieceLetter(char c) {
+  return c == 'N' || c == 'B' || c == 'R' || c == 'Q' || c == 'K';
+}
+
+// ---------------------------------------------------------------------------
+// SAN promotion extraction — strips "=X" promotion suffix from the SAN
+// string and returns the lowercase promotion character (or ' ' if none).
+//
+// SAN encodes promotion as "=Q", "=R", "=B", or "=N" appended after the
+// destination square (e.g. "e8=Q", "exd1=N").
+//
+// Reference: https://www.chessprogramming.org/Algebraic_Chess_Notation#SAN
+// ---------------------------------------------------------------------------
+static char extractSANPromotion(std::string& s) {
+  if (s.size() >= 2 && s[s.size() - 2] == '=') {
+    char promo = s.back();
+    if (utils::isValidPromotionChar(promo)) {
+      char result = static_cast<char>(tolower(promo));
+      s.erase(s.size() - 2, 2);
+      return result;
+    }
+  }
+  return ' ';
+}
+
+// ---------------------------------------------------------------------------
+// SAN disambiguation — extracts file and/or rank hints from the characters
+// preceding the destination square.
+//
+// In SAN, when two or more pieces of the same type can move to the same
+// square, the origin is disambiguated with:
+//   • file letter if pieces are on different files (e.g. Rae1)
+//   • rank digit  if pieces share the same file    (e.g. R1e1)
+//   • both        if neither alone is sufficient    (e.g. Qa1e1)
+//
+// Reference: https://www.chessprogramming.org/Algebraic_Chess_Notation#Disambiguation
+// ---------------------------------------------------------------------------
+static void parseSANDisambiguation(const std::string& hints,
+                                   int& hintFile, int& hintRank) {
+  hintFile = -1;
+  hintRank = -1;
+  for (char c : hints) {
+    if (c >= 'a' && c <= 'h')
+      hintFile = utils::fileIndex(c);
+    else if (c >= '1' && c <= '8')
+      hintRank = utils::rankIndexFromChar(c);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SAN piece resolution — searches the board for the unique piece that
+// matches the SAN description: type, color, optional file/rank hints,
+// and a legal move to the destination square.
+//
+// Returns true if exactly one match is found (sets fromRow/fromCol).
+// Returns false on zero or multiple matches (ambiguous or illegal SAN).
+//
+// Reference: https://www.chessprogramming.org/Algebraic_Chess_Notation#SAN
+// ---------------------------------------------------------------------------
+static bool findMatchingPiece(const BitboardSet& bb, const Piece mailbox[],
+                              const PositionState& state, Color currentTurn,
+                              PieceType targetType, int hintFile, int hintRank,
+                              int toRow, int toCol,
+                              int& fromRow, int& fromCol) {
+  Square matchSq = SQ_NONE;
+  int matchCount = 0;
+  Square toSq = squareOf(toRow, toCol);
+
+  utils::forEachPiece(bb, mailbox, [&](Square sq, Piece p) {
+    if (piece::pieceType(p) != targetType) return;
+    if (piece::pieceColor(p) != currentTurn) return;
+    if (hintFile >= 0 && fileOf(sq) != hintFile) return;
+    if (hintRank >= 0 && rankOf(sq) != hintRank) return;
+    if (!movegen::isValidMove(bb, mailbox, sq, toSq, state)) return;
+    matchSq = sq;
+    ++matchCount;
+  });
+
+  if (matchCount != 1) return false;
+  fromRow = rowOf(matchSq);
+  fromCol = fileOf(matchSq);
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// SAN disambiguation (output) — determines whether the origin file, rank,
+// or both must be included when formatting a piece move in SAN.
+//
+// Scans the board for other pieces of the same type and color that could
+// also legally move to the same destination square.
+//
+// Reference: https://www.chessprogramming.org/Algebraic_Chess_Notation#Disambiguation
+// ---------------------------------------------------------------------------
+static void computeDisambiguation(const BitboardSet& bb, const Piece mailbox[],
+                                  const PositionState& state,
+                                  const MoveEntry& move,
+                                  bool& needFile, bool& needRank) {
+  PieceType type = piece::pieceType(move.piece);
+  Color color = piece::pieceColor(move.piece);
+  needFile = false;
+  needRank = false;
+
+  utils::forEachPiece(bb, mailbox, [&](Square sq, Piece other) {
+    if (sq == move.from) return;
+    if (piece::pieceType(other) != type) return;
+    if (piece::pieceColor(other) != color) return;
+    if (!movegen::isValidMove(bb, mailbox, sq, move.to, state))
+      return;
+    if (fileOf(sq) != fileOf(move.from))
+      needFile = true;
+    else
+      needRank = true;
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -87,7 +206,7 @@ static char sanPieceLetter(Piece piece) {
 std::string toSAN(const BitboardSet& bb, const Piece mailbox[],
                   const PositionState& state, const MoveEntry& move) {
   // Castling
-  if (move.isCastling) {
+  if (move.isCastling()) {
     return castlingNotation(move);
   }
 
@@ -97,14 +216,14 @@ std::string toSAN(const BitboardSet& bb, const Piece mailbox[],
 
   if (type == PieceType::PAWN) {
     // Pawn moves
-    if (move.isCapture) {
+    if (move.isCapture()) {
       // Capture: file of origin + 'x' + destination
-      result += utils::fileChar(move.fromCol);
+      result += utils::fileChar(fileOf(move.from));
       result += 'x';
     }
-    result += utils::squareName(move.toRow, move.toCol);
+    result += utils::squareName(move.to);
 
-    if (move.isPromotion && move.promotion != Piece::NONE) {
+    if (move.isPromotion() && move.promotion != Piece::NONE) {
       result += '=';
       result += piece::pieceTypeToChar(piece::pieceType(move.promotion));
     }
@@ -112,30 +231,16 @@ std::string toSAN(const BitboardSet& bb, const Piece mailbox[],
     // Piece moves — may require disambiguation
     result += piece::pieceTypeToChar(type);
 
-    // Find all same-type pieces of the same color that can also move to the target
     bool needFile = false;
     bool needRank = false;
+    computeDisambiguation(bb, mailbox, state, move, needFile, needRank);
 
-    iterator::forEachPiece(bb, mailbox, [&](int r, int c, Piece other) {
-      if (r == move.fromRow && c == move.fromCol) return;
-      if (piece::pieceType(other) != type) return;
-      if (piece::pieceColor(other) != color) return;
+    if (needFile) result += utils::fileChar(fileOf(move.from));
+    if (needRank) result += utils::rankCharFromRank(rankOf(move.from));
 
-      if (!movegen::isValidMove(bb, mailbox, r, c, move.toRow, move.toCol, state))
-        return;
+    if (move.isCapture()) result += 'x';
 
-      if (c != move.fromCol)
-        needFile = true;
-      else
-        needRank = true;
-    });
-
-    if (needFile) result += utils::fileChar(move.fromCol);
-    if (needRank) result += utils::rankChar(move.fromRow);
-
-    if (move.isCapture) result += 'x';
-
-    result += utils::squareName(move.toRow, move.toCol);
+    result += utils::squareName(move.to);
   }
 
   return result;
@@ -246,19 +351,15 @@ bool parseLAN(const std::string& move,
 // Input — Standard Algebraic Notation
 // ---------------------------------------------------------------------------
 
-// Check if a character is a piece letter (NBRQK — not P, pawns are implicit)
-static bool isPieceLetter(char c) {
-  return c == 'N' || c == 'B' || c == 'R' || c == 'Q' || c == 'K';
-}
-
 // Find and validate a castling move for the given side.
 static bool findCastlingMove(const BitboardSet& bb, const Piece mailbox[],
                              const PositionState& state,
                              Color currentTurn, bool kingSide,
                              int& fromRow, int& fromCol, int& toRow, int& toCol,
                              char& promotion) {
-  int row = piece::homeRow(currentTurn);
-  Square kingSq = squareOf(row, 4);
+  int rank = piece::homeRank(currentTurn);
+  int row = 7 - rank;  // display-row for output
+  Square kingSq = makeSquare(rank, 4);
   Piece king = mailbox[kingSq];
   if (piece::pieceType(king) != PieceType::KING || piece::pieceColor(king) != currentTurn)
     return false;
@@ -267,7 +368,7 @@ static bool findCastlingMove(const BitboardSet& bb, const Piece mailbox[],
   fromRow = row; fromCol = 4;
   toRow = row;   toCol = kingSide ? 6 : 2;
   promotion = ' ';
-  return movegen::isValidMove(bb, mailbox, fromRow, fromCol, toRow, toCol, state);
+  return movegen::isValidMove(bb, mailbox, squareOf(fromRow, fromCol), squareOf(toRow, toCol), state);
 }
 
 bool parseSAN(const BitboardSet& bb, const Piece mailbox[],
@@ -296,23 +397,16 @@ bool parseSAN(const BitboardSet& bb, const Piece mailbox[],
   stripCheckSuffix(s);
   if (s.empty()) return false;
 
-  // Extract promotion (=Q or just Q at end for pawns reaching last rank)
-  promotion = ' ';
-  if (s.size() >= 2 && s[s.size() - 2] == '=') {
-    char promo = s.back();
-    if (utils::isValidPromotionChar(promo)) {
-      promotion = tolower(promo);
-      s.erase(s.size() - 2, 2);
-    }
-  }
+  // Extract promotion suffix (e.g. "=Q")
+  promotion = extractSANPromotion(s);
 
   // Determine piece type
-  char pieceTypeChar;  // uppercase piece letter
+  char pieceTypeChar;
   if (isPieceLetter(s[0])) {
     pieceTypeChar = s[0];
     s.erase(0, 1);
   } else {
-    pieceTypeChar = 'P';  // pawn
+    pieceTypeChar = 'P';
   }
   PieceType targetType = piece::charToPieceType(pieceTypeChar);
 
@@ -325,7 +419,7 @@ bool parseSAN(const BitboardSet& bb, const Piece mailbox[],
 
   if (s.size() < 2) return false;
 
-  // Last two chars are always the destination square
+  // Last two chars are the destination square
   char destFile = s[s.size() - 2];
   char destRank = s[s.size() - 1];
   if (destFile < 'a' || destFile > 'h' || destRank < '1' || destRank > '8')
@@ -334,42 +428,13 @@ bool parseSAN(const BitboardSet& bb, const Piece mailbox[],
   toCol = utils::fileIndex(destFile);
   toRow = utils::rankIndex(destRank);
 
-  // Disambiguation hints (characters before the destination)
-  int hintFile = -1;  // 0-7 if file hint given
-  int hintRank = -1;  // 0-7 if rank hint given
-  std::string hints = s.substr(0, s.size() - 2);
-  for (char c : hints) {
-    if (c >= 'a' && c <= 'h') {
-      hintFile = utils::fileIndex(c);
-    } else if (c >= '1' && c <= '8') {
-      hintRank = utils::rankIndex(c);
-    }
-  }
+  // Parse disambiguation hints
+  int hintFile = -1, hintRank = -1;
+  parseSANDisambiguation(s.substr(0, s.size() - 2), hintFile, hintRank);
 
-  // Search the board for a matching piece
-  int matchRow = -1, matchCol = -1;
-  int matchCount = 0;
-
-    iterator::forEachPiece(bb, mailbox, [&](int r, int c, Piece p) {
-      if (piece::pieceType(p) != targetType) return;
-      if (piece::pieceColor(p) != currentTurn) return;
-
-      if (hintFile >= 0 && c != hintFile) return;
-      if (hintRank >= 0 && r != hintRank) return;
-
-      if (!movegen::isValidMove(bb, mailbox, r, c, toRow, toCol, state))
-        return;
-
-    matchRow = r;
-    matchCol = c;
-    ++matchCount;
-  });
-
-  if (matchCount != 1) return false;  // ambiguous or no match
-
-  fromRow = matchRow;
-  fromCol = matchCol;
-  return true;
+  // Find the unique matching piece
+  return findMatchingPiece(bb, mailbox, state, currentTurn, targetType,
+                           hintFile, hintRank, toRow, toCol, fromRow, fromCol);
 }
 
 // ---------------------------------------------------------------------------

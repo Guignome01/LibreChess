@@ -33,7 +33,8 @@ class BotMode : public GameMode {
   Color playerColor() const { return playerColor_ == 'w' ? Color::WHITE : Color::BLACK; }
 
   // Apply a move string returned by the engine (e.g., "e2e4").
-  void applyEngineMove(const std::string& move);
+  // Returns false if the move could not be applied (corrupt data).
+  bool applyEngineMove(const std::string& move);
   // Handle a remote game-end event reported by the provider.
   void handleRemoteGameEnd(const EngineResult& result);
   // Abort with a red flash and end the game.

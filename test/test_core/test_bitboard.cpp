@@ -34,7 +34,7 @@ static void test_rowOf_colOf_roundtrip(void) {
     for (int col = 0; col < 8; ++col) {
       Square sq = squareOf(row, col);
       TEST_ASSERT_EQUAL_INT(row, rowOf(sq));
-      TEST_ASSERT_EQUAL_INT(col, colOf(sq));
+      TEST_ASSERT_EQUAL_INT(col, fileOf(sq));
     }
   }
 }
@@ -42,7 +42,7 @@ static void test_rowOf_colOf_roundtrip(void) {
 static void test_squareOf_identity_roundtrip(void) {
   // Every square 0–63 survives the roundtrip
   for (Square sq = 0; sq < 64; ++sq) {
-    TEST_ASSERT_EQUAL_INT(sq, squareOf(rowOf(sq), colOf(sq)));
+    TEST_ASSERT_EQUAL_INT(sq, squareOf(rowOf(sq), fileOf(sq)));
   }
 }
 

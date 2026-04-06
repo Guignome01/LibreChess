@@ -7,6 +7,32 @@
 
 namespace LibreChess {
 
+// ---------------------------------------------------------------------------
+// Header validation — detects corrupt or incompatible live game files.
+//
+// Silently rejects headers with impossible field values. Guards against
+// files written by older firmware whose binary layout no longer matches.
+// ---------------------------------------------------------------------------
+
+/// Maximum move entries (including FEN markers) in a single game recording.
+static constexpr uint16_t MAX_RECORDING_ENTRIES = 700;
+
+/// Returns true if every GameHeader field is within its valid domain.
+static bool isValidHeader(const GameHeader& h) {
+  if (static_cast<uint8_t>(h.result) > 9) return false;
+
+  uint8_t w = h.winnerColor;
+  if (w != 'w' && w != 'b' && w != 'd' && w != '?') return false;
+
+  uint8_t p = h.playerColor;
+  if (p != 'w' && p != 'b' && p != '?') return false;
+
+  if (h.moveCount > MAX_RECORDING_ENTRIES) return false;
+  if (h.fenEntryCnt > h.moveCount) return false;
+
+  return true;
+}
+
 // --- Compact 2-byte move encoding ---
 
 // Promotion piece mapping: code 0 = none, 1 = queen, 2 = rook, 3 = bishop, 4 = knight.
@@ -24,21 +50,25 @@ static char promoCodeToChar(uint8_t code) {
   return (code < PROMO_COUNT) ? PROMO_PIECES[code] : ' ';
 }
 
-uint16_t History::encodeMove(int fromRow, int fromCol, int toRow, int toCol, char promotion) {
-  uint8_t from = (uint8_t)(fromRow * 8 + fromCol);
-  uint8_t to = (uint8_t)(toRow * 8 + toCol);
+// LERF ↔ wire-format conversion.
+// Wire format stores row-major index where row 0 = rank 8 (i.e., inverted
+// rank). XOR-56 flips the rank bits, mapping between LERF and wire.
+static constexpr uint8_t toWire(Square sq) { return static_cast<uint8_t>(sq ^ 56); }
+static constexpr Square fromWire(uint8_t w) { return static_cast<Square>(w ^ 56); }
+
+uint16_t History::encodeMove(Square from, Square to, char promotion) {
+  uint8_t wFrom = toWire(from);
+  uint8_t wTo = toWire(to);
   uint8_t promo = promoCharToCode(promotion);
-  return (uint16_t)((from << 10) | (to << 4) | promo);
+  return (uint16_t)((wFrom << 10) | (wTo << 4) | promo);
 }
 
-void History::decodeMove(uint16_t encoded, int& fromRow, int& fromCol, int& toRow, int& toCol, char& promotion) {
-  uint8_t from = (encoded >> 10) & 0x3F;
-  uint8_t to = (encoded >> 4) & 0x3F;
+void History::decodeMove(uint16_t encoded, Square& from, Square& to, char& promotion) {
+  uint8_t wFrom = (encoded >> 10) & 0x3F;
+  uint8_t wTo = (encoded >> 4) & 0x3F;
   uint8_t promo = encoded & 0x0F;
-  fromRow = from / 8;
-  fromCol = from % 8;
-  toRow = to / 8;
-  toCol = to % 8;
+  from = fromWire(wFrom);
+  to = fromWire(wTo);
   promotion = promoCodeToChar(promo);
 }
 
@@ -180,6 +210,7 @@ bool History::getActiveGameInfo(uint8_t& playerColor, uint8_t* meta) {
 
   GameHeader hdr;
   if (!storage_->readHeader(hdr)) return false;
+  if (!isValidHeader(hdr)) return false;
 
   playerColor = hdr.playerColor;
   if (meta)
@@ -197,6 +228,11 @@ bool History::replayInto(Position& board) {
   // Read header from live file
   GameHeader hdr;
   if (!storage_->readHeader(hdr)) return false;
+  if (!isValidHeader(hdr)) {
+    logger_.error("History: invalid header in live game, discarding");
+    storage_->discardGame();
+    return false;
+  }
   if (hdr.fenEntryCnt == 0) {
     logger_.error("History: no FEN in live game, cannot resume");
     return false;
@@ -247,23 +283,23 @@ bool History::replayInto(Position& board) {
   int replayed = 0;
   for (int i = lastFenIdx + 1; i < static_cast<int>(entryCount); i++) {
     if (moves[i] == FEN_MARKER) continue;  // skip intermediate FEN markers
-    int fromRow, fromCol, toRow, toCol;
+    Square from, to;
     char promotion;
-    decodeMove(moves[i], fromRow, fromCol, toRow, toCol, promotion);
+    decodeMove(moves[i], from, to, promotion);
 
     // Capture pre-move state for the MoveEntry
-    Piece piece = board.getSquare(fromRow, fromCol);
-    Piece targetPiece = board.getSquare(toRow, toCol);
+    Piece piece = board.getSquare(from);
+    Piece targetPiece = board.getSquare(to);
     PositionState prevState = board.positionState();
 
-    MoveResult moveResult = board.makeMove(fromRow, fromCol, toRow, toCol, promotion);
-    if (!moveResult.valid) {
+    MoveResult moveResult = board.makeMove(from, to, promotion);
+    if (!moveResult.valid()) {
       logger_.errorf("History: invalid move at entry %d during replay", i);
       return false;
     }
 
     // Build MoveEntry and add to in-memory log (but don't persist — it's already on disk)
-    MoveEntry entry = MoveEntry::build(fromRow, fromCol, toRow, toCol, piece, targetPiece, moveResult, prevState);
+    MoveEntry entry = MoveEntry::build(from, to, piece, targetPiece, moveResult, prevState);
 
     // Add to in-memory log only (bypass persistMove by direct insertion)
     if (moveCount_ < MAX_MOVES) {
@@ -289,9 +325,8 @@ bool History::replayInto(Position& board) {
 // ---------------------------------------------------------------------------
 
 void History::persistMove(const MoveEntry& entry) {
-  char promo = entry.isPromotion ? piece::pieceToChar(entry.promotion) : ' ';
-  uint16_t encoded = encodeMove(entry.fromRow, entry.fromCol,
-                                entry.toRow, entry.toCol, promo);
+  char promo = entry.isPromotion() ? piece::pieceToChar(entry.promotion) : ' ';
+  uint16_t encoded = encodeMove(entry.from, entry.to, promo);
   storage_->appendMoveData(reinterpret_cast<const uint8_t*>(&encoded), 2);
   header_.moveCount++;
   movesSinceFlush_++;

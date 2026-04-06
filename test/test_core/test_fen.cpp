@@ -10,7 +10,7 @@
 void test_fen_initial_position_roundtrip(void) {
   setupInitialBoard(bb, mailbox);
   Color turn = Color::WHITE;
-  PositionState state{0x0F, -1, -1, 0, 1};
+  PositionState state{0x0F, SQ_NONE, 0, 1};
 
   std::string fen = fen::boardToFEN(mailbox, turn, &state);
 
@@ -28,7 +28,7 @@ void test_fen_initial_position_roundtrip(void) {
 
 void test_fen_standard_initial_string(void) {
   setupInitialBoard(bb, mailbox);
-  PositionState state{0x0F, -1, -1, 0, 1};
+  PositionState state{0x0F, SQ_NONE, 0, 1};
   std::string fen = fen::boardToFEN(mailbox, Color::WHITE, &state);
   TEST_ASSERT_EQUAL_STRING("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", fen.c_str());
 }
@@ -49,9 +49,8 @@ void test_fen_en_passant_target(void) {
   PositionState state;
   fen::fenToBoard(inputFen, bb, mailbox, turn, &state);
 
-  TEST_ASSERT_TRUE(state.epRow >= 0 && state.epCol >= 0);
-  TEST_ASSERT_EQUAL_INT(5, state.epRow); // row 5 = rank 3
-  TEST_ASSERT_EQUAL_INT(4, state.epCol); // e-file
+  TEST_ASSERT_TRUE(state.epSquare != SQ_NONE);
+  TEST_ASSERT_EQUAL_INT(squareOf(5, 4), state.epSquare); // e3 = row 5, col 4
 
   std::string outputFen = fen::boardToFEN(mailbox, turn, &state);
   TEST_ASSERT_EQUAL_STRING(inputFen.c_str(), outputFen.c_str());

@@ -3,7 +3,6 @@
 
 #include <string>
 
-#include "iterator.h"
 #include "observer.h"
 #include "history.h"
 #include "notation.h"
@@ -90,10 +89,12 @@ class Game {
 
   const BitboardSet& bitboards() const { return board_.bitboards(); }
   const Piece* mailbox() const { return board_.mailbox(); }
-  Piece getSquare(int row, int col) const { return board_.getSquare(row, col); }
+  Piece getSquare(int row, int col) const {
+    return board_.getSquare(rowColToSquare(row, col));
+  }
   Color currentTurn() const { return board_.currentTurn(); }
-  int kingRow(Color c) const { return board_.kingRow(c); }
-  int kingCol(Color c) const { return board_.kingCol(c); }
+  int kingRow(Color c) const { return squareToRow(board_.kingSq(c)); }
+  int kingCol(Color c) const { return squareToCol(board_.kingSq(c)); }
   uint8_t getCastlingRights() const { return board_.getCastlingRights(); }
   const PositionState& positionState() const { return board_.positionState(); }
   std::string getFen() const;
@@ -102,7 +103,7 @@ class Game {
   // --- Convenience wrappers ---
 
   void getPossibleMoves(int row, int col, MoveList& moves) const {
-    board_.getPossibleMoves(row, col, moves);
+    board_.getPossibleMoves(rowColToSquare(row, col), moves);
   }
 
   bool isDraw() const { return board_.isDraw(); }
@@ -110,16 +111,19 @@ class Game {
   std::string boardToText() const { return board_.boardToText(); }
 
   // --- Board iteration wrappers ---
-
+  // Firmware callback: fn(int row, int col, Piece piece)
   template <typename Fn>
   void forEachSquare(Fn&& fn) const {
-    iterator::forEachSquare(board_.mailbox(), static_cast<Fn&&>(fn));
+    board_.forEachSquare([&](Square sq, Piece piece) {
+      fn(squareToRow(sq), squareToCol(sq), piece);
+    });
   }
 
 
 
   EnPassantInfo checkEnPassant(int fromRow, int fromCol, int toRow, int toCol) const {
-    return board_.checkEnPassant(fromRow, fromCol, toRow, toCol);
+    return board_.checkEnPassant(rowColToSquare(fromRow, fromCol),
+                                 rowColToSquare(toRow, toCol));
   }
 
   // --- Piece & coordinate utilities ---
@@ -137,7 +141,8 @@ class Game {
 
   CastlingInfo checkCastling(int fromRow, int fromCol,
                              int toRow, int toCol) const {
-    return board_.checkCastling(fromRow, fromCol, toRow, toCol);
+    return board_.checkCastling(rowColToSquare(fromRow, fromCol),
+                                rowColToSquare(toRow, toCol));
   }
 
   // --- History ---

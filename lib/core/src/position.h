@@ -8,9 +8,9 @@
 // state (castling, en passant, clocks), and Zobrist hash history.
 //
 // Two move interfaces:
-//   • makeMove(row, col, row, col, promotion) — validated move for game play.
-//     Detects game-end conditions, returns
-//     a full MoveResult with UI metadata.  Used by Game.
+  //   • makeMove(Square from, Square to, promotion) — validated move for game
+  //     play.  Detects game-end conditions, returns a full MoveResult with UI
+  //     metadata.  Used by Game.
 //   • make(Move) / unmake(Move, UndoInfo) — raw make/unmake for search.
 //     No validation, no game-end detection, incremental hash.  Caller
 //     guarantees legality.  unmake restores hash from UndoInfo (one assignment,
@@ -24,7 +24,6 @@
 #include <string>
 
 #include "bitboard.h"
-#include "iterator.h"
 #include "utils.h"
 #include "move.h"
 #include "types.h"
@@ -39,12 +38,14 @@ namespace LibreChess {
 struct UndoInfo {
   PositionState state;    // position state before the move
   uint64_t hash;          // Zobrist hash before the move
+  int16_t mgPST;          // material+PST midgame before the move
+  int16_t egPST;          // material+PST endgame before the move
+  int16_t material;       // material score before the move
+  uint16_t historyCount;  // hashHistory_.count before the move
   Piece captured;         // piece captured (Piece::NONE if quiet)
   Square capturedSquare;  // where the capture occurred (differs from `to` for EP)
-  int historyCount;       // hashHistory_.count before the move
-  int mgPST;              // material+PST midgame before the move
-  int egPST;              // material+PST endgame before the move
-  int material;           // material score before the move
+  int8_t phase;           // game phase before the move (0-24)
+  bool epIsLegal;         // cached EP legality before the move
 };
 
 // ---------------------------------------------------------------------------
@@ -62,7 +63,7 @@ class Position {
 
   // --- Validated move (game play, used by Game) ---
 
-  MoveResult makeMove(int fromRow, int fromCol, int toRow, int toCol, char promotion = ' ');
+  MoveResult makeMove(Square from, Square to, char promotion = ' ');
   void reverseMove(const MoveEntry& entry);
   MoveResult applyMoveEntry(const MoveEntry& entry);
 
@@ -87,15 +88,14 @@ class Position {
 
   // --- Queries ---
 
-  Piece getSquare(int row, int col) const {
-    return mailbox_[squareOf(row, col)];
+  Piece getSquare(Square sq) const {
+    return mailbox_[sq];
   }
 
   Color currentTurn() const { return currentTurn_; }
   Color sideToMove() const { return currentTurn_; }
 
-  int kingRow(Color c) const { return rowOf(kingSquare_[piece::raw(c)]); }
-  int kingCol(Color c) const { return colOf(kingSquare_[piece::raw(c)]); }
+  Square kingSq(Color c) const { return kingSquare_[piece::raw(c)]; }
 
   uint8_t getCastlingRights() const { return state_.castlingRights; }
   const PositionState& positionState() const { return state_; }
@@ -121,10 +121,20 @@ class Position {
   // Reference: https://www.chessprogramming.org/Incremental_Updates
   int material() const { return material_; }
 
+  // Incremental game phase (sum of non-pawn piece weights on board).
+  // Updated on captures/promotions in make/unmake.  Eliminates 4 popcount
+  // calls per evaluatePosition() call.  Clamped to 24 (MAX_PHASE) because
+  // promotions can push the raw sum above the maximum.
+  // Reference: https://www.chessprogramming.org/Game_Phases
+  int phase() const {
+    constexpr int MAX_PHASE = 24;  // eval::MAX_PHASE
+    return (phase_ > MAX_PHASE) ? MAX_PHASE : phase_;
+  }
+
   // --- Convenience wrappers (delegate to static methods / movegen:: / attacks::) ---
   // Instance methods for callers who already have a Position object.
 
-  void getPossibleMoves(int row, int col, MoveList& moves) const;
+  void getPossibleMoves(Square sq, MoveList& moves) const;
   bool inCheck() const;
   bool isCheckmate() const;
   bool isFiftyMoves() const;
@@ -155,19 +165,19 @@ class Position {
 
   std::string boardToText() const;
 
-  EnPassantInfo checkEnPassant(int fromRow, int fromCol, int toRow, int toCol) const;
-  CastlingInfo checkCastling(int fromRow, int fromCol, int toRow, int toCol) const;
+  EnPassantInfo checkEnPassant(Square from, Square to) const;
+  CastlingInfo checkCastling(Square from, Square to) const;
 
   // --- Board iteration ---
-
+  // Callback: fn(Square sq, Piece piece)
   template <typename Fn>
   void forEachSquare(Fn&& fn) const {
-    iterator::forEachSquare(mailbox_, static_cast<Fn&&>(fn));
+    utils::forEachSquare(mailbox_, static_cast<Fn&&>(fn));
   }
 
   // --- Constants ---
 
-  static const Piece INITIAL_BOARD[8][8];
+  static const Piece INITIAL_BOARD[64];
 
  private:
   // ---------------------------------------------------------------------------
@@ -204,6 +214,8 @@ class Position {
   int mgPST_;    // incremental material+PST midgame accumulator
   int egPST_;    // incremental material+PST endgame accumulator
   int material_; // incremental pure material accumulator (white-relative)
+  int phase_;    // incremental game phase (sum of non-pawn piece weights)
+  bool epIsLegal_ = false;  // cached EP legality for current position
   UndoCache undoCache_{};  // 1-deep cache for reverseMove()
 
   void recordPosition();
@@ -221,6 +233,48 @@ class Position {
   void updateAccumulators(Piece piece, Square from, Square to,
                           Piece captured, Square capturedSq,
                           bool isCastling, Piece promotedTo);
+
+  // --- make() / makeMove() sub-operations ---
+  // Each encapsulates a named chess programming concept used during move
+  // application.  Defined in the same TU (position.cpp) so the compiler
+  // can inline them in the hot path.
+
+  // Remove captured piece from bitboards and mailbox (EP or normal).
+  // Returns the captured piece (NONE if quiet move).
+  // Reference: https://www.chessprogramming.org/Make_Move#Captures
+  Piece removeCapture(Piece piece, Square to, bool isEP, UndoInfo& undo);
+
+  // Move the castling rook to its destination square.
+  // Updates bitboards, mailbox, and Zobrist hash.
+  // Reference: https://www.chessprogramming.org/Castling
+  void moveCastlingRook(Color color, Square kingFrom, Square kingTo);
+
+  // Swap pawn for promoted piece at destination.  Returns promoted piece.
+  // Updates bitboards, mailbox, and Zobrist hash.
+  // Reference: https://www.chessprogramming.org/Promotions
+  Piece applyPromotion(Move m, Piece pawn, Square to);
+
+  // Derive Move flags (capture, EP, castling, promotion) from coordinates.
+  // Reference: https://www.chessprogramming.org/Encoding_Moves
+  uint8_t buildMoveFlags(Piece piece, Square from, Square to,
+                         char promotion) const;
+
+  // Detect check/checkmate/stalemate/draw after a move.
+  // Populates gameResult, winnerColor, and MR_CHECK flag in MoveResult.
+  // Reference: https://www.chessprogramming.org/Chess#702
+  void detectGameEnd(MoveResult& result) const;
+
+  // Build MoveResult from Move flags (capture, EP, castling, promotion).
+  // Called by makeMove() after board mutation to translate internal flags
+  // into the UI-facing MoveResult metadata struct.
+  // Reference: https://www.chessprogramming.org/Encoding_Moves
+  MoveResult buildMoveResult(Move m, Piece piece, Square to) const;
+
+  // Reverse the castling rook during unmake() — moves the rook back from
+  // its castling destination to its original corner square.
+  // Symmetric counterpart to moveCastlingRook().
+  // Reference: https://www.chessprogramming.org/Castling
+  void unmakeCastlingRook(Piece king, Square kingFrom, Square kingTo);
 };
 
 }  // namespace LibreChess

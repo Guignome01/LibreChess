@@ -16,15 +16,13 @@ using namespace LibreChess;
 inline void setupInitialBoard(BitboardSet& bb, Piece mailbox[]) {
   bb.clear();
   memset(mailbox, 0, 64);
-  for (int row = 0; row < 8; ++row)
-    for (int col = 0; col < 8; ++col) {
-      Piece p = Position::INITIAL_BOARD[row][col];
-      if (p != Piece::NONE) {
-        Square sq = squareOf(row, col);
-        bb.setPiece(sq, p);
-        mailbox[sq] = p;
-      }
+  for (Square sq = 0; sq < 64; ++sq) {
+    Piece p = Position::INITIAL_BOARD[sq];
+    if (p != Piece::NONE) {
+      bb.setPiece(sq, p);
+      mailbox[sq] = p;
     }
+  }
 }
 
 /// Clear the board (all empty squares).
@@ -49,9 +47,9 @@ inline void placePiece(BitboardSet& bb, Piece mailbox[], Piece piece, const char
 /// Return whether a given move exists in the rules's possible-move list.
 inline bool moveExists(const BitboardSet& bb, const Piece mailbox[], int fromRow, int fromCol, int toRow, int toCol, const PositionState& state = {}) {
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, fromRow, fromCol, state, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(fromRow, fromCol), state, moves);
   for (int i = 0; i < moves.count; i++) {
-    if (moves.targetRow(i) == toRow && moves.targetCol(i) == toCol)
+    if (rowOf(moves.moves[i].to) == toRow && fileOf(moves.moves[i].to) == toCol)
       return true;
   }
   return false;
@@ -67,12 +65,12 @@ inline void sq(const char* s, int& row, int& col) {
 inline MoveEntry makeEntry(int fr, int fc, int tr, int tc, Piece piece,
                            Piece captured = Piece::NONE, Piece promo = Piece::NONE) {
   MoveEntry e = {};
-  e.fromRow = fr; e.fromCol = fc; e.toRow = tr; e.toCol = tc;
+  e.from = squareOf(fr, fc); e.to = squareOf(tr, tc);
   e.piece = piece; e.captured = captured; e.promotion = promo;
-  e.isCapture = (captured != Piece::NONE);
-  e.isEnPassant = false; e.epCapturedRow = -1;
-  e.isCastling = false; e.isPromotion = (promo != Piece::NONE);
-  e.isCheck = false;
+  e.flags = 0;
+  if (captured != Piece::NONE) e.flags |= ME_CAPTURE;
+  if (promo != Piece::NONE) e.flags |= ME_PROMOTION;
+  e.epCapturedSq = SQ_NONE;
   return e;
 }
 

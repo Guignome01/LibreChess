@@ -101,7 +101,7 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 
 | Component | Size | Location |
 |-----------|------|----------|
-| Engine (Position w/ HashHistory 256) | ~2,350 B | **heap** (`std::unique_ptr`) |
+| Engine (Position w/ HashHistory 128) | ~1,330 B | **heap** (`std::unique_ptr`) |
 | MoveList rootMoves | 658 B | stack |
 | Per-ply negamax (MovePicker w/ int16_t arrays + locals) | ~1,950 B × depth | stack |
 | Per-ply quiescence (MoveList + int16_t scores + locals) | ~1,200 B × QS depth | stack |
@@ -140,9 +140,9 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 | PositionState | ~12 B |
 | Square kingSquare[2] | 2 B |
 | uint64_t hash | 8 B |
-| HashHistory (256 × 8B + int) | ~2,052 B |
+| HashHistory (128 × 8B + int) | ~1,028 B |
 | Cache fields (FEN string + eval + dirty flags) | ~36 B |
-| **Total** | **~2,295 B** |
+| **Total** | **~1,271 B** |
 
 ## Remaining Features & Enhancements
 

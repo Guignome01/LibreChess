@@ -108,7 +108,10 @@ void BotMode::update() {
       stopThinking();
       switch (result.type) {
         case EngineResult::MOVE:
-          applyEngineMove(result.move);
+          if (!applyEngineMove(result.move)) {
+            abortWithError("Engine returned invalid move");
+            return;
+          }
           break;
         case EngineResult::GAME_ENDED:
           handleRemoteGameEnd(result);
@@ -134,12 +137,12 @@ void BotMode::update() {
 // Engine move application
 // ---------------------------------------------------------------
 
-void BotMode::applyEngineMove(const std::string& move) {
+bool BotMode::applyEngineMove(const std::string& move) {
   int fromRow, fromCol, toRow, toCol;
   char promotion;
   if (!Game::parseCoordinate(move, fromRow, fromCol, toRow, toCol, promotion)) {
     logger_.errorf("BotMode: failed to parse engine move: %s", move.c_str());
-    return;
+    return false;
   }
 
   // Verify the move is from the correct color piece
@@ -149,11 +152,12 @@ void BotMode::applyEngineMove(const std::string& move) {
   if (Game::isEmptySquare(piece) || Game::pieceColor(piece) != engineColor) {
     logger_.errorf("BotMode: engine move from invalid square (%d,%d) piece='%c'",
                                  fromRow, fromCol, Game::pieceToChar(piece));
-    return;
+    return false;
   }
 
   logger_.infof("Engine move: %s (%d,%d)->(%d,%d)", move.c_str(), fromRow, fromCol, toRow, toCol);
   applyMove(fromRow, fromCol, toRow, toCol, promotion, true);
+  return true;
 }
 
 void BotMode::handleRemoteGameEnd(const EngineResult& result) {

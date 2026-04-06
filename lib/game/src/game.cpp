@@ -73,29 +73,31 @@ MoveResult Game::makeMove(int fromRow, int fromCol, int toRow, int toCol, char p
   if (gameOver_) return invalidMoveResult();
 
   // Save pre-move state for history
-  Piece piece = board_.getSquare(fromRow, fromCol);
-  Piece targetPiece = board_.getSquare(toRow, toCol);
+  Square from = rowColToSquare(fromRow, fromCol);
+  Square to = rowColToSquare(toRow, toCol);
+  Piece piece = board_.getSquare(from);
+  Piece targetPiece = board_.getSquare(to);
   PositionState prevState = board_.positionState();
 
   // Delegate move validation, application, and all end-condition detection to board
   // (checkmate, stalemate, 50-move, insufficient material, threefold repetition)
-  MoveResult result = board_.makeMove(fromRow, fromCol, toRow, toCol, promotion);
-  if (!result.valid) return result;
+  MoveResult result = board_.makeMove(from, to, promotion);
+  if (!result.valid()) return result;
 
   // --- Logging ---
-  const char* moveType = result.isCastling    ? "castling"
-                         : result.isEnPassant ? "en passant"
-                         : result.isCapture   ? "capture"
-                                              : "move";
+  const char* moveType = result.isCastling()    ? "castling"
+                         : result.isEnPassant() ? "en passant"
+                         : result.isCapture()   ? "capture"
+                                                : "move";
   logger_.infof("%s: %c %s -> %s", moveType, piece::pieceToChar(piece),
                  utils::squareName(fromRow, fromCol).c_str(),
                  utils::squareName(toRow, toCol).c_str());
-  if (result.isPromotion)
+  if (result.isPromotion())
     logger_.infof("Pawn promoted to %c", piece::pieceToChar(result.promotedTo));
 
   // Build MoveEntry and record in history (addMove handles both in-memory log
   // and persistent recording automatically)
-  MoveEntry entry = MoveEntry::build(fromRow, fromCol, toRow, toCol, piece, targetPiece, result, prevState);
+  MoveEntry entry = MoveEntry::build(from, to, piece, targetPiece, result, prevState);
   history_.addMove(entry);
 
   invalidateCache();
@@ -104,7 +106,7 @@ MoveResult Game::makeMove(int fromRow, int fromCol, int toRow, int toCol, char p
   if (result.gameResult != GameResult::IN_PROGRESS) {
     endGame(result.gameResult, result.winnerColor);  // calls notifyObserver()
   } else {
-    if (result.isCheck) {
+    if (result.isCheck()) {
       logger_.infof("%s is in check!", piece::colorName(board_.currentTurn()));
     }
     logger_.infof("It's %s's turn", piece::colorName(board_.currentTurn()));
@@ -158,7 +160,7 @@ bool Game::redoMove() {
   const MoveEntry* entry = history_.redoMove();
   if (!entry) return false;
   MoveResult result = board_.applyMoveEntry(*entry);
-  if (!result.valid) {
+  if (!result.valid()) {
     // Shouldn't happen with a valid history, but undo the cursor advance
     history_.undoMove();
     return false;
@@ -185,8 +187,9 @@ int Game::getHistory(std::string out[], int maxMoves, MoveFormat format) const {
     // Fast path — no board replay needed
     for (int i = 0; i < count; ++i) {
       const MoveEntry& m = history_.getMove(i);
-      char promo = m.isPromotion ? piece::pieceToChar(m.promotion) : ' ';
-      out[i] = notation::toCoordinate(m.fromRow, m.fromCol, m.toRow, m.toCol, promo);
+      char promo = m.isPromotion() ? piece::pieceToChar(m.promotion) : ' ';
+      out[i] = notation::toCoordinate(squareToRow(m.from), squareToCol(m.from),
+                                      squareToRow(m.to), squareToCol(m.to), promo);
     }
     return count;
   }
@@ -211,11 +214,11 @@ int Game::getHistory(std::string out[], int maxMoves, MoveFormat format) const {
     }
 
     // Apply the move to advance the temp board
-    char promo = m.isPromotion ? piece::pieceToChar(m.promotion) : ' ';
-    tempBoard.makeMove(m.fromRow, m.fromCol, m.toRow, m.toCol, promo);
+    char promo = m.isPromotion() ? piece::pieceToChar(m.promotion) : ' ';
+    tempBoard.makeMove(m.from, m.to, promo);
 
     // Append check/checkmate suffix
-    if (m.isCheck) {
+    if (m.isCheck()) {
       out[i] += tempBoard.isCheckmate() ? '#' : '+';
     }
   }

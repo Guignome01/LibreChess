@@ -265,8 +265,8 @@ void test_recorder_replay_into_board(void) {
   TEST_ASSERT_TRUE(ok);
 
   // Board should have e4 and d5 played
-  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, board.getSquare(4, 4));
-  TEST_ASSERT_ENUM_EQ(Piece::B_PAWN, board.getSquare(3, 3));
+  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, board.getSquare(squareOf(4, 4)));
+  TEST_ASSERT_ENUM_EQ(Piece::B_PAWN, board.getSquare(squareOf(3, 3)));
   TEST_ASSERT_ENUM_EQ(Color::WHITE, board.currentTurn());
 }
 
@@ -307,7 +307,7 @@ void test_recorder_replay_rejects_invalid_move(void) {
   history.addMove(makeEntry(6, 4, 4, 4, Piece::W_PAWN));
 
   // Inject an illegal move directly into storage (d2d4 — but it's black's turn)
-  uint16_t illegal = History::encodeMove(6, 3, 4, 3, ' ');
+  uint16_t illegal = History::encodeMove(squareOf(6, 3), squareOf(4, 3), ' ');
   storage.moveData.push_back(illegal & 0xFF);
   storage.moveData.push_back((illegal >> 8) & 0xFF);
 
@@ -390,7 +390,7 @@ void test_recorder_replay_empty_after_fen(void) {
   bool ok = history.replayInto(board);
   TEST_ASSERT_TRUE(ok);
   TEST_ASSERT_ENUM_EQ(Color::BLACK, board.currentTurn());
-  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, board.getSquare(4, 4));  // e4 has white pawn
+  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, board.getSquare(squareOf(4, 4)));  // e4 has white pawn
 }
 
 void test_recorder_replay_with_promotion(void) {
@@ -407,7 +407,7 @@ void test_recorder_replay_with_promotion(void) {
   board.newGame();
   bool ok = history.replayInto(board);
   TEST_ASSERT_TRUE(ok);
-  TEST_ASSERT_ENUM_EQ(Piece::W_QUEEN, board.getSquare(0, 4));  // Queen on e8
+  TEST_ASSERT_ENUM_EQ(Piece::W_QUEEN, board.getSquare(squareOf(0, 4)));  // Queen on e8
 }
 
 void test_recorder_branch_truncates_storage(void) {
@@ -551,7 +551,7 @@ void test_game_no_recorder(void) {
   Game noRec(nullptr, &observer);
   noRec.newGame();
   MoveResult r = noRec.makeMove(6, 4, 4, 4);
-  TEST_ASSERT_TRUE(r.valid);
+  TEST_ASSERT_TRUE(r.valid());
   TEST_ASSERT_TRUE(observer.callCount > 0);
 }
 
@@ -562,7 +562,7 @@ void test_game_no_observer(void) {
   Game noObs(&storage, nullptr, &logger);
   noObs.startNewGame();
   MoveResult r = noObs.makeMove(6, 4, 4, 4);
-  TEST_ASSERT_TRUE(r.valid);
+  TEST_ASSERT_TRUE(r.valid());
   // startNewGame FEN marker (2 bytes) + addMove (2 bytes) = 4
   TEST_ASSERT_EQUAL(4, (int)storage.moveData.size());
 }
@@ -682,8 +682,8 @@ void test_game_make_move_records_promotion(void) {
   game->loadFEN("8/4P3/8/8/8/8/8/4K2k w - - 0 1");
 
   MoveResult r = game->makeMove(1, 4, 0, 4);  // e7-e8=Q (auto-queen)
-  TEST_ASSERT_TRUE(r.valid);
-  TEST_ASSERT_TRUE(r.isPromotion);
+  TEST_ASSERT_TRUE(r.valid());
+  TEST_ASSERT_TRUE(r.isPromotion());
   TEST_ASSERT_ENUM_EQ(Piece::W_QUEEN, r.promotedTo);
 
   // Verify the correct promotion type was recorded (compact encoding stores lowercase)
@@ -691,9 +691,9 @@ void test_game_make_move_records_promotion(void) {
   TEST_ASSERT_TRUE(storage.moveData.size() >= 6);
   uint16_t lastEntry;
   memcpy(&lastEntry, &storage.moveData[storage.moveData.size() - 2], 2);
-  int fr, fc, tr, tc;
+  Square decFrom, decTo;
   char promo;
-  History::decodeMove(lastEntry, fr, fc, tr, tc, promo);
+  History::decodeMove(lastEntry, decFrom, decTo, promo);
   TEST_ASSERT_EQUAL_CHAR('q', promo);  // compact encoding normalizes to lowercase
   teardownGame();
 }
@@ -742,26 +742,24 @@ void test_game_undo_at_start(void) {
 // ---------------------------------------------------------------------------
 
 void test_encodeMove_rook_promotion(void) {
-  uint16_t encoded = History::encodeMove(1, 4, 0, 4, 'r');
-  int fr, fc, tr, tc;
+  Square from = squareOf(1, 4), to = squareOf(0, 4);
+  uint16_t encoded = History::encodeMove(from, to, 'r');
+  Square decFrom, decTo;
   char promo;
-  History::decodeMove(encoded, fr, fc, tr, tc, promo);
-  TEST_ASSERT_EQUAL_INT(1, fr);
-  TEST_ASSERT_EQUAL_INT(4, fc);
-  TEST_ASSERT_EQUAL_INT(0, tr);
-  TEST_ASSERT_EQUAL_INT(4, tc);
+  History::decodeMove(encoded, decFrom, decTo, promo);
+  TEST_ASSERT_EQUAL_INT(from, decFrom);
+  TEST_ASSERT_EQUAL_INT(to, decTo);
   TEST_ASSERT_EQUAL_CHAR('r', promo);
 }
 
 void test_encodeMove_bishop_promotion(void) {
-  uint16_t encoded = History::encodeMove(1, 4, 0, 4, 'b');
-  int fr, fc, tr, tc;
+  Square from = squareOf(1, 4), to = squareOf(0, 4);
+  uint16_t encoded = History::encodeMove(from, to, 'b');
+  Square decFrom, decTo;
   char promo;
-  History::decodeMove(encoded, fr, fc, tr, tc, promo);
-  TEST_ASSERT_EQUAL_INT(1, fr);
-  TEST_ASSERT_EQUAL_INT(4, fc);
-  TEST_ASSERT_EQUAL_INT(0, tr);
-  TEST_ASSERT_EQUAL_INT(4, tc);
+  History::decodeMove(encoded, decFrom, decTo, promo);
+  TEST_ASSERT_EQUAL_INT(from, decFrom);
+  TEST_ASSERT_EQUAL_INT(to, decTo);
   TEST_ASSERT_EQUAL_CHAR('b', promo);
 }
 
@@ -784,7 +782,7 @@ void test_game_result_pinned_values(void) {
 
 void test_fen_marker_no_collision(void) {
   TEST_ASSERT_EQUAL_UINT16(0xFFFF, FEN_MARKER);
-  uint16_t maxEncoded = History::encodeMove(7, 7, 7, 7, 'n');
+  uint16_t maxEncoded = History::encodeMove(squareOf(7, 7), squareOf(7, 7), 'n');
   TEST_ASSERT_TRUE(maxEncoded < FEN_MARKER);
 }
 

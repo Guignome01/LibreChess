@@ -81,10 +81,9 @@ class History {
 
   // --- Compact 2-byte move encoding (binary storage format) ---
 
-  static uint16_t encodeMove(int fromRow, int fromCol, int toRow, int toCol,
-                              char promotion);
-  static void decodeMove(uint16_t encoded, int& fromRow, int& fromCol,
-                          int& toRow, int& toCol, char& promotion);
+  static uint16_t encodeMove(Square from, Square to, char promotion);
+  static void decodeMove(uint16_t encoded, Square& from, Square& to,
+                          char& promotion);
 
   // --- Constants ---
 

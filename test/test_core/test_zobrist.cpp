@@ -39,25 +39,25 @@ void test_zobrist_keys_side_to_move(void) {
 // ---------------------------------------------------------------------------
 
 void test_zobrist_piece_index_white(void) {
-  TEST_ASSERT_EQUAL(0, piece::pieceZobristIndex(Piece::W_PAWN));
-  TEST_ASSERT_EQUAL(1, piece::pieceZobristIndex(Piece::W_KNIGHT));
-  TEST_ASSERT_EQUAL(2, piece::pieceZobristIndex(Piece::W_BISHOP));
-  TEST_ASSERT_EQUAL(3, piece::pieceZobristIndex(Piece::W_ROOK));
-  TEST_ASSERT_EQUAL(4, piece::pieceZobristIndex(Piece::W_QUEEN));
-  TEST_ASSERT_EQUAL(5, piece::pieceZobristIndex(Piece::W_KING));
+  TEST_ASSERT_EQUAL(0, piece::pieceIndex(Piece::W_PAWN));
+  TEST_ASSERT_EQUAL(1, piece::pieceIndex(Piece::W_KNIGHT));
+  TEST_ASSERT_EQUAL(2, piece::pieceIndex(Piece::W_BISHOP));
+  TEST_ASSERT_EQUAL(3, piece::pieceIndex(Piece::W_ROOK));
+  TEST_ASSERT_EQUAL(4, piece::pieceIndex(Piece::W_QUEEN));
+  TEST_ASSERT_EQUAL(5, piece::pieceIndex(Piece::W_KING));
 }
 
 void test_zobrist_piece_index_black(void) {
-  TEST_ASSERT_EQUAL(6, piece::pieceZobristIndex(Piece::B_PAWN));
-  TEST_ASSERT_EQUAL(7, piece::pieceZobristIndex(Piece::B_KNIGHT));
-  TEST_ASSERT_EQUAL(8, piece::pieceZobristIndex(Piece::B_BISHOP));
-  TEST_ASSERT_EQUAL(9, piece::pieceZobristIndex(Piece::B_ROOK));
-  TEST_ASSERT_EQUAL(10, piece::pieceZobristIndex(Piece::B_QUEEN));
-  TEST_ASSERT_EQUAL(11, piece::pieceZobristIndex(Piece::B_KING));
+  TEST_ASSERT_EQUAL(6, piece::pieceIndex(Piece::B_PAWN));
+  TEST_ASSERT_EQUAL(7, piece::pieceIndex(Piece::B_KNIGHT));
+  TEST_ASSERT_EQUAL(8, piece::pieceIndex(Piece::B_BISHOP));
+  TEST_ASSERT_EQUAL(9, piece::pieceIndex(Piece::B_ROOK));
+  TEST_ASSERT_EQUAL(10, piece::pieceIndex(Piece::B_QUEEN));
+  TEST_ASSERT_EQUAL(11, piece::pieceIndex(Piece::B_KING));
 }
 
 void test_zobrist_piece_index_invalid(void) {
-  TEST_ASSERT_EQUAL(-1, piece::pieceZobristIndex(Piece::NONE));
+  TEST_ASSERT_EQUAL(-1, piece::pieceIndex(Piece::NONE));
 }
 
 // ---------------------------------------------------------------------------
@@ -84,8 +84,7 @@ void test_computeHash_different_positions(void) {
   mailbox[squareOf(6, 4)] = Piece::NONE;
   bb.setPiece(squareOf(4, 4), pawn);
   mailbox[squareOf(4, 4)] = pawn;
-  st.epRow = 5;
-  st.epCol = 4;
+  st.epSquare = squareOf(5, 4);
   uint64_t h2 = zobrist::computeHash(bb, mailbox, Color::BLACK, st, false);
   TEST_ASSERT_NOT_EQUAL(h1, h2);
 }
@@ -128,8 +127,8 @@ void test_computeHash_en_passant_sensitivity(void) {
   placePiece(bb, mailbox, Piece::W_PAWN, "e5");
   placePiece(bb, mailbox, Piece::B_PAWN, "d5");
 
-  PositionState st1{0x00, -1, -1, 0, 1};  // no EP
-  PositionState st2{0x00, 2, 3, 0, 1};    // EP on d6 (row=2, col=3)
+  PositionState st1{0x00, SQ_NONE, 0, 1};  // no EP
+  PositionState st2{0x00, squareOf(2, 3), 0, 1};    // EP on d6 (row=2, col=3)
 
   uint64_t h1 = zobrist::computeHash(bb, mailbox, Color::WHITE, st1, false);
   uint64_t h2 = zobrist::computeHash(bb, mailbox, Color::WHITE, st2, true);
@@ -140,7 +139,7 @@ void test_computeHash_king_vs_king(void) {
   clearBoard(bb, mailbox);
   placePiece(bb, mailbox, Piece::W_KING, "e1");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
-  PositionState st{0x00, -1, -1, 0, 1};
+  PositionState st{0x00, SQ_NONE, 0, 1};
   uint64_t h = zobrist::computeHash(bb, mailbox, Color::WHITE, st, false);
   TEST_ASSERT_NOT_EQUAL(0ULL, h);
 }
@@ -150,9 +149,9 @@ void test_computeHash_incremental_vs_full(void) {
   // Verify that the incremental hash matches a full recomputation.
   Position pos;
   pos.newGame();
-  pos.makeMove(6, 4, 4, 4);  // e2e4
-  pos.makeMove(1, 4, 3, 4);  // e7e5
-  pos.makeMove(7, 6, 5, 5);  // Nf3
+  pos.makeMove(squareOf(6, 4), squareOf( 4, 4));  // e2e4
+  pos.makeMove(squareOf(1, 4), squareOf( 3, 4));  // e7e5
+  pos.makeMove(squareOf(7, 6), squareOf( 5, 5));  // Nf3
 
   // Full recompute from scratch
   uint64_t full = zobrist::computeHash(pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState(), false);

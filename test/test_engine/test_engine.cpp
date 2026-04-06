@@ -14,8 +14,8 @@ using namespace LibreChess;
 
 // Convert a Move to UCI coordinate string for readable assertions.
 static std::string moveToStr(Move m) {
-  std::string s = notation::toCoordinate(rowOf(m.from), colOf(m.from),
-                                         rowOf(m.to), colOf(m.to));
+  std::string s = notation::toCoordinate(rowOf(m.from), fileOf(m.from),
+                                         rowOf(m.to), fileOf(m.to));
   if (m.isPromotion()) {
     static const char promoChars[] = {'n', 'b', 'r', 'q'};
     s += promoChars[m.promoIndex()];

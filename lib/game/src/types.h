@@ -16,9 +16,32 @@
 
 #include <cstdint>
 
-#include "piece.h"  // Core types (Color, Piece, GameResult, etc.)
+#include "bitboard.h"  // rankOf, fileOf, makeSquare, Square
+#include "piece.h"     // Core types (Color, Piece, GameResult, etc.)
 
 namespace LibreChess {
+
+// ---------------------------------------------------------------------------
+// Coordinate bridge — LERF Square ↔ display row/col.
+//
+// Core operates with LERF Squares (a1=0, h8=63).  Firmware uses a
+// display-oriented (row, col) system where row 0 = rank 8 and col 0 = a-file.
+// The game layer is the sole bridge between these two systems.
+//
+//   row = 7 - rankOf(sq)       col = fileOf(sq)
+//   sq  = makeSquare(7 - row, col)
+// ---------------------------------------------------------------------------
+
+/// Convert LERF Square to display row (0 = rank 8, 7 = rank 1).
+inline constexpr int squareToRow(Square sq) { return 7 - rankOf(sq); }
+
+/// Convert LERF Square to display column (0 = a-file, 7 = h-file).
+inline constexpr int squareToCol(Square sq) { return fileOf(sq); }
+
+/// Convert display (row, col) to LERF Square.
+inline constexpr Square rowColToSquare(int row, int col) {
+  return makeSquare(7 - row, col);
+}
 
 // ---------------------------------------------------------------------------
 // Recording types

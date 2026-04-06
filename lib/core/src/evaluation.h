@@ -118,6 +118,13 @@ int evaluatePosition(const BitboardSet& bb,
 int evaluatePosition(const BitboardSet& bb, int mgMatPST, int egMatPST,
                      PawnHashTable* pawnHash = nullptr);
 
+// Evaluate with precomputed material+PST scores AND incremental phase.
+// Eliminates 4 popcount calls per eval by receiving the phase value from
+// Position's incremental accumulator.
+// Reference: https://www.chessprogramming.org/Incremental_Updates
+int evaluatePosition(const BitboardSet& bb, int mgMatPST, int egMatPST,
+                     int phase, PawnHashTable* pawnHash = nullptr);
+
 // Combined MG+EG material+PST score for a single piece.
 // Returns both scores in one call, halving index arithmetic when both
 // MG and EG are needed (e.g. incremental updates in make/unmake).
@@ -144,10 +151,10 @@ int materialValue(PieceType pt);
 
 // Pawn-structure query functions (exposed for unit testing).
 void initPawnMasks();
-bool isPassed(int sq, Color color, uint64_t enemyPawns);
-bool isIsolated(int sq, uint64_t friendlyPawns);
-bool isDoubled(int sq, Color color, uint64_t friendlyPawns);
-bool isBackward(int sq, Color color, uint64_t friendlyPawns, uint64_t enemyPawnAttacks);
+bool isPassed(Square sq, Color color, Bitboard enemyPawns);
+bool isIsolated(Square sq, Bitboard friendlyPawns);
+bool isDoubled(Square sq, Color color, Bitboard friendlyPawns);
+bool isBackward(Square sq, Color color, Bitboard friendlyPawns, Bitboard enemyPawnAttacks);
 
 // ---------------------------------------------------------------------------
 // Tuning API — runtime parameter access for the gradient-descent optimizer.
@@ -160,6 +167,24 @@ constexpr int PHASE_BISHOP = 1;
 constexpr int PHASE_ROOK   = 2;
 constexpr int PHASE_QUEEN  = 4;
 constexpr int MAX_PHASE    = 24;
+
+// Phase weight per PieceType (indexed by raw PieceType value).
+// NONE=0, PAWN=0, KNIGHT=1, BISHOP=1, ROOK=2, QUEEN=4, KING=0.
+// Reference: https://www.chessprogramming.org/Game_Phases
+constexpr int PHASE_WEIGHT[] = {0, 0, PHASE_KNIGHT, PHASE_BISHOP,
+                                PHASE_ROOK, PHASE_QUEEN, 0};
+
+// Compute game phase from bitboards (sum of non-pawn piece weights).
+// Used for initial computation; the search path uses an incremental
+// phase accumulator in Position to avoid 4 popcounts per eval.
+int computeGamePhase(const BitboardSet& bb);
+
+// Opposite-color bishop scaling (numerator/denominator form, default 3/4).
+constexpr int OCB_SCALE_NUM   = 3;
+constexpr int OCB_SCALE_DENOM = 4;
+
+// Maximum game phase for OCB scaling to apply.
+constexpr int OCB_PHASE_THRESHOLD = 6;
 
 // King danger table size.
 constexpr int KING_DANGER_TABLE_SIZE = 13;

@@ -3,18 +3,100 @@
 
 // Bitboard data types and operations for the LibreChess chess library.
 //
-// Uses Little-Endian Rank-File (LERF) mapping. Includes single-square
-// bitboard construction, population count, least-significant bit extraction,
-// file/rank masks, directional shifts, and the BitboardSet aggregate.
+// Uses Little-Endian Rank-File (LERF) mapping.  Canonical coordinate
+// primitives are rankOf(sq), fileOf(sq), and makeSquare(rank, file).
+// Legacy display-oriented helpers (rowOf, colOf, squareOf) are retained
+// temporarily for migration — new code must use rank/file exclusively.
+//
+// Includes square type and coordinate conversion, compass-rose direction
+// constants, single-square bitboard construction, population count,
+// least-significant bit extraction, file/rank masks, directional shifts,
+// and the BitboardSet aggregate.
 //
 // Reference: https://www.chessprogramming.org/Bitboards
+// Reference: https://www.chessprogramming.org/Square_Mapping_Considerations
 
 #include <cstdint>
 
 #include "piece.h"
-#include "square.h"
 
 namespace LibreChess {
+
+// ---------------------------------------------------------------------------
+// Square type and coordinate conversion
+// ---------------------------------------------------------------------------
+// LERF (Little-Endian Rank-File) mapping:
+//   a1 = 0, b1 = 1, ..., h1 = 7, a2 = 8, ..., h8 = 63.
+//
+// Canonical primitives: rankOf(sq), fileOf(sq), makeSquare(rank, file).
+//   rank 0 = rank 1 (white back rank), file 0 = a-file.
+//
+// Square and SQ_NONE are defined in types.h (foundation layer) to avoid
+// circular includes.  piece.h → types.h provides them here.
+//
+// Reference: https://www.chessprogramming.org/Square_Mapping_Considerations
+
+// Named squares — corners.
+constexpr Square SQ_A1 = 0;
+constexpr Square SQ_B1 = 1;
+constexpr Square SQ_C1 = 2;
+constexpr Square SQ_D1 = 3;
+constexpr Square SQ_E1 = 4;
+constexpr Square SQ_F1 = 5;
+constexpr Square SQ_G1 = 6;
+constexpr Square SQ_H1 = 7;
+constexpr Square SQ_A8 = 56;
+constexpr Square SQ_B8 = 57;
+constexpr Square SQ_C8 = 58;
+constexpr Square SQ_D8 = 59;
+constexpr Square SQ_E8 = 60;
+constexpr Square SQ_F8 = 61;
+constexpr Square SQ_G8 = 62;
+constexpr Square SQ_H8 = 63;
+
+// ---------------------------------------------------------------------------
+// LERF-native coordinate extraction
+// ---------------------------------------------------------------------------
+// rank 0 = rank 1 (a1–h1, white back rank)
+// file 0 = a-file
+// Reference: https://www.chessprogramming.org/Square_Mapping_Considerations#702
+
+constexpr int rankOf(Square sq) { return sq >> 3; }
+constexpr int fileOf(Square sq) { return sq & 7; }
+
+/// Build a square from LERF rank (0–7) and file (0–7).
+constexpr Square makeSquare(int rank, int file) { return rank * 8 + file; }
+
+// ---------------------------------------------------------------------------
+// Compass-rose direction constants (for Square arithmetic)
+// ---------------------------------------------------------------------------
+// Reference: https://www.chessprogramming.org/Direction#702
+
+constexpr int NORTH =  8;
+constexpr int SOUTH = -8;
+constexpr int EAST  =  1;
+constexpr int WEST  = -1;
+constexpr int NORTH_EAST = NORTH + EAST;  //  9
+constexpr int NORTH_WEST = NORTH + WEST;  //  7
+constexpr int SOUTH_EAST = SOUTH + EAST;  // -7
+constexpr int SOUTH_WEST = SOUTH + WEST;  // -9
+
+// ---------------------------------------------------------------------------
+// Display-coordinate boundary helpers (row/col ↔ LERF)
+// ---------------------------------------------------------------------------
+// Row/col convention (used by game layer, notation, firmware):
+//   row 0 = rank 8 (black back rank), col 0 = file a.
+//   col is identical to file.  row = 7 - rank.
+// Core internals use rankOf/fileOf/makeSquare instead.
+// ---------------------------------------------------------------------------
+
+constexpr Square squareOf(int row, int col) {
+  return (7 - row) * 8 + col;
+}
+
+constexpr int rowOf(Square sq) {
+  return 7 - (sq >> 3);  // 7 - rank
+}
 
 // ---------------------------------------------------------------------------
 // Core bitboard type
@@ -135,7 +217,7 @@ constexpr Bitboard rankBB(int rank) { return RANK_1 << (rank * 8); }
 static constexpr int NUM_PIECE_BOARDS = 12;
 
 struct BitboardSet {
-  Bitboard byPiece[NUM_PIECE_BOARDS] = {};  // indexed by pieceZobristIndex(piece)
+  Bitboard byPiece[NUM_PIECE_BOARDS] = {};  // indexed by pieceIndex(piece)
   Bitboard byColor[2] = {};                 // WHITE = 0, BLACK = 1
   Bitboard occupied = 0;
 
@@ -143,7 +225,7 @@ struct BitboardSet {
   // Precondition: piece != NONE (idx must be 0–11).
   void setPiece(Square sq, Piece piece) {
     Bitboard bit = squareBB(sq);
-    int idx = piece::pieceZobristIndex(piece);
+    int idx = piece::pieceIndex(piece);
     Color c = piece::pieceColor(piece);
     byPiece[idx] |= bit;
     byColor[raw(c)] |= bit;
@@ -154,7 +236,7 @@ struct BitboardSet {
   // Precondition: piece != NONE (idx must be 0–11).
   void removePiece(Square sq, Piece piece) {
     Bitboard bit = squareBB(sq);
-    int idx = piece::pieceZobristIndex(piece);
+    int idx = piece::pieceIndex(piece);
     Color c = piece::pieceColor(piece);
     byPiece[idx] ^= bit;
     byColor[raw(c)] ^= bit;
@@ -166,7 +248,7 @@ struct BitboardSet {
   // Precondition: piece != NONE (idx must be 0–11).
   void movePiece(Square from, Square to, Piece piece) {
     Bitboard fromTo = squareBB(from) | squareBB(to);
-    int idx = piece::pieceZobristIndex(piece);
+    int idx = piece::pieceIndex(piece);
     Color c = piece::pieceColor(piece);
     byPiece[idx] ^= fromTo;
     byColor[raw(c)] ^= fromTo;

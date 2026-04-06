@@ -41,6 +41,11 @@ static constexpr int INF_SCORE  = 31000;
 static constexpr int DRAW_SCORE = 0;
 static constexpr int MAX_PLY    = 64;
 
+// Maximum PV line length stored per ply.  Practical search depths rarely
+// exceed 25-30 plies including extensions; 32 provides generous headroom
+// while halving the PV table from 8 KiB to 4 KiB.
+static constexpr int MAX_PV_LEN = 32;
+
 // ---------------------------------------------------------------------------
 // Platform-agnostic time function — returns milliseconds.
 // Firmware passes millis(); tests pass a mock or nullptr.
@@ -84,7 +89,7 @@ struct SearchResult {
   // iteration.  pv[0] == bestMove.  Populated by the triangular PV table
   // inside negamax.
   // Reference: https://www.chessprogramming.org/Triangular_PV-Table
-  Move pv[MAX_PLY];
+  Move pv[MAX_PV_LEN];
   int pvLength = 0;
 };
 
@@ -216,7 +221,7 @@ struct SearchState {
   // Reference: https://www.chessprogramming.org/History_Heuristic
   int16_t history[2][64][64];
 
-  // Capture history: [pieceZobristIndex][victimType-1][toSquare] — scores
+  // Capture history: [pieceIndex][victimType-1][toSquare] — scores
   // for captures, distinguished by what piece is captured.  Indexed as
   // captureHistory[attacker][raw(victimType)-1][to].  ~9 KiB.
   // Reference: https://www.chessprogramming.org/History_Heuristic#Capture_History
@@ -225,7 +230,7 @@ struct SearchState {
   // Countermove heuristic: for each (piece, toSquare) of the previous move,
   // stores the quiet move that caused a beta cutoff in response.  Used as a
   // 3rd-tier ordering hint (between killers and history).
-  // Indexed by [pieceZobristIndex(0..11)][toSquare(0..63)].  ~1.5 KiB.
+  // Indexed by [pieceIndex(0..11)][toSquare(0..63)].  ~1.5 KiB.
   // Reference: https://www.chessprogramming.org/Countermove_Heuristic
   PackedMove countermoves[12][64];
 
@@ -240,10 +245,10 @@ struct SearchState {
   // the number of moves in that line.  Updated in negamax when alpha
   // improves; copied to SearchResult after each completed iteration.
   // Stored as PackedMove (2 bytes) to reduce heap footprint.
-  // Memory: MAX_PLY × MAX_PLY × sizeof(PackedMove) ≈ 8 KiB (heap-allocated).
+  // Memory: MAX_PLY × MAX_PV_LEN × sizeof(PackedMove) ≈ 4 KiB (heap-allocated).
   // Reference: https://www.chessprogramming.org/Triangular_PV-Table
-  PackedMove pv[MAX_PLY][MAX_PLY];
-  int pvLength[MAX_PLY];
+  PackedMove pv[MAX_PLY][MAX_PV_LEN];
+  int8_t pvLength[MAX_PLY];
 
   // Initialize killer and history tables to zero.
   void clearHeuristics();

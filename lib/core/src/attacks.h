@@ -112,12 +112,6 @@ Bitboard attackersOfSquare(const LibreChess::BitboardSet& bb, Square sq,
 bool isSquareUnderAttack(const LibreChess::BitboardSet& bb, Square sq,
                          Color defendingColor);
 
-// Row/col overload for callers using board coordinates.
-inline bool isSquareUnderAttack(const LibreChess::BitboardSet& bb,
-                                int row, int col, Color defendingColor) {
-  return isSquareUnderAttack(bb, LibreChess::squareOf(row, col), defendingColor);
-}
-
 // ---------------------------------------------------------------------------
 // Static Exchange Evaluation (SEE)
 //

@@ -6,9 +6,9 @@
 // All functions in LibreChess::piece are constexpr, O(1), and operate on
 // the bit-packed Piece = (Color << 3) | PieceType encoding defined in
 // types.h. Provides extraction (pieceType, pieceColor), construction
-// (makePiece), predicates (isEmpty), color
-// helpers (pawnDirection, homeRow, promotionRow), FEN boundary conversion
-// (charToPiece, pieceToChar), and Zobrist indexing (pieceZobristIndex).
+// (makePiece), predicates (isEmpty), color helpers (pawnDirection, homeRow,
+// promotionRow), FEN boundary conversion (charToPiece, pieceToChar), and
+// piece indexing (pieceIndex overloads: Color+PieceType, Piece, FEN char).
 
 #include "types.h"
 
@@ -41,19 +41,29 @@ constexpr Piece makePiece(Color c, PieceType t) {
 constexpr bool isEmpty(Piece p) { return p == Piece::NONE; }
 
 // ---------------------------------------------------------------------------
-// Color helpers
+// LERF-native helpers (canonical)
+// rank 0 = rank 1 (white back rank), rank 7 = rank 8 (black back rank).
+// Reference: https://www.chessprogramming.org/Square_Mapping_Considerations
 // ---------------------------------------------------------------------------
 
-constexpr int pawnDirection(Color c) {
-  return c == Color::WHITE ? -1 : 1;
+/// Pawn push direction in LERF squares: +8 for white (NORTH), -8 for black.
+constexpr int pawnForward(Color c) {
+  return c == Color::WHITE ? 8 : -8;
 }
 
-constexpr int homeRow(Color c) {
+/// Back rank in LERF: rank 0 for white, rank 7 for black.
+constexpr int homeRank(Color c) {
+  return c == Color::WHITE ? 0 : 7;
+}
+
+/// Promotion rank in LERF: rank 7 for white, rank 0 for black.
+constexpr int promotionRank(Color c) {
   return c == Color::WHITE ? 7 : 0;
 }
 
-constexpr int promotionRow(Color c) {
-  return c == Color::WHITE ? 0 : 7;
+/// Pawn starting rank in LERF: rank 1 for white, rank 6 for black.
+constexpr int pawnStartRank(Color c) {
+  return c == Color::WHITE ? 1 : 6;
 }
 
 inline const char* colorName(Color c) {
@@ -122,32 +132,42 @@ constexpr char pieceTypeToChar(PieceType t) {
 }
 
 // ---------------------------------------------------------------------------
-// Zobrist index — maps Piece to 0..11 for the Zobrist key table.
+// Piece index — maps a piece to its 0..11 array index.
 //
-// pieceZobristIndex() returns 0–11 for valid pieces, ZOBRIST_IDX_NONE
-// for Piece::NONE.  Callers that use the result as an array index MUST
-// check with isValidZobristIndex() first — otherwise bb.byPiece[-1] or
-// similar OOB access can occur.
+// Index layout: White pieces 0–5 (P N B R Q K), Black pieces 6–11.
+// Three interchangeable overloads:
+//   pieceIndex(Color, PieceType) — typed enum shorthand.
+//   pieceIndex(Piece)            — decompose from the bit-packed encoding.
+//   pieceIndex(char)             — FEN char shorthand ('P'=0 .. 'k'=11).
 //
-// Internal hot-path callers (BitboardSet mutators, zobrist::computeHash)
-// are exempt — they operate only on non-NONE pieces by design.
+// Used for byPiece[] indexing, Zobrist key arrays, and any per-piece
+// lookup table. All overloads return the same value for the same piece.
+// Use PIECE_IDX_NONE (-1) as sentinel for absent/invalid pieces.
 // ---------------------------------------------------------------------------
 
-static constexpr int ZOBRIST_IDX_NONE = -1;
+static constexpr int PIECE_IDX_NONE = -1;
 
-constexpr bool isValidZobristIndex(int idx) {
-  return idx >= 0 && idx < 12;
+// Typed shorthand: Color + PieceType → 0..11.
+// Precondition: pt != PieceType::NONE.
+constexpr int pieceIndex(Color c, PieceType pt) {
+  return raw(c) * 6 + (raw(pt) - 1);
 }
 
-// Lookup table: Piece -> Zobrist index (0-11), -1 for NONE/unused.
-// Indexed by raw(Piece) which spans 0-15 (Piece = (Color<<3) | PieceType).
-static constexpr int ZOBRIST_IDX_TABLE[16] = {
-  // 0:NONE  1:WP  2:WN  3:WB  4:WR  5:WQ  6:WK  7:(-)  8:(-)  9:BP 10:BN 11:BB 12:BR 13:BQ 14:BK 15:(-)
-      -1,     0,    1,    2,    3,    4,    5,   -1,   -1,    6,    7,    8,    9,   10,   11,   -1
-};
+// Decompose from the bit-packed Piece encoding.
+// Returns PIECE_IDX_NONE for Piece::NONE.
+constexpr int pieceIndex(Piece p) {
+  return (p == Piece::NONE) ? PIECE_IDX_NONE
+                            : pieceIndex(pieceColor(p), pieceType(p));
+}
 
-constexpr int pieceZobristIndex(Piece p) {
-  return (raw(p) < 16) ? ZOBRIST_IDX_TABLE[raw(p)] : ZOBRIST_IDX_NONE;
+// FEN char shorthand: uppercase = white, lowercase = black.
+// Returns PIECE_IDX_NONE for unrecognized characters.
+constexpr int pieceIndex(char c) {
+  return pieceIndex(charToPiece(c));
+}
+
+constexpr bool isValidPieceIndex(int idx) {
+  return idx >= 0 && idx < 12;
 }
 
 // ---------------------------------------------------------------------------

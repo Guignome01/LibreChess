@@ -9,8 +9,7 @@
 
 #include <cstdint>
 
-#include "piece.h"
-#include "square.h"
+#include "bitboard.h"
 #include "types.h"
 
 namespace LibreChess {
@@ -88,11 +87,18 @@ struct MoveList {
 
   void add(Move m) { moves[count++] = m; }
   void clear() { count = 0; }
-
-  // UI adapter — extract target coordinates for LED/sensor code.
-  int targetRow(int i) const { return rowOf(moves[i].to); }
-  int targetCol(int i) const { return colOf(moves[i].to); }
 };
+
+// ---------------------------------------------------------------------------
+// MoveResult flag bits — packed into a single uint8_t.
+// ---------------------------------------------------------------------------
+
+static constexpr uint8_t MR_VALID     = 1 << 0;
+static constexpr uint8_t MR_CAPTURE   = 1 << 1;
+static constexpr uint8_t MR_EP        = 1 << 2;
+static constexpr uint8_t MR_CASTLING  = 1 << 3;
+static constexpr uint8_t MR_PROMOTION = 1 << 4;
+static constexpr uint8_t MR_CHECK     = 1 << 5;
 
 // ---------------------------------------------------------------------------
 // MoveResult — carries all information from a completed move so the
@@ -101,22 +107,34 @@ struct MoveList {
 // ---------------------------------------------------------------------------
 
 struct MoveResult {
-  bool valid;            // Was the move legal?
-  bool isCapture;        // A piece was captured
-  bool isEnPassant;      // En passant capture
-  int epCapturedRow;     // Row of captured en passant pawn (-1 if N/A)
-  bool isCastling;       // Castling move
-  bool isPromotion;      // Pawn promotion occurred
-  Piece promotedTo;      // Piece the pawn became (Piece::NONE if N/A)
-  bool isCheck;          // Move puts opponent in check
-  GameResult gameResult; // GameResult::IN_PROGRESS if game continues
-  char winnerColor;      // 'w', 'b', 'd' (draw), ' ' (in progress)
+  uint8_t flags;            // packed booleans (MR_VALID | MR_CAPTURE | ...)
+  Square epCapturedSq;      // Square of captured en passant pawn (SQ_NONE if N/A)
+  Piece promotedTo;         // Piece the pawn became (Piece::NONE if N/A)
+  GameResult gameResult;    // GameResult::IN_PROGRESS if game continues
+  char winnerColor;         // 'w', 'b', 'd' (draw), ' ' (in progress)
+
+  constexpr bool valid()       const { return flags & MR_VALID; }
+  constexpr bool isCapture()   const { return flags & MR_CAPTURE; }
+  constexpr bool isEnPassant() const { return flags & MR_EP; }
+  constexpr bool isCastling()  const { return flags & MR_CASTLING; }
+  constexpr bool isPromotion() const { return flags & MR_PROMOTION; }
+  constexpr bool isCheck()     const { return flags & MR_CHECK; }
 };
 
 // Factory for an invalid (rejected) MoveResult.
 constexpr MoveResult invalidMoveResult() {
-  return {false, false, false, -1, false, false, Piece::NONE, false, GameResult::IN_PROGRESS, ' '};
+  return {0, SQ_NONE, Piece::NONE, GameResult::IN_PROGRESS, ' '};
 }
+
+// ---------------------------------------------------------------------------
+// MoveEntry flag bits — packed into a single uint8_t.
+// ---------------------------------------------------------------------------
+
+static constexpr uint8_t ME_CAPTURE   = 1 << 0;
+static constexpr uint8_t ME_EP        = 1 << 1;
+static constexpr uint8_t ME_CASTLING  = 1 << 2;
+static constexpr uint8_t ME_PROMOTION = 1 << 3;
+static constexpr uint8_t ME_CHECK     = 1 << 4;
 
 // ---------------------------------------------------------------------------
 // MoveEntry — a single move record in the game history.
@@ -124,45 +142,46 @@ constexpr MoveResult invalidMoveResult() {
 // and reconstruct board state.
 // ---------------------------------------------------------------------------
 struct MoveEntry {
-  int fromRow, fromCol;
-  int toRow, toCol;
+  Square from;
+  Square to;
   Piece piece;           // piece that moved (original, before any promotion)
   Piece captured;        // piece captured (Piece::NONE if none)
   Piece promotion;       // piece promoted to (Piece::NONE if not a promotion)
-  bool isCapture;
-  bool isEnPassant;
-  int epCapturedRow;     // en passant captured pawn row (-1 if N/A)
-  bool isCastling;
-  bool isPromotion;
-  bool isCheck;
+  uint8_t flags;         // packed booleans (ME_CAPTURE | ME_EP | ...)
+  Square epCapturedSq;   // en passant captured pawn square (SQ_NONE if N/A)
   PositionState prevState;  // position state before the move (enables undo)
 
-  // Build a MoveEntry from move coordinates and result.
-  static MoveEntry build(int fromRow, int fromCol, int toRow, int toCol,
+  constexpr bool isCapture()   const { return flags & ME_CAPTURE; }
+  constexpr bool isEnPassant() const { return flags & ME_EP; }
+  constexpr bool isCastling()  const { return flags & ME_CASTLING; }
+  constexpr bool isPromotion() const { return flags & ME_PROMOTION; }
+  constexpr bool isCheck()     const { return flags & ME_CHECK; }
+
+  // Build a MoveEntry from move squares and result.
+  static MoveEntry build(Square from, Square to,
                          Piece piece, Piece targetPiece,
                          const MoveResult& result,
                          const PositionState& prevState) {
     using namespace LibreChess::piece;
     Piece captured = Piece::NONE;
-    if (result.isEnPassant)
+    if (result.isEnPassant())
       captured = makePiece(~pieceColor(piece), PieceType::PAWN);
-    else if (result.isCapture)
+    else if (result.isCapture())
       captured = targetPiece;
 
     MoveEntry entry;
-    entry.fromRow = fromRow;
-    entry.fromCol = fromCol;
-    entry.toRow = toRow;
-    entry.toCol = toCol;
+    entry.from = from;
+    entry.to = to;
     entry.piece = piece;
     entry.captured = captured;
-    entry.promotion = result.isPromotion ? result.promotedTo : Piece::NONE;
-    entry.isCapture = result.isCapture;
-    entry.isEnPassant = result.isEnPassant;
-    entry.epCapturedRow = result.epCapturedRow;
-    entry.isCastling = result.isCastling;
-    entry.isPromotion = result.isPromotion;
-    entry.isCheck = result.isCheck;
+    entry.promotion = result.isPromotion() ? result.promotedTo : Piece::NONE;
+    entry.flags = 0;
+    if (result.isCapture())   entry.flags |= ME_CAPTURE;
+    if (result.isEnPassant()) entry.flags |= ME_EP;
+    if (result.isCastling())  entry.flags |= ME_CASTLING;
+    if (result.isPromotion()) entry.flags |= ME_PROMOTION;
+    if (result.isCheck())     entry.flags |= ME_CHECK;
+    entry.epCapturedSq = result.epCapturedSq;
     entry.prevState = prevState;
     return entry;
   }

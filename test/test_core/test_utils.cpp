@@ -28,19 +28,17 @@ void test_utils_checkEnPassant_double_push_sets_target(void) {
   fen::fenToBoard("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", b, m, turn);
   auto ep = utils::checkEnPassant(m, squareOf(6, 4), squareOf(4, 4));
   TEST_ASSERT_FALSE(ep.isCapture);
-  TEST_ASSERT_EQUAL_INT(-1, ep.capturedPawnRow);
-  TEST_ASSERT_EQUAL_INT(5, ep.nextEpRow);
-  TEST_ASSERT_EQUAL_INT(4, ep.nextEpCol);
+  TEST_ASSERT_EQUAL_INT(SQ_NONE, ep.capturedPawnSq);
+  TEST_ASSERT_EQUAL_INT(squareOf(5, 4), ep.nextEpSquare);
 }
 
 void test_utils_checkEnPassant_single_push_no_target(void) {
   // White pawn e3→e4: no EP target (only 1-square push)
   BitboardSet b; Piece m[64]; Color turn;
   fen::fenToBoard("rnbqkbnr/pppppppp/8/8/8/4P3/PPPP1PPP/RNBQKBNR w KQkq - 0 1", b, m, turn);
-  auto ep = utils::checkEnPassant(m, squareOf(5, 4), squareOf(4, 4));
+  auto ep = utils::checkEnPassant(m, squareOf(6, 4), squareOf(4, 4));
   TEST_ASSERT_FALSE(ep.isCapture);
-  TEST_ASSERT_EQUAL_INT(-1, ep.nextEpRow);
-  TEST_ASSERT_EQUAL_INT(-1, ep.nextEpCol);
+  TEST_ASSERT_EQUAL_INT(SQ_NONE, ep.nextEpSquare);
 }
 
 void test_utils_checkEnPassant_capture_detected(void) {
@@ -49,7 +47,7 @@ void test_utils_checkEnPassant_capture_detected(void) {
   fen::fenToBoard("rnbqkbnr/pppp1ppp/8/4Pp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 1", b, m, turn);
   auto ep = utils::checkEnPassant(m, squareOf(3, 4), squareOf(2, 5));
   TEST_ASSERT_TRUE(ep.isCapture);
-  TEST_ASSERT_EQUAL_INT(3, ep.capturedPawnRow);
+  TEST_ASSERT_EQUAL_INT(squareOf(3, 5), ep.capturedPawnSq);
 }
 
 void test_utils_checkEnPassant_normal_capture_not_ep(void) {
@@ -58,7 +56,7 @@ void test_utils_checkEnPassant_normal_capture_not_ep(void) {
   fen::fenToBoard("rnbqkbnr/pppp1ppp/5p2/4P3/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1", b, m, turn);
   auto ep = utils::checkEnPassant(m, squareOf(3, 4), squareOf(2, 5));
   TEST_ASSERT_FALSE(ep.isCapture);
-  TEST_ASSERT_EQUAL_INT(-1, ep.capturedPawnRow);
+  TEST_ASSERT_EQUAL_INT(SQ_NONE, ep.capturedPawnSq);
 }
 
 void test_utils_checkEnPassant_black_double_push(void) {
@@ -67,8 +65,7 @@ void test_utils_checkEnPassant_black_double_push(void) {
   fen::fenToBoard("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1", b, m, turn);
   auto ep = utils::checkEnPassant(m, squareOf(1, 3), squareOf(3, 3));
   TEST_ASSERT_FALSE(ep.isCapture);
-  TEST_ASSERT_EQUAL_INT(2, ep.nextEpRow);
-  TEST_ASSERT_EQUAL_INT(3, ep.nextEpCol);
+  TEST_ASSERT_EQUAL_INT(squareOf(2, 3), ep.nextEpSquare);
 }
 
 void test_utils_checkEnPassant_non_pawn_no_effect(void) {
@@ -77,8 +74,7 @@ void test_utils_checkEnPassant_non_pawn_no_effect(void) {
   fen::fenToBoard("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1", b, m, turn);
   auto ep = utils::checkEnPassant(m, squareOf(7, 1), squareOf(5, 2));
   TEST_ASSERT_FALSE(ep.isCapture);
-  TEST_ASSERT_EQUAL_INT(-1, ep.nextEpRow);
-  TEST_ASSERT_EQUAL_INT(-1, ep.nextEpCol);
+  TEST_ASSERT_EQUAL_INT(SQ_NONE, ep.nextEpSquare);
 }
 
 // ---------------------------------------------------------------------------
@@ -90,8 +86,8 @@ void test_utils_checkCastling_kingside(void) {
   fen::fenToBoard("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1", b, m, turn);
   auto c = utils::checkCastling(m, squareOf(7, 4), squareOf(7, 6));
   TEST_ASSERT_TRUE(c.isCastling);
-  TEST_ASSERT_EQUAL_INT(7, c.rookFromCol);
-  TEST_ASSERT_EQUAL_INT(5, c.rookToCol);
+  TEST_ASSERT_EQUAL_INT(squareOf(7, 7), c.rookFromSq);
+  TEST_ASSERT_EQUAL_INT(squareOf(7, 5), c.rookToSq);
 }
 
 void test_utils_checkCastling_queenside(void) {
@@ -99,8 +95,8 @@ void test_utils_checkCastling_queenside(void) {
   fen::fenToBoard("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1", b, m, turn);
   auto c = utils::checkCastling(m, squareOf(7, 4), squareOf(7, 2));
   TEST_ASSERT_TRUE(c.isCastling);
-  TEST_ASSERT_EQUAL_INT(0, c.rookFromCol);
-  TEST_ASSERT_EQUAL_INT(3, c.rookToCol);
+  TEST_ASSERT_EQUAL_INT(squareOf(7, 0), c.rookFromSq);
+  TEST_ASSERT_EQUAL_INT(squareOf(7, 3), c.rookToSq);
 }
 
 void test_utils_checkCastling_black_kingside(void) {
@@ -108,8 +104,8 @@ void test_utils_checkCastling_black_kingside(void) {
   fen::fenToBoard("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R b KQkq - 0 1", b, m, turn);
   auto c = utils::checkCastling(m, squareOf(0, 4), squareOf(0, 6));
   TEST_ASSERT_TRUE(c.isCastling);
-  TEST_ASSERT_EQUAL_INT(7, c.rookFromCol);
-  TEST_ASSERT_EQUAL_INT(5, c.rookToCol);
+  TEST_ASSERT_EQUAL_INT(squareOf(0, 7), c.rookFromSq);
+  TEST_ASSERT_EQUAL_INT(squareOf(0, 5), c.rookToSq);
 }
 
 void test_utils_checkCastling_not_king(void) {
@@ -118,8 +114,8 @@ void test_utils_checkCastling_not_king(void) {
   fen::fenToBoard("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1", b, m, turn);
   auto c = utils::checkCastling(m, squareOf(7, 0), squareOf(7, 2));
   TEST_ASSERT_FALSE(c.isCastling);
-  TEST_ASSERT_EQUAL_INT(-1, c.rookFromCol);
-  TEST_ASSERT_EQUAL_INT(-1, c.rookToCol);
+  TEST_ASSERT_EQUAL_INT(SQ_NONE, c.rookFromSq);
+  TEST_ASSERT_EQUAL_INT(SQ_NONE, c.rookToSq);
 }
 
 void test_utils_checkCastling_king_one_square(void) {
@@ -137,54 +133,50 @@ void test_utils_checkCastling_king_one_square(void) {
 void test_checkEnPassant_double_push_sets_target(void) {
   Position pos;
   pos.loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-  auto ep = pos.checkEnPassant(6, 4, 4, 4);
+  auto ep = pos.checkEnPassant(squareOf(6, 4), squareOf( 4, 4));
   TEST_ASSERT_FALSE(ep.isCapture);
-  TEST_ASSERT_EQUAL_INT(-1, ep.capturedPawnRow);
-  TEST_ASSERT_EQUAL_INT(5, ep.nextEpRow);
-  TEST_ASSERT_EQUAL_INT(4, ep.nextEpCol);
+  TEST_ASSERT_EQUAL_INT(SQ_NONE, ep.capturedPawnSq);
+  TEST_ASSERT_EQUAL_INT(squareOf(5, 4), ep.nextEpSquare);
 }
 
 void test_checkEnPassant_single_push_no_target(void) {
   Position pos;
   pos.loadFEN("rnbqkbnr/pppppppp/8/8/8/4P3/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
-  auto ep = pos.checkEnPassant(5, 4, 4, 4);
+  auto ep = pos.checkEnPassant(squareOf(5, 4), squareOf( 4, 4));
   TEST_ASSERT_FALSE(ep.isCapture);
-  TEST_ASSERT_EQUAL_INT(-1, ep.nextEpRow);
-  TEST_ASSERT_EQUAL_INT(-1, ep.nextEpCol);
+  TEST_ASSERT_EQUAL_INT(SQ_NONE, ep.nextEpSquare);
 }
 
 void test_checkEnPassant_capture_detected(void) {
   Position pos;
   pos.loadFEN("rnbqkbnr/pppp1ppp/8/4Pp2/8/8/PPPP1PPP/RNBQKBNR w KQkq f6 0 1");
-  auto ep = pos.checkEnPassant(3, 4, 2, 5);
+  auto ep = pos.checkEnPassant(squareOf(3, 4), squareOf( 2, 5));
   TEST_ASSERT_TRUE(ep.isCapture);
-  TEST_ASSERT_EQUAL_INT(3, ep.capturedPawnRow);
+  TEST_ASSERT_EQUAL_INT(squareOf(3, 5), ep.capturedPawnSq);
 }
 
 void test_checkEnPassant_normal_capture_not_ep(void) {
   Position pos;
   pos.loadFEN("rnbqkbnr/pppp1ppp/5p2/4P3/8/8/PPPP1PPP/RNBQKBNR w KQkq - 0 1");
-  auto ep = pos.checkEnPassant(3, 4, 2, 5);
+  auto ep = pos.checkEnPassant(squareOf(3, 4), squareOf( 2, 5));
   TEST_ASSERT_FALSE(ep.isCapture);
-  TEST_ASSERT_EQUAL_INT(-1, ep.capturedPawnRow);
+  TEST_ASSERT_EQUAL_INT(SQ_NONE, ep.capturedPawnSq);
 }
 
 void test_checkEnPassant_black_double_push(void) {
   Position pos;
   pos.loadFEN("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1");
-  auto ep = pos.checkEnPassant(1, 3, 3, 3);
+  auto ep = pos.checkEnPassant(squareOf(1, 3), squareOf( 3, 3));
   TEST_ASSERT_FALSE(ep.isCapture);
-  TEST_ASSERT_EQUAL_INT(2, ep.nextEpRow);
-  TEST_ASSERT_EQUAL_INT(3, ep.nextEpCol);
+  TEST_ASSERT_EQUAL_INT(squareOf(2, 3), ep.nextEpSquare);
 }
 
 void test_checkEnPassant_non_pawn_no_effect(void) {
   Position pos;
   pos.loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-  auto ep = pos.checkEnPassant(7, 1, 5, 2);
+  auto ep = pos.checkEnPassant(squareOf(7, 1), squareOf( 5, 2));
   TEST_ASSERT_FALSE(ep.isCapture);
-  TEST_ASSERT_EQUAL_INT(-1, ep.nextEpRow);
-  TEST_ASSERT_EQUAL_INT(-1, ep.nextEpCol);
+  TEST_ASSERT_EQUAL_INT(SQ_NONE, ep.nextEpSquare);
 }
 
 // ---------------------------------------------------------------------------
@@ -194,43 +186,43 @@ void test_checkEnPassant_non_pawn_no_effect(void) {
 void test_checkCastling_kingside(void) {
   Position pos;
   pos.loadFEN("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1");
-  auto c = pos.checkCastling(7, 4, 7, 6);
+  auto c = pos.checkCastling(squareOf(7, 4), squareOf( 7, 6));
   TEST_ASSERT_TRUE(c.isCastling);
-  TEST_ASSERT_EQUAL_INT(7, c.rookFromCol);
-  TEST_ASSERT_EQUAL_INT(5, c.rookToCol);
+  TEST_ASSERT_EQUAL_INT(squareOf(7, 7), c.rookFromSq);
+  TEST_ASSERT_EQUAL_INT(squareOf(7, 5), c.rookToSq);
 }
 
 void test_checkCastling_queenside(void) {
   Position pos;
   pos.loadFEN("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1");
-  auto c = pos.checkCastling(7, 4, 7, 2);
+  auto c = pos.checkCastling(squareOf(7, 4), squareOf( 7, 2));
   TEST_ASSERT_TRUE(c.isCastling);
-  TEST_ASSERT_EQUAL_INT(0, c.rookFromCol);
-  TEST_ASSERT_EQUAL_INT(3, c.rookToCol);
+  TEST_ASSERT_EQUAL_INT(squareOf(7, 0), c.rookFromSq);
+  TEST_ASSERT_EQUAL_INT(squareOf(7, 3), c.rookToSq);
 }
 
 void test_checkCastling_black_kingside(void) {
   Position pos;
   pos.loadFEN("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R b KQkq - 0 1");
-  auto c = pos.checkCastling(0, 4, 0, 6);
+  auto c = pos.checkCastling(squareOf(0, 4), squareOf( 0, 6));
   TEST_ASSERT_TRUE(c.isCastling);
-  TEST_ASSERT_EQUAL_INT(7, c.rookFromCol);
-  TEST_ASSERT_EQUAL_INT(5, c.rookToCol);
+  TEST_ASSERT_EQUAL_INT(squareOf(0, 7), c.rookFromSq);
+  TEST_ASSERT_EQUAL_INT(squareOf(0, 5), c.rookToSq);
 }
 
 void test_checkCastling_not_king(void) {
   Position pos;
   pos.loadFEN("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1");
-  auto c = pos.checkCastling(7, 0, 7, 2);
+  auto c = pos.checkCastling(squareOf(7, 0), squareOf( 7, 2));
   TEST_ASSERT_FALSE(c.isCastling);
-  TEST_ASSERT_EQUAL_INT(-1, c.rookFromCol);
-  TEST_ASSERT_EQUAL_INT(-1, c.rookToCol);
+  TEST_ASSERT_EQUAL_INT(SQ_NONE, c.rookFromSq);
+  TEST_ASSERT_EQUAL_INT(SQ_NONE, c.rookToSq);
 }
 
 void test_checkCastling_king_one_square(void) {
   Position pos;
   pos.loadFEN("r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1");
-  auto c = pos.checkCastling(7, 4, 7, 5);
+  auto c = pos.checkCastling(squareOf(7, 4), squareOf( 7, 5));
   TEST_ASSERT_FALSE(c.isCastling);
 }
 
@@ -296,8 +288,7 @@ void test_squareName_center(void) {
 void test_positionState_initial(void) {
   PositionState st = PositionState::initial();
   TEST_ASSERT_EQUAL_UINT8(0x0F, st.castlingRights);
-  TEST_ASSERT_EQUAL_INT(-1, st.epRow);
-  TEST_ASSERT_EQUAL_INT(-1, st.epCol);
+  TEST_ASSERT_EQUAL_INT(SQ_NONE, st.epSquare);
   TEST_ASSERT_EQUAL_INT(0, st.halfmoveClock);
   TEST_ASSERT_EQUAL_INT(1, st.fullmoveClock);
 }
@@ -525,6 +516,49 @@ void test_boardToText_empty_board(void) {
   }
 }
 
+// ── resolveKingSquare ────────────────────────────────────────────────────────
+
+void test_resolveKingSquare_initial_position(void) {
+  setupInitialBoard(bb, mailbox);
+  Square kingSq;
+  TEST_ASSERT_TRUE(utils::resolveKingSquare(bb, Color::WHITE, kingSq));
+  TEST_ASSERT_EQUAL(squareOf(7, 4), kingSq);  // e1
+  TEST_ASSERT_TRUE(utils::resolveKingSquare(bb, Color::BLACK, kingSq));
+  TEST_ASSERT_EQUAL(squareOf(0, 4), kingSq);  // e8
+}
+
+void test_resolveKingSquare_no_king(void) {
+  // Empty board — no king present for either color
+  Square kingSq = SQ_A1;
+  TEST_ASSERT_FALSE(utils::resolveKingSquare(bb, Color::WHITE, kingSq));
+  TEST_ASSERT_EQUAL(SQ_A1, kingSq);  // unchanged on failure
+}
+
+void test_resolveKingSquare_king_only(void) {
+  placePiece(bb, mailbox, Piece::W_KING, "d3");
+  Square kingSq;
+  TEST_ASSERT_TRUE(utils::resolveKingSquare(bb, Color::WHITE, kingSq));
+  TEST_ASSERT_EQUAL(squareOf(5, 3), kingSq);  // d3
+  // Black king absent
+  TEST_ASSERT_FALSE(utils::resolveKingSquare(bb, Color::BLACK, kingSq));
+}
+
+// ── forEachSquare / forEachPiece (merged from iterator) ─────────────────────
+
+void test_utils_forEachSquare_visits_all_64(void) {
+  int count = 0;
+  utils::forEachSquare(mailbox, [&](Square, Piece) { ++count; });
+  TEST_ASSERT_EQUAL(64, count);
+}
+
+void test_utils_forEachPiece_skips_empty(void) {
+  placePiece(bb, mailbox, Piece::W_ROOK, "a1");
+  placePiece(bb, mailbox, Piece::B_KNIGHT, "c6");
+  int count = 0;
+  utils::forEachPiece(bb, mailbox, [&](Square, Piece) { ++count; });
+  TEST_ASSERT_EQUAL(2, count);
+}
+
 // ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
@@ -620,4 +654,13 @@ void register_utils_tests() {
   // boardToText
   RUN_TEST(test_boardToText_initial_position);
   RUN_TEST(test_boardToText_empty_board);
+
+  // resolveKingSquare
+  RUN_TEST(test_resolveKingSquare_initial_position);
+  RUN_TEST(test_resolveKingSquare_no_king);
+  RUN_TEST(test_resolveKingSquare_king_only);
+
+  // forEachSquare / forEachPiece (merged from iterator.h)
+  RUN_TEST(test_utils_forEachSquare_visits_all_64);
+  RUN_TEST(test_utils_forEachPiece_skips_empty);
 }

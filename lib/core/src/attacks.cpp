@@ -107,7 +107,7 @@ static Bitboard lineHQ(Bitboard occ, Square sq, Bitboard mask) {
 
 static void initDiagMasks() {
   for (Square sq = 0; sq < 64; ++sq) {
-    int rank = sq / 8, file = sq % 8;
+    int rank = rankOf(sq), file = fileOf(sq);
 
     // Diagonal (rank - file = constant)
     Bitboard diag = 0;
@@ -171,8 +171,8 @@ void init() {
 // ---------------------------------------------------------------------------
 
 Bitboard rook(Square sq, Bitboard occupied) {
-  int rank = sq / 8;
-  int file = sq % 8;
+  int rank = rankOf(sq);
+  int file = fileOf(sq);
 
   uint8_t occ6 = static_cast<uint8_t>((occupied >> (rank * 8 + 1)) & 0x3F);
   Bitboard attacks = static_cast<Bitboard>(FIRST_RANK_ATTACKS[file][occ6])
@@ -207,15 +207,15 @@ Bitboard xrayBishop(Bitboard occupied, Bitboard friendly, Square sq) {
 // ---------------------------------------------------------------------------
 
 Bitboard between(Square s1, Square s2) {
-  int r1 = rowOf(s1), c1 = colOf(s1);
-  int r2 = rowOf(s2), c2 = colOf(s2);
-  int dr = r2 - r1, dc = c2 - c1;
+  int r1 = rankOf(s1), f1 = fileOf(s1);
+  int r2 = rankOf(s2), f2 = fileOf(s2);
+  int dr = r2 - r1, df = f2 - f1;
 
-  if (dr != 0 && dc != 0 && (dr < 0 ? -dr : dr) != (dc < 0 ? -dc : dc))
+  if (dr != 0 && df != 0 && (dr < 0 ? -dr : dr) != (df < 0 ? -df : df))
     return 0;
 
   Bitboard b1 = squareBB(s1), b2 = squareBB(s2);
-  if (dr == 0 || dc == 0)
+  if (dr == 0 || df == 0)
     return rook(s1, b2) & rook(s2, b1);
   return bishop(s1, b2) & bishop(s2, b1);
 }
@@ -233,7 +233,7 @@ AttackInfo computeAll(const BitboardSet& bb) {
     Color color = static_cast<Color>(c);
 
     // --- Pawns (bulk shift, no per-square loop) ---
-    Bitboard pawns = bb.byPiece[pieceZobristIndex(makePiece(color, PieceType::PAWN))];
+    Bitboard pawns = bb.byPiece[pieceIndex(makePiece(color, PieceType::PAWN))];
     if (c == 0) {
       info.byPiece[c][raw(PieceType::PAWN)] = shiftNE(pawns) | shiftNW(pawns);
     } else {
@@ -241,35 +241,35 @@ AttackInfo computeAll(const BitboardSet& bb) {
     }
 
     // --- Knights (table lookup per square) ---
-    Bitboard knights = bb.byPiece[pieceZobristIndex(makePiece(color, PieceType::KNIGHT))];
+    Bitboard knights = bb.byPiece[pieceIndex(makePiece(color, PieceType::KNIGHT))];
     Bitboard knightAtk = 0;
     Bitboard tmp = knights;
     while (tmp) { knightAtk |= KNIGHT[popLsb(tmp)]; }
     info.byPiece[c][raw(PieceType::KNIGHT)] = knightAtk;
 
     // --- Bishops ---
-    Bitboard bishops = bb.byPiece[pieceZobristIndex(makePiece(color, PieceType::BISHOP))];
+    Bitboard bishops = bb.byPiece[pieceIndex(makePiece(color, PieceType::BISHOP))];
     Bitboard bishopAtk = 0;
     tmp = bishops;
     while (tmp) { bishopAtk |= bishop(popLsb(tmp), bb.occupied); }
     info.byPiece[c][raw(PieceType::BISHOP)] = bishopAtk;
 
     // --- Rooks ---
-    Bitboard rooks = bb.byPiece[pieceZobristIndex(makePiece(color, PieceType::ROOK))];
+    Bitboard rooks = bb.byPiece[pieceIndex(makePiece(color, PieceType::ROOK))];
     Bitboard rookAtk = 0;
     tmp = rooks;
     while (tmp) { rookAtk |= rook(popLsb(tmp), bb.occupied); }
     info.byPiece[c][raw(PieceType::ROOK)] = rookAtk;
 
     // --- Queens ---
-    Bitboard queens = bb.byPiece[pieceZobristIndex(makePiece(color, PieceType::QUEEN))];
+    Bitboard queens = bb.byPiece[pieceIndex(makePiece(color, PieceType::QUEEN))];
     Bitboard queenAtk = 0;
     tmp = queens;
     while (tmp) { queenAtk |= queen(popLsb(tmp), bb.occupied); }
     info.byPiece[c][raw(PieceType::QUEEN)] = queenAtk;
 
     // --- King ---
-    Bitboard king = bb.byPiece[pieceZobristIndex(makePiece(color, PieceType::KING))];
+    Bitboard king = bb.byPiece[pieceIndex(makePiece(color, PieceType::KING))];
     info.byPiece[c][raw(PieceType::KING)] = king ? KING[lsb(king)] : 0;
 
     // --- Color union ---
@@ -295,7 +295,7 @@ Bitboard attackersOfSquare(const BitboardSet& bb, Square sq,
   Bitboard attackers = 0;
 
   // Zobrist indices are contiguous per color: white 0-5, black 6-11.
-  // base + offset replaces 6× makePiece + pieceZobristIndex calls.
+  // base + offset replaces 6× makePiece + pieceIndex calls.
   int base = piece::raw(attackingColor) * 6;
 
   attackers |= PAWN[piece::raw(defending)][sq] & bb.byPiece[base + 0];
@@ -349,37 +349,56 @@ static PieceType leastValuableAttacker(const BitboardSet& bb,
                                        Square sq, Color color,
                                        Bitboard& attackerBB) {
   // Pawns
-  int idx = piece::pieceZobristIndex(piece::makePiece(color, PieceType::PAWN));
+  int idx = piece::pieceIndex(piece::makePiece(color, PieceType::PAWN));
   // PAWN[~color] gives squares from which a pawn of `color` attacks `sq`.
   Bitboard attackers = PAWN[piece::raw(~color)][sq] & bb.byPiece[idx] & occupied;
   if (attackers) { attackerBB = attackers & -attackers; return PieceType::PAWN; }
 
   // Knights
-  idx = piece::pieceZobristIndex(piece::makePiece(color, PieceType::KNIGHT));
+  idx = piece::pieceIndex(piece::makePiece(color, PieceType::KNIGHT));
   attackers = KNIGHT[sq] & bb.byPiece[idx] & occupied;
   if (attackers) { attackerBB = attackers & -attackers; return PieceType::KNIGHT; }
 
   // Bishops
-  idx = piece::pieceZobristIndex(piece::makePiece(color, PieceType::BISHOP));
+  idx = piece::pieceIndex(piece::makePiece(color, PieceType::BISHOP));
   attackers = bishop(sq, occupied) & bb.byPiece[idx] & occupied;
   if (attackers) { attackerBB = attackers & -attackers; return PieceType::BISHOP; }
 
   // Rooks
-  idx = piece::pieceZobristIndex(piece::makePiece(color, PieceType::ROOK));
+  idx = piece::pieceIndex(piece::makePiece(color, PieceType::ROOK));
   attackers = rook(sq, occupied) & bb.byPiece[idx] & occupied;
   if (attackers) { attackerBB = attackers & -attackers; return PieceType::ROOK; }
 
   // Queens
-  idx = piece::pieceZobristIndex(piece::makePiece(color, PieceType::QUEEN));
+  idx = piece::pieceIndex(piece::makePiece(color, PieceType::QUEEN));
   attackers = queen(sq, occupied) & bb.byPiece[idx] & occupied;
   if (attackers) { attackerBB = attackers & -attackers; return PieceType::QUEEN; }
 
   // King
-  idx = piece::pieceZobristIndex(piece::makePiece(color, PieceType::KING));
+  idx = piece::pieceIndex(piece::makePiece(color, PieceType::KING));
   attackers = KING[sq] & bb.byPiece[idx] & occupied;
   if (attackers) { attackerBB = attackers & -attackers; return PieceType::KING; }
 
   return PieceType::NONE;
+}
+
+// ---------------------------------------------------------------------------
+// SEE gain walkback — propagates the negamax minimax through the gain list.
+//
+// At each depth level, the capturing side chooses the better of recapturing
+// (gain[d]) vs standing pat (-gain[d-1]).  Walking back from the deepest
+// exchange resolves the final value at gain[0].
+//
+// This is the "swap algorithm" described in CPW's SEE article.
+//
+// Reference: https://www.chessprogramming.org/SEE_-_The_Swap_Algorithm
+// ---------------------------------------------------------------------------
+static void seeWalkBack(int gain[], int depth) {
+  while (depth > 0) {
+    int standPat = -gain[depth - 1];
+    gain[depth - 1] = -(standPat > gain[depth] ? standPat : gain[depth]);
+    --depth;
+  }
 }
 
 int see(const BitboardSet& bb, const Piece mailbox[], Move m) {
@@ -443,14 +462,8 @@ int see(const BitboardSet& bb, const Piece mailbox[], Move m) {
     side = ~side;
   }
 
-  // Walk back the gain list using negamax: at each level, the capturing
-  // side chooses the better of "recapture" (gain[d]) vs "stand pat"
-  // (-gain[d-1]).  This is: gain[d-1] = -max(-gain[d-1], gain[d]).
-  while (d > 0) {
-    int standPat = -gain[d - 1];  // value of NOT recapturing
-    gain[d - 1] = -(standPat > gain[d] ? standPat : gain[d]);
-    --d;
-  }
+  // Walk back the gain list using negamax minimax.
+  seeWalkBack(gain, d);
 
   return gain[0];
 }

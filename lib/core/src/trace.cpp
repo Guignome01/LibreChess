@@ -3,6 +3,7 @@
 #include "trace.h"
 #include "attacks.h"
 #include "evaluation.h"
+#include "piece.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -12,6 +13,8 @@
 
 namespace LibreChess {
 namespace eval {
+
+using piece::pieceIndex;
 
 // ===========================================================================
 // Name → index map (built once from the tuning registry)
@@ -245,10 +248,14 @@ Trace extractTrace(const BitboardSet& bb) {
   // -----------------------------------------------------------------------
   // Phase computation (must happen first for tapering).
   // -----------------------------------------------------------------------
-  int phase = popcount(bb.byPiece[1] | bb.byPiece[7])  * PHASE_KNIGHT
-            + popcount(bb.byPiece[2] | bb.byPiece[8])  * PHASE_BISHOP
-            + popcount(bb.byPiece[3] | bb.byPiece[9])  * PHASE_ROOK
-            + popcount(bb.byPiece[4] | bb.byPiece[10]) * PHASE_QUEEN;
+  int phase = popcount(bb.byPiece[pieceIndex('N')]
+                     | bb.byPiece[pieceIndex('n')]) * PHASE_KNIGHT
+            + popcount(bb.byPiece[pieceIndex('B')]
+                     | bb.byPiece[pieceIndex('b')]) * PHASE_BISHOP
+            + popcount(bb.byPiece[pieceIndex('R')]
+                     | bb.byPiece[pieceIndex('r')])   * PHASE_ROOK
+            + popcount(bb.byPiece[pieceIndex('Q')]
+                     | bb.byPiece[pieceIndex('q')]) * PHASE_QUEEN;
   if (phase > MAX_PHASE) phase = MAX_PHASE;
 
   float mgWeight = static_cast<float>(phase) / MAX_PHASE;
@@ -263,8 +270,8 @@ Trace extractTrace(const BitboardSet& bb) {
   // -----------------------------------------------------------------------
   float ocbScale = 1.0f;
   if (phase <= 6) {
-    Bitboard wb = bb.byPiece[2];
-    Bitboard bbish = bb.byPiece[8];
+    Bitboard wb = bb.byPiece[pieceIndex('B')];
+    Bitboard bbish = bb.byPiece[pieceIndex('b')];
     if (popcount(wb) == 1 && popcount(bbish) == 1) {
       bool whiteDark = (wb & DARK_SQUARES) != 0;
       bool blackDark = (bbish & DARK_SQUARES) != 0;
@@ -312,8 +319,8 @@ Trace extractTrace(const BitboardSet& bb) {
   // -----------------------------------------------------------------------
   // Pawn structure — uses the core eval helpers (isPassed, isIsolated, etc.)
   // -----------------------------------------------------------------------
-  Bitboard whitePawns = bb.byPiece[0];
-  Bitboard blackPawns = bb.byPiece[6];
+  Bitboard whitePawns = bb.byPiece[pieceIndex('P')];
+  Bitboard blackPawns = bb.byPiece[pieceIndex('p')];
   Bitboard whitePawnAttacks = shiftNE(whitePawns) | shiftNW(whitePawns);
   Bitboard blackPawnAttacks = shiftSE(blackPawns) | shiftSW(blackPawns);
 
@@ -329,12 +336,12 @@ Trace extractTrace(const BitboardSet& bb) {
   Bitboard wp = whitePawns;
   while (wp) {
     Square sq = popLsb(wp);
-    int rank = sq / 8;
+    int rank = rankOf(sq);
 
     if (isPassed(sq, Color::WHITE, blackPawns)) {
       addPawnCoeff(TI.passedMg[rank], mgW);
       addPawnCoeff(TI.passedEg[rank], egW);
-      whitePassedFiles |= 1 << (sq & 7);
+      whitePassedFiles |= 1 << fileOf(sq);
       if (squareBB(sq) & whitePawnAttacks) {
         addPawnCoeff(TI.protPassMg, mgW);
       }
@@ -356,13 +363,13 @@ Trace extractTrace(const BitboardSet& bb) {
   Bitboard bp = blackPawns;
   while (bp) {
     Square sq = popLsb(bp);
-    int rank = sq / 8;
+    int rank = rankOf(sq);
 
     if (isPassed(sq, Color::BLACK, whitePawns)) {
       int mirRank = 7 - rank;
       addPawnCoeff(TI.passedMg[mirRank], -mgW);
       addPawnCoeff(TI.passedEg[mirRank], -egW);
-      blackPassedFiles |= 1 << (sq & 7);
+      blackPassedFiles |= 1 << fileOf(sq);
       if (squareBB(sq) & blackPawnAttacks) {
         addPawnCoeff(TI.protPassMg, -mgW);
       }
@@ -397,8 +404,8 @@ Trace extractTrace(const BitboardSet& bb) {
   // -----------------------------------------------------------------------
   // Passed pawn king distance (EG only).
   // -----------------------------------------------------------------------
-  Bitboard wkBB = bb.byPiece[5];
-  Bitboard bkBB = bb.byPiece[11];
+  Bitboard wkBB = bb.byPiece[pieceIndex('K')];
+  Bitboard bkBB = bb.byPiece[pieceIndex('k')];
   if (wkBB && bkBB) {
     Square wkSq = lsb(wkBB);
     Square bkSq = lsb(bkBB);
@@ -426,8 +433,8 @@ Trace extractTrace(const BitboardSet& bb) {
   // Bishop pair (separate MG/EG).
   // -----------------------------------------------------------------------
   {
-    int wBP = (popcount(bb.byPiece[2]) >= 2) ? 1 : 0;
-    int bBP = (popcount(bb.byPiece[8]) >= 2) ? 1 : 0;
+    int wBP = (popcount(bb.byPiece[pieceIndex('B')]) >= 2) ? 1 : 0;
+    int bBP = (popcount(bb.byPiece[pieceIndex('b')]) >= 2) ? 1 : 0;
     float diff = static_cast<float>(wBP - bBP);
     t.add(TI.bpMg, diff * mgW);
     t.add(TI.bpEg, diff * egW);
@@ -438,7 +445,7 @@ Trace extractTrace(const BitboardSet& bb) {
   // -----------------------------------------------------------------------
   {
     float mgCoeff = 0.0f, egCoeff = 0.0f;
-    Bitboard wbishops = bb.byPiece[2];
+    Bitboard wbishops = bb.byPiece[pieceIndex('B')];
     while (wbishops) {
       Square sq = popLsb(wbishops);
       Bitboard colorMask = (squareBB(sq) & DARK_SQUARES) ? DARK_SQUARES
@@ -447,7 +454,7 @@ Trace extractTrace(const BitboardSet& bb) {
       mgCoeff += blocked;
       egCoeff += blocked;
     }
-    Bitboard bbishops = bb.byPiece[8];
+    Bitboard bbishops = bb.byPiece[pieceIndex('b')];
     while (bbishops) {
       Square sq = popLsb(bbishops);
       Bitboard colorMask = (squareBB(sq) & DARK_SQUARES) ? DARK_SQUARES
@@ -467,17 +474,17 @@ Trace extractTrace(const BitboardSet& bb) {
     Bitboard allPawns = whitePawns | blackPawns;
     float openCoeff = 0.0f, semiCoeff = 0.0f;
 
-    Bitboard wr = bb.byPiece[3];
+    Bitboard wr = bb.byPiece[pieceIndex('R')];
     while (wr) {
       Square sq = popLsb(wr);
-      Bitboard file = fileBB(colOf(sq));
+      Bitboard file = fileBB(fileOf(sq));
       if (!(file & allPawns))        openCoeff += 1.0f;
       else if (!(file & whitePawns)) semiCoeff += 1.0f;
     }
-    Bitboard br = bb.byPiece[9];
+    Bitboard br = bb.byPiece[pieceIndex('r')];
     while (br) {
       Square sq = popLsb(br);
-      Bitboard file = fileBB(colOf(sq));
+      Bitboard file = fileBB(fileOf(sq));
       if (!(file & allPawns))        openCoeff -= 1.0f;
       else if (!(file & blackPawns)) semiCoeff -= 1.0f;
     }
@@ -492,11 +499,13 @@ Trace extractTrace(const BitboardSet& bb) {
   // -----------------------------------------------------------------------
   {
     float coeff = 0.0f;
-    Bitboard whiteR7 = bb.byPiece[3] & rankBB(6);
-    if (whiteR7 && ((bb.byPiece[11] & rankBB(7)) || (bb.byPiece[6] & rankBB(6))))
+    Bitboard whiteR7 = bb.byPiece[pieceIndex('R')] & rankBB(6);
+    if (whiteR7 && ((bb.byPiece[pieceIndex('k')] & rankBB(7))
+               || (bb.byPiece[pieceIndex('p')] & rankBB(6))))
       coeff += popcount(whiteR7);
-    Bitboard blackR2 = bb.byPiece[9] & rankBB(1);
-    if (blackR2 && ((bb.byPiece[5] & rankBB(0)) || (bb.byPiece[0] & rankBB(1))))
+    Bitboard blackR2 = bb.byPiece[pieceIndex('r')] & rankBB(1);
+    if (blackR2 && ((bb.byPiece[pieceIndex('K')] & rankBB(0))
+               || (bb.byPiece[pieceIndex('P')] & rankBB(1))))
       coeff -= popcount(blackR2);
     t.add(TI.r7Mg, coeff * mgW);
     t.add(TI.r7Eg, coeff * egW);
@@ -507,8 +516,8 @@ Trace extractTrace(const BitboardSet& bb) {
   // -----------------------------------------------------------------------
   {
     float ownCoeff = 0.0f, enemyCoeff = 0.0f;
-    Bitboard whiteRooks = bb.byPiece[3];
-    Bitboard blackRooks = bb.byPiece[9];
+    Bitboard whiteRooks = bb.byPiece[pieceIndex('R')];
+    Bitboard blackRooks = bb.byPiece[pieceIndex('r')];
 
     Bitboard wpR = whitePawns;
     while (wpR) {
@@ -553,15 +562,15 @@ Trace extractTrace(const BitboardSet& bb) {
     constexpr Square SQ_D4 = 27, SQ_D5 = 35, SQ_E4 = 28, SQ_E5 = 36;
     float coeff = 0.0f;
 
-    Bitboard wn = bb.byPiece[1];
+    Bitboard wn = bb.byPiece[pieceIndex('N')];
     while (wn) {
       Square sq = popLsb(wn);
       if (!(squareBB(sq) & whitePawnAttacks)) continue;
-      int file = sq & 7;
+      int file = fileOf(sq);
       Bitboard adjFiles = 0;
       if (file > 0) adjFiles |= fileBB(file - 1);
       if (file < 7) adjFiles |= fileBB(file + 1);
-      int rank = sq / 8;
+      int rank = rankOf(sq);
       Bitboard aboveMask =
           ~((static_cast<Bitboard>(1) << (8 * (rank + 1))) - 1);
       if (blackPawns & adjFiles & aboveMask) continue;
@@ -570,15 +579,15 @@ Trace extractTrace(const BitboardSet& bb) {
       coeff += bonus;
     }
 
-    Bitboard bn = bb.byPiece[7];
+    Bitboard bn = bb.byPiece[pieceIndex('n')];
     while (bn) {
       Square sq = popLsb(bn);
       if (!(squareBB(sq) & blackPawnAttacks)) continue;
-      int file = sq & 7;
+      int file = fileOf(sq);
       Bitboard adjFiles = 0;
       if (file > 0) adjFiles |= fileBB(file - 1);
       if (file < 7) adjFiles |= fileBB(file + 1);
-      int rank = sq / 8;
+      int rank = rankOf(sq);
       Bitboard belowMask = (rank > 0)
           ? (static_cast<Bitboard>(1) << (8 * rank)) - 1
           : 0;
@@ -600,10 +609,10 @@ Trace extractTrace(const BitboardSet& bb) {
     Bitboard allPawns = whitePawns | blackPawns;
 
     auto shieldSide = [&](int color, int sign) {
-      Bitboard kingBB_s = bb.byPiece[color * 6 + 5];
+      Bitboard kingBB_s = bb.byPiece[pieceIndex(static_cast<Color>(color), PieceType::KING)];
       if (!kingBB_s) return;
       Square kingSq = lsb(kingBB_s);
-      int kingFile = colOf(kingSq);
+      int kingFile = fileOf(kingSq);
 
       if (kingFile >= 3 && kingFile <= 4) return;
 
@@ -614,7 +623,7 @@ Trace extractTrace(const BitboardSet& bb) {
         shieldFiles[0] = 5; shieldFiles[1] = 6; shieldFiles[2] = 7;
       }
 
-      Bitboard friendlyPawns = bb.byPiece[color * 6];
+      Bitboard friendlyPawns = bb.byPiece[pieceIndex(static_cast<Color>(color), PieceType::PAWN)];
       for (int i = 0; i < 3; ++i) {
         int f = shieldFiles[i];
         Bitboard fileMask = fileBB(f);
@@ -626,7 +635,7 @@ Trace extractTrace(const BitboardSet& bb) {
           Bitboard copy = shieldPawns;
           while (copy) {
             Square psq = popLsb(copy);
-            int pRank = psq / 8;
+            int pRank = rankOf(psq);
             if (color == 0) {
               if (pRank == 2)       rank3Coeff += sign;
               else if (pRank >= 3)  rank4PlusCoeff += sign;
@@ -672,7 +681,8 @@ Trace extractTrace(const BitboardSet& bb) {
     constexpr Square H2 = 15, G3 = 22, G1_sq = 6;
 
     float bishCoeff = 0.0f;
-    Bitboard wB = bb.byPiece[2], bB = bb.byPiece[8];
+    Bitboard wB = bb.byPiece[pieceIndex('B')],
+           bB = bb.byPiece[pieceIndex('b')];
     if ((wB & squareBB(A7)) && (blackPawns & squareBB(B6))) bishCoeff += 1;
     if ((wB & squareBB(B8)) && (blackPawns & squareBB(B6))) bishCoeff += 1;
     if ((wB & squareBB(H7)) && (blackPawns & squareBB(G6))) bishCoeff += 1;
@@ -689,8 +699,10 @@ Trace extractTrace(const BitboardSet& bb) {
     constexpr Square B8_r = 57, G8_r = 62;
 
     float rookCoeff = 0.0f;
-    Bitboard wR = bb.byPiece[3], bR = bb.byPiece[9];
-    Bitboard wK = bb.byPiece[5], bK = bb.byPiece[11];
+    Bitboard wR = bb.byPiece[pieceIndex('R')],
+           bR = bb.byPiece[pieceIndex('r')];
+    Bitboard wK = bb.byPiece[pieceIndex('K')],
+           bK = bb.byPiece[pieceIndex('k')];
     if ((wR & squareBB(H1)) && (wK & (squareBB(F1) | squareBB(G1_r))))
       rookCoeff += 1;
     if ((wR & squareBB(A1)) && (wK & (squareBB(B1_r) | squareBB(C1))))
@@ -731,10 +743,11 @@ Trace extractTrace(const BitboardSet& bb) {
     float pMin = 0, pRk = 0, pQn = 0, nRk = 0, nQn = 0, rQn = 0;
     for (int c = 0; c < 2; ++c) {
       int sign = (c == 0) ? 1 : -1;
-      int eo = (1 - c) * 6;
-      Bitboard enMinors = bb.byPiece[eo + 1] | bb.byPiece[eo + 2];
-      Bitboard enRooks  = bb.byPiece[eo + 3];
-      Bitboard enQueens = bb.byPiece[eo + 4];
+      Color enemy = static_cast<Color>(1 - c);
+      Bitboard enMinors = bb.byPiece[pieceIndex(enemy, PieceType::KNIGHT)]
+                        | bb.byPiece[pieceIndex(enemy, PieceType::BISHOP)];
+      Bitboard enRooks  = bb.byPiece[pieceIndex(enemy, PieceType::ROOK)];
+      Bitboard enQueens = bb.byPiece[pieceIndex(enemy, PieceType::QUEEN)];
 
       Bitboard pAtk = info.byPiece[c][1];   // PieceType::PAWN = 1
       pMin += sign * popcount(pAtk & enMinors);
@@ -763,7 +776,7 @@ Trace extractTrace(const BitboardSet& bb) {
     int sign = (c == 0) ? -1 : 1;
     int enemy = 1 - c;
 
-    Bitboard kingBB_kd = bb.byPiece[c * 6 + 5];
+    Bitboard kingBB_kd = bb.byPiece[pieceIndex(static_cast<Color>(c), PieceType::KING)];
     if (!kingBB_kd) continue;
     Square kingSq = lsb(kingBB_kd);
     Bitboard kingZone = attacks::KING[kingSq] | squareBB(kingSq);
@@ -776,7 +789,8 @@ Trace extractTrace(const BitboardSet& bb) {
     }
     if (totalWeight > 0) {
       for (int pt = 0; pt < 4; ++pt) {
-        int pieceIdx = enemy * 6 + pt + 1;
+        // pt 0..3 → KNIGHT..QUEEN (PieceType 2..5)
+        int pieceIdx = pieceIndex(static_cast<Color>(enemy), static_cast<PieceType>(pt + 2));
         Bitboard pieces = bb.byPiece[pieceIdx];
         while (pieces) {
           Square sq = popLsb(pieces);

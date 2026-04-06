@@ -124,32 +124,62 @@ static void test_charToPiece_all_valid(void) {
 }
 
 // ===========================================================================
-// Piece — Zobrist index
+// Piece — piece index
 // ===========================================================================
 
-static void test_zobrist_index(void) {
-  TEST_ASSERT_EQUAL_INT(0, pieceZobristIndex(Piece::W_PAWN));
-  TEST_ASSERT_EQUAL_INT(1, pieceZobristIndex(Piece::W_KNIGHT));
-  TEST_ASSERT_EQUAL_INT(5, pieceZobristIndex(Piece::W_KING));
-  TEST_ASSERT_EQUAL_INT(6,  pieceZobristIndex(Piece::B_PAWN));
-  TEST_ASSERT_EQUAL_INT(7,  pieceZobristIndex(Piece::B_KNIGHT));
-  TEST_ASSERT_EQUAL_INT(11, pieceZobristIndex(Piece::B_KING));
-  TEST_ASSERT_EQUAL_INT(-1, pieceZobristIndex(Piece::NONE));
+static void test_piece_index_from_piece(void) {
+  TEST_ASSERT_EQUAL_INT(0, pieceIndex(Piece::W_PAWN));
+  TEST_ASSERT_EQUAL_INT(1, pieceIndex(Piece::W_KNIGHT));
+  TEST_ASSERT_EQUAL_INT(5, pieceIndex(Piece::W_KING));
+  TEST_ASSERT_EQUAL_INT(6,  pieceIndex(Piece::B_PAWN));
+  TEST_ASSERT_EQUAL_INT(7,  pieceIndex(Piece::B_KNIGHT));
+  TEST_ASSERT_EQUAL_INT(11, pieceIndex(Piece::B_KING));
+  TEST_ASSERT_EQUAL_INT(-1, pieceIndex(Piece::NONE));
 }
 
-static void test_zobrist_index_constants(void) {
+static void test_piece_index_from_char(void) {
+  // White pieces (uppercase FEN chars).
+  TEST_ASSERT_EQUAL_INT(0, pieceIndex('P'));
+  TEST_ASSERT_EQUAL_INT(1, pieceIndex('N'));
+  TEST_ASSERT_EQUAL_INT(2, pieceIndex('B'));
+  TEST_ASSERT_EQUAL_INT(3, pieceIndex('R'));
+  TEST_ASSERT_EQUAL_INT(4, pieceIndex('Q'));
+  TEST_ASSERT_EQUAL_INT(5, pieceIndex('K'));
+
+  // Black pieces (lowercase FEN chars).
+  TEST_ASSERT_EQUAL_INT(6,  pieceIndex('p'));
+  TEST_ASSERT_EQUAL_INT(7,  pieceIndex('n'));
+  TEST_ASSERT_EQUAL_INT(8,  pieceIndex('b'));
+  TEST_ASSERT_EQUAL_INT(9,  pieceIndex('r'));
+  TEST_ASSERT_EQUAL_INT(10, pieceIndex('q'));
+  TEST_ASSERT_EQUAL_INT(11, pieceIndex('k'));
+
+  // Invalid char.
+  TEST_ASSERT_EQUAL_INT(PIECE_IDX_NONE, pieceIndex('x'));
+  TEST_ASSERT_EQUAL_INT(PIECE_IDX_NONE, pieceIndex('1'));
+}
+
+static void test_piece_index_constants(void) {
   // Named constant matches raw sentinel value.
-  TEST_ASSERT_EQUAL_INT(-1, ZOBRIST_IDX_NONE);
+  TEST_ASSERT_EQUAL_INT(-1, PIECE_IDX_NONE);
 
-  // isValidZobristIndex: valid range [0, 11].
-  TEST_ASSERT_TRUE(isValidZobristIndex(0));
-  TEST_ASSERT_TRUE(isValidZobristIndex(5));
-  TEST_ASSERT_TRUE(isValidZobristIndex(11));
+  // isValidPieceIndex: valid range [0, 11].
+  TEST_ASSERT_TRUE(isValidPieceIndex(0));
+  TEST_ASSERT_TRUE(isValidPieceIndex(5));
+  TEST_ASSERT_TRUE(isValidPieceIndex(11));
 
-  // isValidZobristIndex: invalid values.
-  TEST_ASSERT_FALSE(isValidZobristIndex(-1));
-  TEST_ASSERT_FALSE(isValidZobristIndex(12));
-  TEST_ASSERT_FALSE(isValidZobristIndex(ZOBRIST_IDX_NONE));
+  // isValidPieceIndex: invalid values.
+  TEST_ASSERT_FALSE(isValidPieceIndex(-1));
+  TEST_ASSERT_FALSE(isValidPieceIndex(12));
+  TEST_ASSERT_FALSE(isValidPieceIndex(PIECE_IDX_NONE));
+}
+
+static void test_piece_index_consistency(void) {
+  // All three overloads must return the same value for the same piece.
+  TEST_ASSERT_EQUAL_INT(pieceIndex(Color::WHITE, PieceType::PAWN), pieceIndex(Piece::W_PAWN));
+  TEST_ASSERT_EQUAL_INT(pieceIndex(Color::WHITE, PieceType::PAWN), pieceIndex('P'));
+  TEST_ASSERT_EQUAL_INT(pieceIndex(Color::BLACK, PieceType::KING), pieceIndex(Piece::B_KING));
+  TEST_ASSERT_EQUAL_INT(pieceIndex(Color::BLACK, PieceType::KING), pieceIndex('k'));
 }
 
 // ===========================================================================
@@ -157,12 +187,15 @@ static void test_zobrist_index_constants(void) {
 // ===========================================================================
 
 static void test_color_helpers(void) {
-  TEST_ASSERT_EQUAL_INT(-1, pawnDirection(Color::WHITE));
-  TEST_ASSERT_EQUAL_INT(1,  pawnDirection(Color::BLACK));
-  TEST_ASSERT_EQUAL_INT(7,  homeRow(Color::WHITE));
-  TEST_ASSERT_EQUAL_INT(0,  homeRow(Color::BLACK));
-  TEST_ASSERT_EQUAL_INT(0,  promotionRow(Color::WHITE));
-  TEST_ASSERT_EQUAL_INT(7,  promotionRow(Color::BLACK));
+  // LERF-native helpers
+  TEST_ASSERT_EQUAL_INT(8,  pawnForward(Color::WHITE));
+  TEST_ASSERT_EQUAL_INT(-8, pawnForward(Color::BLACK));
+  TEST_ASSERT_EQUAL_INT(0,  homeRank(Color::WHITE));
+  TEST_ASSERT_EQUAL_INT(7,  homeRank(Color::BLACK));
+  TEST_ASSERT_EQUAL_INT(7,  promotionRank(Color::WHITE));
+  TEST_ASSERT_EQUAL_INT(0,  promotionRank(Color::BLACK));
+  TEST_ASSERT_EQUAL_INT(1,  pawnStartRank(Color::WHITE));
+  TEST_ASSERT_EQUAL_INT(6,  pawnStartRank(Color::BLACK));
 }
 
 static void test_color_name(void) {
@@ -217,23 +250,23 @@ static void test_opponentColor_black(void) {
 }
 
 // ===========================================================================
-// Piece — pawnDirection / homeRow
+// Piece — pawnForward / homeRank
 // ===========================================================================
 
-static void test_pawnDirection_white(void) {
-  TEST_ASSERT_EQUAL_INT(-1, pawnDirection(Color::WHITE));
+static void test_pawnForward_white(void) {
+  TEST_ASSERT_EQUAL_INT(8, pawnForward(Color::WHITE));
 }
 
-static void test_pawnDirection_black(void) {
-  TEST_ASSERT_EQUAL_INT(1, pawnDirection(Color::BLACK));
+static void test_pawnForward_black(void) {
+  TEST_ASSERT_EQUAL_INT(-8, pawnForward(Color::BLACK));
 }
 
-static void test_homeRow_white(void) {
-  TEST_ASSERT_EQUAL_INT(7, homeRow(Color::WHITE));
+static void test_homeRank_white(void) {
+  TEST_ASSERT_EQUAL_INT(0, homeRank(Color::WHITE));
 }
 
-static void test_homeRow_black(void) {
-  TEST_ASSERT_EQUAL_INT(0, homeRow(Color::BLACK));
+static void test_homeRank_black(void) {
+  TEST_ASSERT_EQUAL_INT(7, homeRank(Color::BLACK));
 }
 
 // ===========================================================================
@@ -257,9 +290,11 @@ void register_piece_tests() {
   RUN_TEST(test_piece_type_to_char);
   RUN_TEST(test_charToPiece_all_valid);
 
-  // Piece — Zobrist index
-  RUN_TEST(test_zobrist_index);
-  RUN_TEST(test_zobrist_index_constants);
+  // Piece — piece index
+  RUN_TEST(test_piece_index_from_piece);
+  RUN_TEST(test_piece_index_from_char);
+  RUN_TEST(test_piece_index_constants);
+  RUN_TEST(test_piece_index_consistency);
 
   // Piece — color helpers
   RUN_TEST(test_color_helpers);
@@ -277,9 +312,9 @@ void register_piece_tests() {
   RUN_TEST(test_opponentColor_white);
   RUN_TEST(test_opponentColor_black);
 
-  // Piece — pawnDirection / homeRow
-  RUN_TEST(test_pawnDirection_white);
-  RUN_TEST(test_pawnDirection_black);
-  RUN_TEST(test_homeRow_white);
-  RUN_TEST(test_homeRow_black);
+  // Piece — pawnForward / homeRank
+  RUN_TEST(test_pawnForward_white);
+  RUN_TEST(test_pawnForward_black);
+  RUN_TEST(test_homeRank_white);
+  RUN_TEST(test_homeRank_black);
 }

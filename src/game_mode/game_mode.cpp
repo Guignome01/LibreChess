@@ -66,28 +66,28 @@ MoveResult GameMode::applyMove(int fromRow, int fromCol, int toRow, int toCol, c
   auto castleInfo = chess_->checkCastling(fromRow, fromCol, toRow, toCol);
 
   MoveResult result = chess_->makeMove(fromRow, fromCol, toRow, toCol, promotion);
-  if (!result.valid) return result;
+  if (!result.valid()) return result;
 
   // --- Hardware feedback ---
 
   // Remote move: guide the player to physically execute the move on the board
-  if (isRemoteMove && !result.isCastling)
+  if (isRemoteMove && !result.isCastling())
     waitForRemoteMoveCompletion(fromRow, fromCol, toRow, toCol,
-                                result.isCapture, result.isEnPassant,
-                                result.epCapturedRow);
+                                result.isCapture(), result.isEnPassant(),
+                                result.epCapturedSq == SQ_NONE ? -1 : squareToRow(result.epCapturedSq));
 
   // Castling: guide the player to move the rook
-  if (result.isCastling)
+  if (result.isCastling())
     applyCastlingHardware(fromRow, fromCol, toRow, toCol, castleInfo, isRemoteMove);
 
   // Capture / normal-move confirmation
-  if (result.isCapture)
+  if (result.isCapture())
     boardDriver_->captureAnimation(toRow, toCol);
   else
     confirmSquareCompletion(toRow, toCol);
 
   // Promotion
-  if (result.isPromotion)
+  if (result.isPromotion())
     boardDriver_->promotionAnimation(toCol);
 
   // --- Game-end / check hardware feedback ---
@@ -95,7 +95,7 @@ MoveResult GameMode::applyMove(int fromRow, int fromCol, int toRow, int toCol, c
     boardDriver_->fireworkAnimation(SystemUtils::colorLed(result.winnerColor == 'w' ? Color::WHITE : Color::BLACK));
   } else if (result.gameResult != GameResult::IN_PROGRESS) {
     boardDriver_->fireworkAnimation(LedColors::Cyan);
-  } else if (result.isCheck) {
+  } else if (result.isCheck()) {
     Color turn = chess_->currentTurn();
     boardDriver_->blinkSquare(chess_->kingRow(turn), chess_->kingCol(turn), LedColors::Yellow, 3, true, true);
   }
@@ -149,8 +149,8 @@ bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int&
 
       // Highlight possible move squares (different colors for empty vs capture)
       for (int i = 0; i < moves.count; i++) {
-        int r = moves.targetRow(i);
-        int c = moves.targetCol(i);
+        int r = squareToRow(moves.moves[i].to);
+        int c = squareToCol(moves.moves[i].to);
 
         auto ei = chess_->checkEnPassant(row, col, r, c);
         if (Game::isEmptySquare(chess_->getSquare(r, c)) && !ei.isCapture) {
@@ -158,7 +158,7 @@ bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int&
         } else {
           boardDriver_->setSquareLED(r, c, LedColors::Red);
           if (ei.isCapture)
-            boardDriver_->setSquareLED(ei.capturedPawnRow, c, LedColors::Purple);
+            boardDriver_->setSquareLED(squareToRow(ei.capturedPawnSq), c, LedColors::Purple);
         }
       }
       boardDriver_->showLEDs();
@@ -203,7 +203,7 @@ bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int&
             // Check if this would be a legal move
             bool isLegalMove = false;
             for (int i = 0; i < moves.count; i++)
-              if (moves.targetRow(i) == r2 && moves.targetCol(i) == c2) {
+              if (squareToRow(moves.moves[i].to) == r2 && squareToCol(moves.moves[i].to) == c2) {
                 isLegalMove = true;
                 break;
               }
@@ -215,7 +215,7 @@ bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int&
             // For capture moves: detect when the target square is empty (captured piece removed)
             // This works whether the piece was just removed or was already removed before pickup
             auto epInfo = chess_->checkEnPassant(row, col, r2, c2);
-            int enPassantCapturedPawnRow = epInfo.capturedPawnRow;
+            int enPassantCapturedPawnRow = epInfo.isCapture ? squareToRow(epInfo.capturedPawnSq) : -1;
             auto isCapturedPiecePickedUp = [&]() -> bool {
               if (epInfo.isCapture)
                 return !boardDriver_->getSensorState(enPassantCapturedPawnRow, c2);
@@ -291,7 +291,7 @@ bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int&
 
       bool legalMove = false;
       for (int i = 0; i < moves.count; i++)
-        if (moves.targetRow(i) == targetRow && moves.targetCol(i) == targetCol) {
+        if (squareToRow(moves.moves[i].to) == targetRow && squareToCol(moves.moves[i].to) == targetCol) {
           legalMove = true;
           break;
         }
@@ -353,25 +353,30 @@ void GameMode::applyCastlingHardware(int kingFromRow, int kingFromCol, int kingT
     boardDriver_->clearAllLEDs();
   }
 
+  int rookFromRow = squareToRow(ci.rookFromSq);
+  int rookFromCol = squareToCol(ci.rookFromSq);
+  int rookToRow = squareToRow(ci.rookToSq);
+  int rookToCol = squareToCol(ci.rookToSq);
+
   logger_.infof("Castling: please move rook from %s to %s",
-                              Game::squareName(kingToRow, ci.rookFromCol).c_str(),
-                              Game::squareName(kingToRow, ci.rookToCol).c_str());
+                              Game::squareName(rookFromRow, rookFromCol).c_str(),
+                              Game::squareName(rookToRow, rookToCol).c_str());
 
   boardDriver_->clearAllLEDs(false);
-  boardDriver_->setSquareLED(kingToRow, ci.rookFromCol, LedColors::Cyan);
-  boardDriver_->setSquareLED(kingToRow, ci.rookToCol, LedColors::White);
+  boardDriver_->setSquareLED(rookFromRow, rookFromCol, LedColors::Cyan);
+  boardDriver_->setSquareLED(rookToRow, rookToCol, LedColors::White);
   boardDriver_->showLEDs();
 
-  while (boardDriver_->getSensorState(kingToRow, ci.rookFromCol)) {
+  while (boardDriver_->getSensorState(rookFromRow, rookFromCol)) {
     boardDriver_->readSensors();
     delay(SENSOR_READ_DELAY_MS);
   }
 
   boardDriver_->clearAllLEDs(false);
-  boardDriver_->setSquareLED(kingToRow, ci.rookToCol, LedColors::White);
+  boardDriver_->setSquareLED(rookToRow, rookToCol, LedColors::White);
   boardDriver_->showLEDs();
 
-  while (!boardDriver_->getSensorState(kingToRow, ci.rookToCol)) {
+  while (!boardDriver_->getSensorState(rookToRow, rookToCol)) {
     boardDriver_->readSensors();
     delay(SENSOR_READ_DELAY_MS);
   }

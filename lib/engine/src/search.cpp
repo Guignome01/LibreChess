@@ -4,11 +4,13 @@
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <new>
 
 #include "attacks.h"
 #include "evaluation.h"
 #include "movegen.h"
 #include "piece.h"
+#include "utils.h"
 
 // ---------------------------------------------------------------------------
 // LibreChess search engine — negamax with alpha-beta, quiescence, ID, TT.
@@ -29,24 +31,29 @@ namespace search {
 
 using namespace piece;
 
+// ---------------------------------------------------------------------------
+// OOM-safe unique_ptr factory — returns nullptr on allocation failure instead
+// of calling std::terminate() (ESP32 has C++ exceptions disabled).
+// ---------------------------------------------------------------------------
+namespace {
+template <typename T, typename... Args>
+std::unique_ptr<T> make_unique_nothrow(Args&&... args) {
+  auto* p = new (std::nothrow) T(std::forward<Args>(args)...);
+  return std::unique_ptr<T>(p);
+}
+}  // namespace
+
 // ===========================================================================
 // TranspositionTable implementation
 // ===========================================================================
 
-// Round down to the nearest power of 2.
-static int roundDownPow2(int n) {
-  if (n <= 0) return 0;
-  int v = 1;
-  while (v * 2 <= n) v *= 2;
-  return v;
-}
-
 void TranspositionTable::resize(int numEntries) {
   free();
-  size = roundDownPow2(numEntries);
+  size = utils::roundDownPow2(numEntries);
   if (size == 0) return;
   mask = size - 1;
-  entries = new TTEntry[size]();  // value-initialized (zeroed)
+  entries = new (std::nothrow) TTEntry[size]();  // value-initialized (zeroed)
+  if (!entries) { size = 0; mask = 0; }  // OOM fallback
 }
 
 void TranspositionTable::free() {
@@ -161,9 +168,11 @@ static constexpr int LMR_FULL_DEPTH_MOVES = 4;
 static constexpr int LMR_DEPTH_THRESHOLD  = 3;
 static constexpr int LMR_MAX_MOVES        = 64;
 
-static int LMR_TABLE[MAX_PLY][LMR_MAX_MOVES];
+static int8_t LMR_TABLE[MAX_PLY][LMR_MAX_MOVES];
 static bool lmrInitialized = false;
 
+// Logarithmic LMR reduction table.
+// Reference: https://www.chessprogramming.org/Late_Move_Reductions
 static void initLMR() {
   if (lmrInitialized) return;
   for (int d = 0; d < MAX_PLY; ++d) {
@@ -171,8 +180,8 @@ static void initLMR() {
       if (d == 0 || m == 0)
         LMR_TABLE[d][m] = 0;
       else
-        LMR_TABLE[d][m] = std::max(
-            1, static_cast<int>(0.75 + std::log(d) * std::log(m) / 2.0));
+        LMR_TABLE[d][m] = static_cast<int8_t>(std::max(
+            1, static_cast<int>(0.75 + std::log(d) * std::log(m) / 2.0)));
     }
   }
   lmrInitialized = true;
@@ -409,6 +418,16 @@ inline int scoreFromTT(int score, int ply) {
 // PieceType: NONE=0, PAWN=1, KNIGHT=2, BISHOP=3, ROOK=4, QUEEN=5, KING=6.
 static constexpr int MVV_LVA_VALUE[] = {0, 1, 3, 3, 5, 9, 0};
 
+// Compute MVV-LVA (Most Valuable Victim – Least Valuable Aggressor) score
+// for a capture.  Higher scores indicate better trades (valuable victim
+// taken by a cheap attacker).  The ×16 scaling leaves room for secondary
+// ordering signals (e.g. capture history) to break ties.
+//
+// Reference: https://www.chessprogramming.org/MVV-LVA
+inline int scoreMVVLVA(PieceType victim, PieceType attacker) {
+  return MVV_LVA_VALUE[raw(victim)] * 16 - MVV_LVA_VALUE[raw(attacker)];
+}
+
 // Sentinel SEE value — move has no precomputed SEE.
 static constexpr int SEE_NOT_COMPUTED = -32000;
 
@@ -424,7 +443,7 @@ static constexpr int SEE_NOT_COMPUTED = -32000;
 // is possible).  Playing a move with wrong flags causes Position::make()
 // to take an incorrect code path — specifically, the EP path reads
 // mailbox_[epSq] expecting a pawn but finds NONE, producing an invalid
-// pieceZobristIndex of -1 and a PST array-out-of-bounds access.
+// pieceIndex of -1 and a PST array-out-of-bounds access.
 //
 // Fix: after confirming from→to is pseudo-legal, **reconstruct** the
 // flags from the current position so make() always sees correct metadata.
@@ -443,14 +462,11 @@ static bool isMoveValid(const BitboardSet& bb, const Piece mailbox[],
 
   // Step 1: validate from→to is legal (pseudo-legal + does not leave
   //         own king in check).
-  if (!movegen::isValidMove(bb, mailbox,
-        rowOf(m.from), colOf(m.from), rowOf(m.to), colOf(m.to), state))
+  if (!movegen::isValidMove(bb, mailbox, m.from, m.to, state))
     return false;
 
   // Step 2: reconstruct flags from the current position.
   PieceType pt = piece::pieceType(piece);
-  int toRow = rowOf(m.to);
-  int toCol = colOf(m.to);
 
   uint8_t flags = 0;
 
@@ -459,16 +475,16 @@ static bool isMoveValid(const BitboardSet& bb, const Piece mailbox[],
     flags |= MOVE_CAPTURE;
 
   // En passant: pawn moving diagonally to the EP target square.
-  if (pt == PieceType::PAWN && state.epRow >= 0 &&
-      toRow == state.epRow && toCol == state.epCol)
+  if (pt == PieceType::PAWN && state.epSquare != SQ_NONE &&
+      m.to == state.epSquare)
     flags |= MOVE_EP | MOVE_CAPTURE;
 
   // Castling: king sliding two files.
-  if (pt == PieceType::KING && abs(colOf(m.from) - toCol) == 2)
+  if (pt == PieceType::KING && abs(fileOf(m.from) - fileOf(m.to)) == 2)
     flags |= MOVE_CASTLING;
 
   // Promotion: pawn reaching the back rank; preserve promo-type choice.
-  if (pt == PieceType::PAWN && toRow == piece::promotionRow(side))
+  if (pt == PieceType::PAWN && rankOf(m.to) == piece::promotionRank(side))
     flags |= MOVE_PROMOTION | (m.flags & (0x03 << MOVE_PROMO_SHIFT));
 
   m.flags = flags;
@@ -506,9 +522,9 @@ inline void pickBest(MoveList& moves, int16_t scores[], int start,
 }
 
 // ---------------------------------------------------------------------------
-// Safe access helpers for heuristic tables indexed by pieceZobristIndex.
+// Safe access helpers for heuristic tables indexed by pieceIndex.
 //
-// centralise the bounds check (isValidZobristIndex + victim range) so that
+// centralise the bounds check (isValidPieceIndex + victim range) so that
 // every callsite uses the same logic.  Returns 0 / no-op on invalid index.
 // ---------------------------------------------------------------------------
 
@@ -516,7 +532,7 @@ inline void pickBest(MoveList& moves, int16_t scores[], int start,
 inline int16_t safeCaptureHistScore(const SearchState& ss, int pieceIdx,
                                     PieceType victim, int toSq) {
   int vi = raw(victim) - 1;
-  if (isValidZobristIndex(pieceIdx) && vi >= 0 && vi < 6)
+  if (isValidPieceIndex(pieceIdx) && vi >= 0 && vi < 6)
     return ss.captureHistory[pieceIdx][vi][toSq];
   return 0;
 }
@@ -524,7 +540,7 @@ inline int16_t safeCaptureHistScore(const SearchState& ss, int pieceIdx,
 // Read a countermove entry with bounds validation.
 inline PackedMove safeCountermove(const SearchState& ss, int pieceIdx,
                                   int toSq) {
-  if (isValidZobristIndex(pieceIdx))
+  if (isValidPieceIndex(pieceIdx))
     return ss.countermoves[pieceIdx][toSq];
   return 0;
 }
@@ -624,7 +640,7 @@ struct MovePicker {
 
     hasCounter = false;
     if (!isEmpty(prevPiece)) {
-      int idx = pieceZobristIndex(prevPiece);
+      int idx = pieceIndex(prevPiece);
       PackedMove cpm = safeCountermove(ssRef, idx, prevTo);
       if (cpm != 0) {
         counterMove = unpackMove(cpm);
@@ -786,9 +802,8 @@ private:
 
   void initCaptures() {
     // Build the legality context once — reused in initQuiets().
-    int kidx = pieceZobristIndex(makePiece(side, PieceType::KING));
-    Bitboard kingBB = bb->byPiece[kidx];
-    Square kingSq = kingBB ? lsb(kingBB) : static_cast<Square>(0);
+    Square kingSq = 0;
+    utils::resolveKingSquare(*bb, side, kingSq);
     legalCtx = movegen::buildLegalityContext(*bb, side, kingSq);
 
     movegen::generateCaptures(*bb, mailbox, side, *posState, legalCtx, moves);
@@ -803,9 +818,8 @@ private:
         PieceType victim   = m.isEP() ? PieceType::PAWN
                                       : pieceType(mailbox[m.to]);
         PieceType attacker = pieceType(mailbox[m.from]);
-        int mvvlva = MVV_LVA_VALUE[raw(victim)] * 16 -
-                     MVV_LVA_VALUE[raw(attacker)];
-        int capHistIdx = pieceZobristIndex(mailbox[m.from]);
+        int mvvlva = scoreMVVLVA(victim, attacker);
+        int capHistIdx = pieceIndex(mailbox[m.from]);
         int capHist = safeCaptureHistScore(*ss, capHistIdx, victim, m.to);
         scores[i] = static_cast<int16_t>(mvvlva + capHist / 16);
       } else {
@@ -876,6 +890,153 @@ inline void updateHistory(int16_t& h, int bonus) {
 }
 
 // ---------------------------------------------------------------------------
+// Update capture history on a beta cutoff by a capture move.
+//
+// Rewards the cutoff capture and penalizes all previously searched captures
+// that failed to cause a cutoff.  The board is in pre-move state (unmake
+// already called), so mailbox[to] still holds the victim.
+//
+// Reference: https://www.chessprogramming.org/History_Heuristic
+// Reference: https://www.chessprogramming.org/Relative_History_Heuristic
+// ---------------------------------------------------------------------------
+
+inline void updateCaptureCutoffHistory(
+    const Move& m, const Position& pos, SearchState& state, int bonus,
+    const PackedMove* capturesSearched, int captureCount) {
+  int chIdx = pieceIndex(pos.mailbox()[m.from]);
+  PieceType victim = m.isEP() ? PieceType::PAWN
+                               : pieceType(pos.mailbox()[m.to]);
+  int vi = raw(victim) - 1;
+  if (isValidPieceIndex(chIdx) && vi >= 0 && vi < 6)
+    updateHistory(state.captureHistory[chIdx][vi][m.to], bonus);
+  for (int ci = 0; ci < captureCount - 1; ++ci) {
+    const Move cm = unpackMove(capturesSearched[ci]);
+    int prevIdx = pieceIndex(pos.mailbox()[cm.from]);
+    PieceType prevVictim = cm.isEP() ? PieceType::PAWN
+                                     : pieceType(pos.mailbox()[cm.to]);
+    int pvi = raw(prevVictim) - 1;
+    if (isValidPieceIndex(prevIdx) && pvi >= 0 && pvi < 6)
+      updateHistory(state.captureHistory[prevIdx][pvi][cm.to], -bonus);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Update quiet-move ordering heuristics on a beta cutoff.
+//
+// Three mechanisms work together to improve move ordering:
+//   1. Killer moves — two-slot cache of recent cutoff moves per ply.
+//   2. History gravity — additive bonus for the cutoff move, symmetric
+//      penalties for non-cutoff moves already searched.
+//   3. Countermove heuristic — paired with the opponent's previous move.
+//
+// Reference: https://www.chessprogramming.org/Killer_Move
+// Reference: https://www.chessprogramming.org/History_Heuristic
+// Reference: https://www.chessprogramming.org/Countermove_Heuristic
+// ---------------------------------------------------------------------------
+
+inline void updateQuietCutoffHeuristics(
+    const Move& m, const Position& pos, SearchState& state, int ply,
+    int bonus, const PackedMove* quietsSearched, int quietCount,
+    Piece prevPiece, int prevTo) {
+  updateKillers(m, ply, state);
+  updateHistory(state.history[raw(pos.sideToMove())][m.from][m.to], bonus);
+
+  // History gravity: penalize previously searched quiet moves that
+  // failed to cause a cutoff.  The cutoff move itself (last entry)
+  // is excluded — it received the bonus above.
+  Color side = pos.sideToMove();
+  for (int q = 0; q < quietCount - 1; ++q) {
+    Move qm = unpackMove(quietsSearched[q]);
+    updateHistory(state.history[raw(side)][qm.from][qm.to], -bonus);
+  }
+
+  // Store as countermove for the opponent's previous (piece, toSq).
+  if (!isEmpty(prevPiece)) {
+    int idx = pieceIndex(prevPiece);
+    if (isValidPieceIndex(idx))
+      state.countermoves[idx][prevTo] = packMove(m);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Collect principal variation: store the current move at `pv[ply][0]` and
+// copy the child's PV line from `pv[ply+1]` into `pv[ply][1..]`.  Bounds-
+// checked to prevent writing past MAX_PV_LEN.
+//
+// Called from both negamax (interior nodes) and findBestMove (root node)
+// whenever a new best move is found.  Consolidating PV collection in one
+// place eliminates the duplicated memcpy + clamp pattern.
+//
+// Reference: https://www.chessprogramming.org/Triangular_PV-Table
+// ---------------------------------------------------------------------------
+
+inline void collectPV(SearchState& state, int ply, PackedMove move) {
+  state.pv[ply][0] = move;
+  int childLen = (ply + 1 < MAX_PLY) ? state.pvLength[ply + 1] : 0;
+  if (childLen < 0) childLen = 0;
+  if (childLen > MAX_PV_LEN - 1) childLen = MAX_PV_LEN - 1;
+  std::memcpy(&state.pv[ply][1], &state.pv[ply + 1][0],
+              childLen * sizeof(PackedMove));
+  state.pvLength[ply] = childLen + 1;
+}
+
+// ---------------------------------------------------------------------------
+// Compute the LMR (Late Move Reduction) for a quiet move in negamax.
+//
+// Base reduction comes from the logarithmic LMR table, with adjustments:
+//   - Bad history (< -500) → reduce more (+1).
+//   - Good history (> 1500) → reduce less (−1).
+//   - Not improving over 2 plies ago → reduce more (+1).
+//   - Non-PV node → reduce more (+1).
+//
+// The result is clamped to [1, newDepth − 2] to guarantee at least a
+// minimal search.
+//
+// Reference: https://www.chessprogramming.org/Late_Move_Reductions
+// ---------------------------------------------------------------------------
+
+inline int computeLMRReduction(int depth, int moveIndex, int16_t hist,
+                               bool improving, bool pvNode) {
+  int mi = moveIndex < LMR_MAX_MOVES ? moveIndex : LMR_MAX_MOVES - 1;
+  int reduction = LMR_TABLE[depth][mi];
+
+  if (hist < -500)
+    ++reduction;           // Bad history → reduce more
+  else if (hist > 1500)
+    --reduction;           // Good history → reduce less
+  if (!improving)
+    ++reduction;           // Not improving → reduce more
+  if (!pvNode)
+    ++reduction;           // Non-PV nodes → reduce more
+
+  int newDepth = depth - 1;
+  if (reduction < 1) reduction = 1;
+  if (reduction > newDepth - 2) reduction = newDepth - 2;
+  if (reduction < 1) reduction = 1;
+  return reduction;
+}
+
+// ---------------------------------------------------------------------------
+// Promote the iteration's best move to index 0 in the root move list so
+// it is searched first at the next depth, improving alpha-beta cutoffs.
+//
+// Reference: https://www.chessprogramming.org/Move_Ordering
+// ---------------------------------------------------------------------------
+
+inline void reorderRootMoves(MoveList& rootMoves, const Move& bestMove) {
+  for (int i = 1; i < rootMoves.count; ++i) {
+    if (rootMoves.moves[i].from  == bestMove.from &&
+        rootMoves.moves[i].to    == bestMove.to   &&
+        rootMoves.moves[i].flags == bestMove.flags) {
+      Move tmp = rootMoves.moves[0];
+      rootMoves.moves[0] = rootMoves.moves[i];
+      rootMoves.moves[i] = tmp;
+      break;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Material-only evaluation from the side-to-move perspective.
 // Uses Position's incremental material accumulator — no popcount calls.
 // Reference: https://www.chessprogramming.org/Incremental_Updates
@@ -902,7 +1063,7 @@ int evaluate(const Position& pos, SearchState& state) {
   }
 
   int score = eval::evaluatePosition(pos.bitboards(), pos.mgPST(), pos.egPST(),
-                                     state.pawnHash);
+                                     pos.phase(), state.pawnHash);
   int stm = (pos.sideToMove() == Color::WHITE) ? score : -score;
   int result = stm + TEMPO_BONUS;
 
@@ -921,12 +1082,12 @@ int evaluate(const Position& pos, SearchState& state) {
 // ---------------------------------------------------------------------------
 
 bool hasNonPawnMaterial(const Position& pos) {
-  uint8_t c = raw(pos.sideToMove());
+  Color color = pos.sideToMove();
   const BitboardSet& bb = pos.bitboards();
-  // Zobrist indices: white N=1 B=2 R=3 Q=4, black offset +6
-  int base = c * 6;
-  return (bb.byPiece[base + 1] | bb.byPiece[base + 2] |
-          bb.byPiece[base + 3] | bb.byPiece[base + 4]) != 0;
+  return (bb.byPiece[pieceIndex(color, PieceType::KNIGHT)] |
+          bb.byPiece[pieceIndex(color, PieceType::BISHOP)] |
+          bb.byPiece[pieceIndex(color, PieceType::ROOK)]   |
+          bb.byPiece[pieceIndex(color, PieceType::QUEEN)]) != 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1001,8 +1162,7 @@ int quiescence(Position& pos, int alpha, int beta, int ply, int qsPly,
       PieceType victim   = cm.isEP() ? PieceType::PAWN
                                      : pieceType(pos.mailbox()[cm.to]);
       PieceType attacker = pieceType(pos.mailbox()[cm.from]);
-      capScores[j] = static_cast<int16_t>(
-          MVV_LVA_VALUE[raw(victim)] * 16 - MVV_LVA_VALUE[raw(attacker)]);
+      capScores[j] = static_cast<int16_t>(scoreMVVLVA(victim, attacker));
     } else {
       capScores[j] = 0;
     }
@@ -1475,31 +1635,11 @@ int negamax(Position& pos, int depth, int alpha, int beta,
 
       if (doLMR) {
         // Reduced-depth zero-window scout search.
-        // Base reduction from logarithmic table, with history and
-        // improving adjustments on top.
-        // depth < MAX_PLY is guaranteed by the ply overflow guard
-        // (ply >= MAX_PLY - 1 → return) which bounds recursion depth.
-        int mi = movesSearched < LMR_MAX_MOVES ? movesSearched
-                                               : LMR_MAX_MOVES - 1;
-        int reduction = LMR_TABLE[depth][mi];
-
-        // History-based LMR: adjust reduction by history score.
-        // With gravity-based history, scores are more centered — use
-        // tighter thresholds than traditional linear history.
         // pos is in post-make state; toggle side to get the move maker.
         uint8_t mc = raw(pos.sideToMove()) ^ 1;
         int16_t hist = state.history[mc][m.from][m.to];
-        if (hist < -500)
-          ++reduction;           // Bad history → reduce more
-        else if (hist > 1500)
-          --reduction;           // Good history → reduce less
-        if (!improving)
-          ++reduction;           // Not improving → reduce more
-        if (!pvNode)
-          ++reduction;           // Non-PV nodes → reduce more
-        if (reduction < 1) reduction = 1;
-        if (reduction > newDepth - 2) reduction = newDepth - 2;
-        if (reduction < 1) reduction = 1;
+        int reduction = computeLMRReduction(depth, movesSearched,
+                                            hist, improving, pvNode);
 
         score = -negamax(pos, newDepth - reduction,
                          -alpha - 1, -alpha, ply + 1, state,
@@ -1545,60 +1685,18 @@ int negamax(Position& pos, int depth, int alpha, int beta,
         alpha = score;
 
         // Collect principal variation: this move + the child's PV line.
-        state.pv[ply][0] = packMove(m);
-        int childLen = (ply + 1 < MAX_PLY) ? state.pvLength[ply + 1] : 0;
-        if (childLen < 0) childLen = 0;
-        if (childLen > MAX_PLY - 1 - ply) childLen = MAX_PLY - 1 - ply;
-        std::memcpy(&state.pv[ply][1], &state.pv[ply + 1][0],
-                    childLen * sizeof(PackedMove));
-        state.pvLength[ply] = childLen + 1;
+        collectPV(state, ply, packMove(m));
 
         if (alpha >= beta) {
           int bonus = depth * depth;
           // Beta cutoff — update move ordering heuristics
           if (m.isCapture()) {
-            // Capture history: reward the cutoff capture, penalize prior captures.
-            // Board is in pre-move state (unmake already called), so
-            // mailbox[to] still holds the victim piece for any capture.
-            int chIdx = pieceZobristIndex(pos.mailbox()[m.from]);
-            PieceType victim = m.isEP() ? PieceType::PAWN
-                                        : pieceType(pos.mailbox()[m.to]);
-            int vi = raw(victim) - 1;
-            if (isValidZobristIndex(chIdx) && vi >= 0 && vi < 6)
-              updateHistory(state.captureHistory[chIdx][vi][m.to], bonus);
-            for (int ci = 0; ci < captureCount - 1; ++ci) {
-              const Move cm = unpackMove(capturesSearched[ci]);
-              int prevIdx = pieceZobristIndex(pos.mailbox()[cm.from]);
-              PieceType prevVictim = cm.isEP() ? PieceType::PAWN
-                                               : pieceType(pos.mailbox()[cm.to]);
-              int pvi = raw(prevVictim) - 1;
-              if (isValidZobristIndex(prevIdx) && pvi >= 0 && pvi < 6)
-                updateHistory(state.captureHistory[prevIdx][pvi][cm.to], -bonus);
-            }
+            updateCaptureCutoffHistory(m, pos, state, bonus,
+                                       capturesSearched, captureCount);
           } else {
-            // Quiet cutoff — update killers, history, countermoves.
-            updateKillers(m, ply, state);
-            updateHistory(state.history[raw(pos.sideToMove())][m.from][m.to],
-                          bonus);
-
-            // History gravity: penalize previously searched quiet moves
-            // that failed to cause a cutoff.  The cutoff move itself (last
-            // entry in quietsSearched) is excluded — it received the bonus.
-            Color side = pos.sideToMove();
-            for (int q = 0; q < quietCount - 1; ++q) {
-              Move qm = unpackMove(quietsSearched[q]);
-              updateHistory(
-                  state.history[raw(side)][qm.from][qm.to], -bonus);
-            }
-
-            // Store as countermove for the opponent's previous (piece, toSq).
-            // On future visits, this move will be tried earlier when the same
-            // previous move is encountered.
-            if (!isEmpty(prevPiece)) {
-              int idx = pieceZobristIndex(prevPiece);
-              if (isValidZobristIndex(idx))
-                state.countermoves[idx][prevTo] = packMove(m);
-            }
+            updateQuietCutoffHeuristics(m, pos, state, ply, bonus,
+                                        quietsSearched, quietCount,
+                                        prevPiece, prevTo);
           }
           break;
         }
@@ -1661,10 +1759,15 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
   // replaced cheaply by the depth-preferred replacement policy.
   if (tt) tt->newGeneration();
 
-  // Heap-allocate SearchState (~39 KiB) to avoid overflowing the 16 KiB
-  // FreeRTOS task stack.  Contains history[2][64][64] (16 KiB), killers
-  // (384 B), countermoves (1.5 KiB), and triangular PV table (~12 KiB).
-  auto statePtr = std::make_unique<SearchState>();
+  SearchResult result;
+
+  // Heap-allocate SearchState (~32 KiB) to avoid overflowing the FreeRTOS
+  // task stack.  Contains history[2][64][64] (16 KiB), captureHistory (9 KiB),
+  // countermoves (1.5 KiB), and triangular PV table (~4 KiB).
+  // Returns nullptr on OOM instead of calling std::terminate() (ESP32 has
+  // C++ exceptions disabled).
+  auto statePtr = make_unique_nothrow<SearchState>();
+  if (!statePtr) return result;  // Allocation failed
   SearchState& state = *statePtr;
   state.timeFunc     = timeFunc;
   state.startTime    = timeFunc ? timeFunc() : 0;
@@ -1683,7 +1786,6 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
   movegen::generateAllMoves(pos.bitboards(), pos.mailbox(),
                             pos.sideToMove(), pos.positionState(), rootMoves);
 
-  SearchResult result;
   if (rootMoves.count == 0) return result;  // No legal moves
 
   // If only one legal move, return it immediately
@@ -1767,13 +1869,7 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
           iterBestMove = rootMoves.moves[i];
 
           // Build root PV: this root move + child PV from ply 1.
-          state.pv[0][0] = packMove(rootMoves.moves[i]);
-          int childLen = state.pvLength[1];
-          if (childLen < 0) childLen = 0;
-          if (childLen > MAX_PLY - 1) childLen = MAX_PLY - 1;
-          std::memcpy(&state.pv[0][1], &state.pv[1][0],
-                      childLen * sizeof(PackedMove));
-          state.pvLength[0] = childLen + 1;
+          collectPV(state, 0, packMove(rootMoves.moves[i]));
 
           if (score > alpha) alpha = score;
         } else if (score > secondBestScore) {
@@ -1816,23 +1912,12 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
     // Unpack principal variation from this iteration's PV table.
     result.pvLength = state.pvLength[0];
     if (result.pvLength < 0) result.pvLength = 0;
-    if (result.pvLength > MAX_PLY) result.pvLength = MAX_PLY;
+    if (result.pvLength > MAX_PV_LEN) result.pvLength = MAX_PV_LEN;
     for (int i = 0; i < result.pvLength; ++i)
       result.pv[i] = unpackMove(state.pv[0][i]);
 
     // --- Root move reordering ---
-    // Move the best move to index 0 so it is searched first at the next
-    // depth, improving alpha-beta cutoffs.
-    for (int i = 1; i < rootMoves.count; ++i) {
-      if (rootMoves.moves[i].from == iterBestMove.from &&
-          rootMoves.moves[i].to   == iterBestMove.to   &&
-          rootMoves.moves[i].flags == iterBestMove.flags) {
-        Move tmp = rootMoves.moves[0];
-        rootMoves.moves[0] = rootMoves.moves[i];
-        rootMoves.moves[i] = tmp;
-        break;
-      }
-    }
+    reorderRootMoves(rootMoves, iterBestMove);
 
     // Notify caller (e.g. UCI "info" line)
     if (info) info(result);

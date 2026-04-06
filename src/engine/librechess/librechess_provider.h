@@ -4,12 +4,19 @@
 #include "engine/engine_provider.h"
 #include "engine.h"
 
+#include <memory>
+
 // ---------------------------------------------------------------------------
 // EngineProvider implementation for the built-in LibreChess engine.
 //
 // Runs the search on-board via a FreeRTOS background task.  Uses the
-// Engine facade in-process — no network required.  The TT is sized to
-// fit available heap (capped at 128 KiB).
+// Engine facade in-process — no network required.
+//
+// The Engine (owning the TT, pawn hash, and eval hash tables) is created
+// once during initialize() and persists for the game's lifetime.  This
+// eliminates heap fragmentation from per-move alloc/free cycles and
+// enables cross-move transposition table reuse for stronger play.
+// Only SearchState (~31 KiB) is heap-allocated per search.
 // ---------------------------------------------------------------------------
 
 class LibreChessProvider : public EngineProvider {
@@ -30,6 +37,7 @@ class LibreChessProvider : public EngineProvider {
   explicit LibreChessProvider(int level = DEFAULT_LEVEL,
                               char playerColor = 'w',
                               ILogger* logger = nullptr);
+  ~LibreChessProvider() override;
 
   bool initialize(EngineInitResult& result) override;
   void requestMove(const std::string& fen) override;
@@ -40,6 +48,7 @@ class LibreChessProvider : public EngineProvider {
   struct TaskContext : BaseTaskContext {
     std::string fen;
     int depth;
+    LibreChess::Engine* engine;  // Non-owning — points to engine_ below
   };
 
   static void taskFunction(void* param);
@@ -48,6 +57,7 @@ class LibreChessProvider : public EngineProvider {
   int depth_;
   char playerColor_;
   int currentEvaluation_ = 0;
+  std::unique_ptr<LibreChess::Engine> engine_;  // Persistent — lives for the game
 };
 
 #endif  // LIBRECHESS_PROVIDER_H

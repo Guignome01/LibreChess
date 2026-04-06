@@ -1,5 +1,5 @@
 #include <unity.h>
-#include <iterator.h>
+#include <utils.h>
 
 #include "../test_helpers.h"
 
@@ -88,7 +88,7 @@ void test_knight_center_moves(void) {
   sq("d4", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(8, moves.count); // Knight in center has 8 moves
 }
 
@@ -98,7 +98,7 @@ void test_knight_corner_moves(void) {
   sq("a1", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(2, moves.count); // Corner knight has 2 moves
 }
 
@@ -132,7 +132,7 @@ void test_bishop_center_moves(void) {
   sq("d4", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(13, moves.count); // d4 bishop on empty board
 }
 
@@ -144,7 +144,7 @@ void test_bishop_blocked_by_own(void) {
   sq("c1", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(0, moves.count);
 }
 
@@ -173,7 +173,7 @@ void test_rook_center_moves(void) {
   sq("d4", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(14, moves.count); // Rook in center on empty board
 }
 
@@ -185,7 +185,7 @@ void test_rook_blocked_by_own(void) {
   sq("a1", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(0, moves.count);
 }
 
@@ -199,7 +199,7 @@ void test_queen_center_moves(void) {
   sq("d4", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(27, moves.count); // 13 bishop + 14 rook
 }
 
@@ -213,7 +213,7 @@ void test_king_center_moves(void) {
   sq("d4", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(8, moves.count); // King in center has 8 moves
 }
 
@@ -223,7 +223,7 @@ void test_king_corner_moves(void) {
   sq("a1", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(3, moves.count); // Corner king has 3 moves
 }
 
@@ -236,7 +236,7 @@ void test_king_no_move_onto_own(void) {
   sq("a1", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(0, moves.count);
 }
 
@@ -263,7 +263,7 @@ void test_black_knight_center(void) {
   sq("d4", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(8, moves.count);
 }
 
@@ -276,7 +276,7 @@ void test_black_rook_center(void) {
   sq("d4", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(14, moves.count);
 }
 
@@ -289,7 +289,7 @@ void test_black_bishop_center(void) {
   sq("d4", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(13, moves.count);
 }
 
@@ -331,7 +331,7 @@ void test_pawn_a_file_capture(void) {
   TEST_ASSERT_TRUE(moveExists(bb, mailbox, r, c, tr, tc));
   // No left capture possible (off-board)
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   // Should have: a5 (push) + b5 (capture) = 2
   TEST_ASSERT_EQUAL_INT(2, moves.count);
 }
@@ -346,7 +346,7 @@ void test_pawn_h_file_capture(void) {
   TEST_ASSERT_TRUE(moveExists(bb, mailbox, r, c, tr, tc));
   // Should have: h5 (push) + g5 (capture) = 2
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(2, moves.count);
 }
 
@@ -356,7 +356,7 @@ void test_knight_edge_b1(void) {
   sq("b1", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(3, moves.count); // a3, c3, d2
 }
 
@@ -375,7 +375,7 @@ void test_queen_blocked(void) {
   sq("d4", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(0, moves.count);
 }
 
@@ -385,7 +385,7 @@ void test_bishop_corner_a1(void) {
   sq("a1", r, c);
 
   MoveList moves;
-  movegen::getPossibleMoves(bb, mailbox, r, c, {}, moves);
+  movegen::getPossibleMoves(bb, mailbox, squareOf(r, c), {}, moves);
   TEST_ASSERT_EQUAL_INT(7, moves.count); // a1-h8 diagonal
 }
 
@@ -395,14 +395,14 @@ void test_bishop_corner_a1(void) {
 
 void test_initial_position_white_moves(void) {
   setupInitialBoard(bb, mailbox);
-  PositionState flags{0x0F, -1, -1};
+  PositionState flags{0x0F, SQ_NONE};
 
   // Each of the 8 pawns has 2 moves, each of 2 knights has 2 moves = 20 total
   int totalMoves = 0;
-  iterator::forEachPiece(bb, mailbox, [&](int row, int col, Piece piece) {
+  utils::forEachPiece(bb, mailbox, [&](Square sq, Piece piece) {
     if (piece::pieceColor(piece) != Color::WHITE) return;
     MoveList moves;
-    movegen::getPossibleMoves(bb, mailbox, row, col, flags, moves);
+    movegen::getPossibleMoves(bb, mailbox, sq, flags, moves);
     totalMoves += moves.count;
   });
   TEST_ASSERT_EQUAL_INT(20, totalMoves);
@@ -410,13 +410,13 @@ void test_initial_position_white_moves(void) {
 
 void test_initial_position_black_moves(void) {
   setupInitialBoard(bb, mailbox);
-  PositionState flags{0x0F, -1, -1};
+  PositionState flags{0x0F, SQ_NONE};
 
   int totalMoves = 0;
-  iterator::forEachPiece(bb, mailbox, [&](int row, int col, Piece piece) {
+  utils::forEachPiece(bb, mailbox, [&](Square sq, Piece piece) {
     if (piece::pieceColor(piece) != Color::BLACK) return;
     MoveList moves;
-    movegen::getPossibleMoves(bb, mailbox, row, col, flags, moves);
+    movegen::getPossibleMoves(bb, mailbox, sq, flags, moves);
     totalMoves += moves.count;
   });
   TEST_ASSERT_EQUAL_INT(20, totalMoves);
@@ -428,7 +428,7 @@ void test_initial_position_black_moves(void) {
 
 void test_generateAllMoves_initial_position(void) {
   setupInitialBoard(bb, mailbox);
-  PositionState state{0x0F, -1, -1};
+  PositionState state{0x0F, SQ_NONE};
 
   MoveList moves;
   movegen::generateAllMoves(bb, mailbox, Color::WHITE, state, moves);
@@ -489,7 +489,7 @@ void test_generateAllMoves_under_check(void) {
     // If this is a king move, destination should not be on e-file
     // (rook attacks entire e-file).
     if (from == squareOf(7, 4)) { // e1
-      TEST_ASSERT_NOT_EQUAL(4, colOf(to)); // not e-file
+      TEST_ASSERT_NOT_EQUAL(4, fileOf(to)); // not e-file
     }
   }
 }
@@ -550,8 +550,7 @@ void test_generateAllMoves_flags_ep(void) {
   placePiece(bb, mailbox, Piece::B_PAWN, "d5");
   PositionState state{};
   state.castlingRights = 0;
-  state.epRow = 2;  // d6 → row 2 (rank 6)
-  state.epCol = 3;  // file d
+  state.epSquare = squareOf(2, 3);  // d6 → row 2 (rank 6), file d
 
   MoveList moves;
   movegen::generateAllMoves(bb, mailbox, Color::WHITE, state, moves);
@@ -629,14 +628,14 @@ void test_generateAllMoves_matches_perPiece(void) {
   // Verify generateAllMoves produces the same move set as iterating
   // getPossibleMoves per piece (for non-promotion positions).
   setupInitialBoard(bb, mailbox);
-  PositionState state{0x0F, -1, -1};
+  PositionState state{0x0F, SQ_NONE};
 
   // Count via per-piece getPossibleMoves
   int perPieceCount = 0;
-  iterator::forEachPiece(bb, mailbox, [&](int r, int c, Piece piece) {
+  utils::forEachPiece(bb, mailbox, [&](Square sq, Piece piece) {
     if (piece::pieceColor(piece) != Color::WHITE) return;
     MoveList moves;
-    movegen::getPossibleMoves(bb, mailbox, r, c, state, moves);
+    movegen::getPossibleMoves(bb, mailbox, sq, state, moves);
     perPieceCount += moves.count;
   });
 
@@ -661,8 +660,7 @@ void test_generateCaptures_ep_included(void) {
   placePiece(bb, mailbox, Piece::B_PAWN, "d5");
   PositionState state{};
   state.castlingRights = 0;
-  state.epRow = 2;  // d6
-  state.epCol = 3;
+  state.epSquare = squareOf(2, 3);  // d6
 
   MoveList caps;
   movegen::generateCaptures(bb, mailbox, Color::WHITE, state, caps);
@@ -680,7 +678,7 @@ void test_generateCaptures_ep_included(void) {
 void test_generateCaptures_no_quiet_moves(void) {
   // generateCaptures should not include non-capture quiet moves.
   setupInitialBoard(bb, mailbox);
-  PositionState state{0x0F, -1, -1};
+  PositionState state{0x0F, SQ_NONE};
 
   MoveList caps;
   movegen::generateCaptures(bb, mailbox, Color::WHITE, state, caps);
@@ -754,7 +752,7 @@ void test_Move_promo_index_roundtrip(void) {
 
 void test_has_legal_moves_initial(void) {
   setupInitialBoard(bb, mailbox);
-  PositionState flags{0x0F, -1, -1};
+  PositionState flags{0x0F, SQ_NONE};
   TEST_ASSERT_TRUE(movegen::hasAnyLegalMove(bb, mailbox, Color::WHITE, flags));
   TEST_ASSERT_TRUE(movegen::hasAnyLegalMove(bb, mailbox, Color::BLACK, flags));
 }
@@ -764,7 +762,7 @@ void test_no_legal_moves_stalemate(void) {
   placePiece(bb, mailbox, Piece::B_KING, "a8");
   placePiece(bb, mailbox, Piece::W_QUEEN, "b6");
   placePiece(bb, mailbox, Piece::W_KING, "c6");
-  PositionState flags{0x00, -1, -1, 0, 1};
+  PositionState flags{0x00, SQ_NONE, 0, 1};
   TEST_ASSERT_FALSE(movegen::hasAnyLegalMove(bb, mailbox, Color::BLACK, flags));
 }
 
@@ -772,7 +770,7 @@ void test_hasAnyLegalMove_in_check_with_escape(void) {
   // King in check but can escape
   placePiece(bb, mailbox, Piece::W_KING, "e1");
   placePiece(bb, mailbox, Piece::B_ROOK, "e8"); // rook checks
-  PositionState flags{0x00, -1, -1, 0, 1};
+  PositionState flags{0x00, SQ_NONE, 0, 1};
   // King can escape to d1, d2, f1, f2
   TEST_ASSERT_TRUE(movegen::hasAnyLegalMove(bb, mailbox, Color::WHITE, flags));
 }
@@ -784,12 +782,12 @@ void test_hasAnyLegalMove_in_check_with_escape(void) {
 // staged captures + quiets == generateAllMoves in the initial position.
 void test_staged_matches_all_moves_initial(void) {
   setupInitialBoard(bb, mailbox);
-  PositionState flags{0x0F, -1, -1, 0, 1};
+  PositionState flags{0x0F, SQ_NONE, 0, 1};
 
   MoveList allMoves;
   movegen::generateAllMoves(bb, mailbox, Color::WHITE, flags, allMoves);
 
-  int kidx = piece::pieceZobristIndex(piece::makePiece(Color::WHITE, PieceType::KING));
+  int kidx = piece::pieceIndex('K');
   Square kingSq = lsb(bb.byPiece[kidx]);
   movegen::LegalityContext ctx = movegen::buildLegalityContext(bb, Color::WHITE, kingSq);
 
@@ -838,12 +836,12 @@ void test_staged_matches_all_moves_middlegame(void) {
   placePiece(bb, mailbox, Piece::B_PAWN, "f7");
   placePiece(bb, mailbox, Piece::B_PAWN, "g6");
   placePiece(bb, mailbox, Piece::B_PAWN, "h3");
-  PositionState flags{0x0F, -1, -1, 0, 1};
+  PositionState flags{0x0F, SQ_NONE, 0, 1};
 
   MoveList allMoves;
   movegen::generateAllMoves(bb, mailbox, Color::WHITE, flags, allMoves);
 
-  int kidx = piece::pieceZobristIndex(piece::makePiece(Color::WHITE, PieceType::KING));
+  int kidx = piece::pieceIndex('K');
   Square kingSq = lsb(bb.byPiece[kidx]);
   movegen::LegalityContext ctx = movegen::buildLegalityContext(bb, Color::WHITE, kingSq);
 
@@ -867,12 +865,12 @@ void test_staged_matches_all_moves_in_check(void) {
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_ROOK, "e4");  // checks white king
   placePiece(bb, mailbox, Piece::W_KNIGHT, "d3"); // can block or capture
-  PositionState flags{0x00, -1, -1, 0, 1};
+  PositionState flags{0x00, SQ_NONE, 0, 1};
 
   MoveList allMoves;
   movegen::generateAllMoves(bb, mailbox, Color::WHITE, flags, allMoves);
 
-  int kidx = piece::pieceZobristIndex(piece::makePiece(Color::WHITE, PieceType::KING));
+  int kidx = piece::pieceIndex('K');
   Square kingSq = lsb(bb.byPiece[kidx]);
   movegen::LegalityContext ctx = movegen::buildLegalityContext(bb, Color::WHITE, kingSq);
 
