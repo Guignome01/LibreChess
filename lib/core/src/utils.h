@@ -86,17 +86,8 @@ inline std::string squareName(Square sq) {
   return {fileChar(fileOf(sq)), rankCharFromRank(rankOf(sq))};
 }
 
-// Legacy display-oriented helpers (row/col ↔ LERF conversion).
-// row 0 = rank 8 (black back rank), col 0 = file 'a'.
-// Used at display boundaries (notation, game layer, firmware readouts).
-// Core internals use rankOf/fileOf/makeSquare instead.
-// squareOf/rowOf live in bitboard.h (LibreChess:: namespace).
-inline constexpr char rankChar(int row) { return '1' + (7 - row); }
-inline constexpr int rankIndex(char rank) { return 8 - (rank - '0'); }
-
-inline std::string squareName(int row, int col) {
-  return {fileChar(col), rankChar(row)};
-}
+// Display-coordinate converters (rowColToSquare, squareToRow, squareToCol,
+// rankChar, squareName) live in game/types.h.
 
 // ---------------------------------------------------------------------------
 // Castling rights update — lookup table approach.

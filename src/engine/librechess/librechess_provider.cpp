@@ -125,15 +125,13 @@ int LibreChessProvider::getEvaluation() {
 // Returns false if the move is null (from==0 && to==0).
 static bool moveToResult(const LibreChess::Move& move, EngineResult& out, int score = 0) {
   if (move.from == 0 && move.to == 0) return false;
-  std::string moveStr = LibreChess::notation::toCoordinate(
-      LibreChess::squareToRow(move.from),
-      LibreChess::squareToCol(move.from),
-      LibreChess::squareToRow(move.to),
-      LibreChess::squareToCol(move.to));
+  char promoChar = ' ';
   if (move.isPromotion()) {
     static const char promoChars[] = {'n', 'b', 'r', 'q'};
-    moveStr += promoChars[move.promoIndex()];
+    promoChar = promoChars[move.promoIndex()];
   }
+  std::string moveStr = LibreChess::notation::toCoordinate(
+      move.from, move.to, promoChar);
   out.type = EngineResult::MOVE;
   out.move = moveStr;
   out.evaluation = score;

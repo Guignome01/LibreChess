@@ -15,6 +15,7 @@
 // from outside this library.
 
 #include <cstdint>
+#include <string>
 
 #include "bitboard.h"  // rankOf, fileOf, makeSquare, Square
 #include "piece.h"     // Core types (Color, Piece, GameResult, etc.)
@@ -41,6 +42,22 @@ inline constexpr int squareToCol(Square sq) { return fileOf(sq); }
 /// Convert display (row, col) to LERF Square.
 inline constexpr Square rowColToSquare(int row, int col) {
   return makeSquare(7 - row, col);
+}
+
+// ---------------------------------------------------------------------------
+// Display-oriented coordinate helpers.
+//
+// row 0 = rank 8 (black back rank), col 0 = file 'a'.
+// Used at display boundaries (game layer, firmware readouts).
+// Core internals use rankOf/fileOf/makeSquare instead.
+// ---------------------------------------------------------------------------
+
+/// Display-rank character from display row (row 0 → '8', row 7 → '1').
+inline constexpr char rankChar(int row) { return '1' + (7 - row); }
+
+/// Square name from display (row, col) — e.g. (0, 0) → "a8".
+inline std::string squareName(int row, int col) {
+  return {static_cast<char>('a' + col), rankChar(row)};
 }
 
 // ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@
 #include "types.h"
 
 // ---------------------------------------------------------------------------
-// Move notation conversion — transforms between internal array coordinates
+// Move notation conversion — transforms between LERF Square coordinates
 // and standard chess notation formats.
 //
 // Supports three notation formats (see MoveFormat in types.h):
@@ -29,12 +29,11 @@ namespace LibreChess {
 namespace notation {
 
 // ---------------------------------------------------------------------------
-// Output — array coordinates / MoveEntry → string
+// Output — Square / MoveEntry → string
 // ---------------------------------------------------------------------------
 
 // Coordinate notation: "e2e4", "e7e8q".
-std::string toCoordinate(int fromRow, int fromCol, int toRow, int toCol,
-                         char promotion = ' ');
+std::string toCoordinate(Square from, Square to, char promotion = ' ');
 
 // Long Algebraic Notation: "e2-e4", "Ng1xf3", "O-O", "e7-e8=Q".
 std::string toLAN(const MoveEntry& move);
@@ -44,27 +43,24 @@ std::string toSAN(const BitboardSet& bb, const Piece mailbox[],
                   const PositionState& state, const MoveEntry& move);
 
 // ---------------------------------------------------------------------------
-// Input — string → array coordinates
+// Input — string → Square
 // ---------------------------------------------------------------------------
 
 // Parse coordinate notation: "e2e4", "e7e8q".
 bool parseCoordinate(const std::string& move,
-                     int& fromRow, int& fromCol,
-                     int& toRow, int& toCol,
+                     Square& from, Square& to,
                      char& promotion);
 
 // Parse Long Algebraic Notation: "e2-e4", "Ng1xf3", "e7-e8=Q", "O-O".
 bool parseLAN(const std::string& move,
-              int& fromRow, int& fromCol,
-              int& toRow, int& toCol,
+              Square& from, Square& to,
               char& promotion);
 
 // Parse Standard Algebraic Notation: "e4", "Nxf3", "O-O", "e8=Q".
 bool parseSAN(const BitboardSet& bb, const Piece mailbox[],
               const PositionState& state,
               Color currentTurn, const std::string& san,
-              int& fromRow, int& fromCol,
-              int& toRow, int& toCol,
+              Square& from, Square& to,
               char& promotion);
 
 // Auto-detect format and parse.  Tries coordinate first (fast regex match),
@@ -72,8 +68,7 @@ bool parseSAN(const BitboardSet& bb, const Piece mailbox[],
 bool parseMove(const BitboardSet& bb, const Piece mailbox[],
                const PositionState& state,
                Color currentTurn, const std::string& move,
-               int& fromRow, int& fromCol,
-               int& toRow, int& toCol,
+               Square& from, Square& to,
                char& promotion);
 
 }  // namespace notation

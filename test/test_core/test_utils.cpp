@@ -270,19 +270,14 @@ void test_updateCastlingRights_no_change_on_pawn_move(void) {
 }
 
 // ---------------------------------------------------------------------------
-// squareName / PositionState::initial
+// squareName (LERF) / PositionState::initial
 // ---------------------------------------------------------------------------
 
-void test_squareName_corners(void) {
-  TEST_ASSERT_EQUAL_STRING("a8", utils::squareName(0, 0).c_str());
-  TEST_ASSERT_EQUAL_STRING("h8", utils::squareName(0, 7).c_str());
-  TEST_ASSERT_EQUAL_STRING("a1", utils::squareName(7, 0).c_str());
-  TEST_ASSERT_EQUAL_STRING("h1", utils::squareName(7, 7).c_str());
-}
-
-void test_squareName_center(void) {
-  TEST_ASSERT_EQUAL_STRING("e4", utils::squareName(4, 4).c_str());
-  TEST_ASSERT_EQUAL_STRING("d5", utils::squareName(3, 3).c_str());
+void test_squareName_lerf(void) {
+  TEST_ASSERT_EQUAL_STRING("a1", utils::squareName(SQ_A1).c_str());
+  TEST_ASSERT_EQUAL_STRING("h8", utils::squareName(SQ_H8).c_str());
+  TEST_ASSERT_EQUAL_STRING("e4", utils::squareName(makeSquare(3, 4)).c_str());
+  TEST_ASSERT_EQUAL_STRING("d5", utils::squareName(makeSquare(4, 3)).c_str());
 }
 
 void test_positionState_initial(void) {
@@ -372,7 +367,9 @@ void test_hasCastlingRight_partial(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Coordinate helpers: fileChar / rankChar / fileIndex / rankIndex
+// Coordinate helpers: fileChar / fileIndex (LERF-native)
+// Display helpers (rankChar, rankIndex, squareName(row,col)) live in
+// game/types.h and are tested in test_game/.
 // ---------------------------------------------------------------------------
 
 void test_fileChar_all_columns(void) {
@@ -386,15 +383,15 @@ void test_fileChar_all_columns(void) {
   TEST_ASSERT_EQUAL_CHAR('h', utils::fileChar(7));
 }
 
-void test_rankChar_all_rows(void) {
-  TEST_ASSERT_EQUAL_CHAR('8', utils::rankChar(0));
-  TEST_ASSERT_EQUAL_CHAR('7', utils::rankChar(1));
-  TEST_ASSERT_EQUAL_CHAR('6', utils::rankChar(2));
-  TEST_ASSERT_EQUAL_CHAR('5', utils::rankChar(3));
-  TEST_ASSERT_EQUAL_CHAR('4', utils::rankChar(4));
-  TEST_ASSERT_EQUAL_CHAR('3', utils::rankChar(5));
-  TEST_ASSERT_EQUAL_CHAR('2', utils::rankChar(6));
-  TEST_ASSERT_EQUAL_CHAR('1', utils::rankChar(7));
+void test_rankCharFromRank_all_ranks(void) {
+  TEST_ASSERT_EQUAL_CHAR('1', utils::rankCharFromRank(0));
+  TEST_ASSERT_EQUAL_CHAR('2', utils::rankCharFromRank(1));
+  TEST_ASSERT_EQUAL_CHAR('3', utils::rankCharFromRank(2));
+  TEST_ASSERT_EQUAL_CHAR('4', utils::rankCharFromRank(3));
+  TEST_ASSERT_EQUAL_CHAR('5', utils::rankCharFromRank(4));
+  TEST_ASSERT_EQUAL_CHAR('6', utils::rankCharFromRank(5));
+  TEST_ASSERT_EQUAL_CHAR('7', utils::rankCharFromRank(6));
+  TEST_ASSERT_EQUAL_CHAR('8', utils::rankCharFromRank(7));
 }
 
 void test_fileIndex_all_files(void) {
@@ -404,11 +401,11 @@ void test_fileIndex_all_files(void) {
   TEST_ASSERT_EQUAL_INT(7, utils::fileIndex('h'));
 }
 
-void test_rankIndex_all_ranks(void) {
-  TEST_ASSERT_EQUAL_INT(7, utils::rankIndex('1'));
-  TEST_ASSERT_EQUAL_INT(6, utils::rankIndex('2'));
-  TEST_ASSERT_EQUAL_INT(4, utils::rankIndex('4'));
-  TEST_ASSERT_EQUAL_INT(0, utils::rankIndex('8'));
+void test_rankIndexFromChar_all_ranks(void) {
+  TEST_ASSERT_EQUAL_INT(0, utils::rankIndexFromChar('1'));
+  TEST_ASSERT_EQUAL_INT(1, utils::rankIndexFromChar('2'));
+  TEST_ASSERT_EQUAL_INT(3, utils::rankIndexFromChar('4'));
+  TEST_ASSERT_EQUAL_INT(7, utils::rankIndexFromChar('8'));
 }
 
 void test_coordinate_roundtrip(void) {
@@ -416,9 +413,9 @@ void test_coordinate_roundtrip(void) {
     char f = utils::fileChar(col);
     TEST_ASSERT_EQUAL_INT(col, utils::fileIndex(f));
   }
-  for (int row = 0; row < 8; row++) {
-    char r = utils::rankChar(row);
-    TEST_ASSERT_EQUAL_INT(row, utils::rankIndex(r));
+  for (int rank = 0; rank < 8; rank++) {
+    char r = utils::rankCharFromRank(rank);
+    TEST_ASSERT_EQUAL_INT(rank, utils::rankIndexFromChar(r));
   }
 }
 
@@ -507,7 +504,7 @@ void test_boardToText_empty_board(void) {
   TEST_ASSERT_TRUE(text.length() > 0);
   // Most rank lines should be all dots except the king ranks
   // Check rank 4 (row 4) which should have all dots
-  char rank = utils::rankChar(4);
+  char rank = '4';  // display row 4 = rank '4'
   std::string prefix = std::string(1, rank) + " ";
   size_t pos_found = text.find(prefix);
   TEST_ASSERT_TRUE(pos_found != std::string::npos);
@@ -608,9 +605,8 @@ void register_utils_tests() {
   RUN_TEST(test_updateCastlingRights_rook_captured);
   RUN_TEST(test_updateCastlingRights_no_change_on_pawn_move);
 
-  // squareName
-  RUN_TEST(test_squareName_corners);
-  RUN_TEST(test_squareName_center);
+  // squareName (LERF)
+  RUN_TEST(test_squareName_lerf);
 
   // PositionState::initial
   RUN_TEST(test_positionState_initial);
@@ -632,11 +628,11 @@ void register_utils_tests() {
   RUN_TEST(test_hasCastlingRight_no_rights);
   RUN_TEST(test_hasCastlingRight_partial);
 
-  // Coordinate helpers
+  // Coordinate helpers (LERF-native)
   RUN_TEST(test_fileChar_all_columns);
-  RUN_TEST(test_rankChar_all_rows);
+  RUN_TEST(test_rankCharFromRank_all_ranks);
   RUN_TEST(test_fileIndex_all_files);
-  RUN_TEST(test_rankIndex_all_ranks);
+  RUN_TEST(test_rankIndexFromChar_all_ranks);
   RUN_TEST(test_coordinate_roundtrip);
 
   // isValidSquare

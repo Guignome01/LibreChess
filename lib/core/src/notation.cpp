@@ -26,9 +26,9 @@ static std::string castlingNotation(const MoveEntry& move) {
 // Output — Coordinate notation
 // ---------------------------------------------------------------------------
 
-std::string toCoordinate(int fromRow, int fromCol, int toRow, int toCol, char promotion) {
-  std::string move = utils::squareName(fromRow, fromCol);
-  move += utils::squareName(toRow, toCol);
+std::string toCoordinate(Square from, Square to, char promotion) {
+  std::string move = utils::squareName(from);
+  move += utils::squareName(to);
 
   if (promotion != ' ' && promotion != '\0') {
     move += static_cast<char>(tolower(promotion));
@@ -140,11 +140,9 @@ static void parseSANDisambiguation(const std::string& hints,
 static bool findMatchingPiece(const BitboardSet& bb, const Piece mailbox[],
                               const PositionState& state, Color currentTurn,
                               PieceType targetType, int hintFile, int hintRank,
-                              int toRow, int toCol,
-                              int& fromRow, int& fromCol) {
+                              Square toSq, Square& fromSq) {
   Square matchSq = SQ_NONE;
   int matchCount = 0;
-  Square toSq = squareOf(toRow, toCol);
 
   utils::forEachPiece(bb, mailbox, [&](Square sq, Piece p) {
     if (piece::pieceType(p) != targetType) return;
@@ -157,8 +155,7 @@ static bool findMatchingPiece(const BitboardSet& bb, const Piece mailbox[],
   });
 
   if (matchCount != 1) return false;
-  fromRow = rowOf(matchSq);
-  fromCol = fileOf(matchSq);
+  fromSq = matchSq;
   return true;
 }
 
@@ -251,8 +248,7 @@ std::string toSAN(const BitboardSet& bb, const Piece mailbox[],
 // ---------------------------------------------------------------------------
 
 bool parseCoordinate(const std::string& move,
-                     int& fromRow, int& fromCol,
-                     int& toRow, int& toCol,
+                     Square& from, Square& to,
                      char& promotion) {
   size_t len = move.length();
   if (len < 4 || len > 5) return false;
@@ -262,16 +258,20 @@ bool parseCoordinate(const std::string& move,
   char toFile = move[2];
   char toRank = move[3];
 
-  fromCol = utils::fileIndex(fromFile);
-  fromRow = utils::rankIndex(fromRank);
-  toCol = utils::fileIndex(toFile);
-  toRow = utils::rankIndex(toRank);
+  int ff = utils::fileIndex(fromFile);
+  int fr = utils::rankIndexFromChar(fromRank);
+  int tf = utils::fileIndex(toFile);
+  int tr = utils::rankIndexFromChar(toRank);
 
-  if (!utils::isValidSquare(fromRow, fromCol) || !utils::isValidSquare(toRow, toCol))
+  if ((unsigned)ff >= 8 || (unsigned)fr >= 8 ||
+      (unsigned)tf >= 8 || (unsigned)tr >= 8)
     return false;
 
+  from = makeSquare(fr, ff);
+  to   = makeSquare(tr, tf);
+
   // From and to squares must differ
-  if (fromRow == toRow && fromCol == toCol) return false;
+  if (from == to) return false;
 
   // Promotion (optional 5th char) must be q, r, b, or n
   promotion = ' ';
@@ -289,8 +289,7 @@ bool parseCoordinate(const std::string& move,
 // ---------------------------------------------------------------------------
 
 bool parseLAN(const std::string& move,
-              int& fromRow, int& fromCol,
-              int& toRow, int& toCol,
+              Square& from, Square& to,
               char& promotion) {
   if (move.empty()) return false;
 
@@ -344,7 +343,7 @@ bool parseLAN(const std::string& move,
     coords += promotion;
   }
 
-  return parseCoordinate(coords, fromRow, fromCol, toRow, toCol, promotion);
+  return parseCoordinate(coords, from, to, promotion);
 }
 
 // ---------------------------------------------------------------------------
@@ -355,27 +354,25 @@ bool parseLAN(const std::string& move,
 static bool findCastlingMove(const BitboardSet& bb, const Piece mailbox[],
                              const PositionState& state,
                              Color currentTurn, bool kingSide,
-                             int& fromRow, int& fromCol, int& toRow, int& toCol,
+                             Square& from, Square& to,
                              char& promotion) {
   int rank = piece::homeRank(currentTurn);
-  int row = 7 - rank;  // display-row for output
   Square kingSq = makeSquare(rank, 4);
   Piece king = mailbox[kingSq];
   if (piece::pieceType(king) != PieceType::KING || piece::pieceColor(king) != currentTurn)
     return false;
   if (!utils::hasCastlingRight(state.castlingRights, currentTurn, kingSide))
     return false;
-  fromRow = row; fromCol = 4;
-  toRow = row;   toCol = kingSide ? 6 : 2;
+  from = kingSq;
+  to   = makeSquare(rank, kingSide ? 6 : 2);
   promotion = ' ';
-  return movegen::isValidMove(bb, mailbox, squareOf(fromRow, fromCol), squareOf(toRow, toCol), state);
+  return movegen::isValidMove(bb, mailbox, from, to, state);
 }
 
 bool parseSAN(const BitboardSet& bb, const Piece mailbox[],
               const PositionState& state,
               Color currentTurn, const std::string& san,
-              int& fromRow, int& fromCol,
-              int& toRow, int& toCol,
+              Square& from, Square& to,
               char& promotion) {
   if (san.empty()) return false;
 
@@ -387,10 +384,10 @@ bool parseSAN(const BitboardSet& bb, const Piece mailbox[],
   stripCheckSuffix(castleStr);
 
   if (castleStr == "O-O" || castleStr == "0-0")
-    return findCastlingMove(bb, mailbox, state, currentTurn, true, fromRow, fromCol, toRow, toCol, promotion);
+    return findCastlingMove(bb, mailbox, state, currentTurn, true, from, to, promotion);
 
   if (castleStr == "O-O-O" || castleStr == "0-0-0")
-    return findCastlingMove(bb, mailbox, state, currentTurn, false, fromRow, fromCol, toRow, toCol, promotion);
+    return findCastlingMove(bb, mailbox, state, currentTurn, false, from, to, promotion);
 
   // Strip check/checkmate suffixes
   std::string s = san;
@@ -425,8 +422,7 @@ bool parseSAN(const BitboardSet& bb, const Piece mailbox[],
   if (destFile < 'a' || destFile > 'h' || destRank < '1' || destRank > '8')
     return false;
 
-  toCol = utils::fileIndex(destFile);
-  toRow = utils::rankIndex(destRank);
+  to = makeSquare(utils::rankIndexFromChar(destRank), utils::fileIndex(destFile));
 
   // Parse disambiguation hints
   int hintFile = -1, hintRank = -1;
@@ -434,7 +430,7 @@ bool parseSAN(const BitboardSet& bb, const Piece mailbox[],
 
   // Find the unique matching piece
   return findMatchingPiece(bb, mailbox, state, currentTurn, targetType,
-                           hintFile, hintRank, toRow, toCol, fromRow, fromCol);
+                           hintFile, hintRank, to, from);
 }
 
 // ---------------------------------------------------------------------------
@@ -476,25 +472,24 @@ static bool looksLikeLAN(const std::string& move) {
 bool parseMove(const BitboardSet& bb, const Piece mailbox[],
                const PositionState& state,
                Color currentTurn, const std::string& move,
-               int& fromRow, int& fromCol,
-               int& toRow, int& toCol,
+               Square& from, Square& to,
                char& promotion) {
   if (move.empty()) return false;
 
   // 1. Try coordinate notation first (fastest, most common in UCI protocol)
   if (looksLikeCoordinate(move)) {
-    if (parseCoordinate(move, fromRow, fromCol, toRow, toCol, promotion))
+    if (parseCoordinate(move, from, to, promotion))
       return true;
   }
 
   // 2. Try LAN (has separators like '-' or piece prefix with 'x')
   if (looksLikeLAN(move)) {
-    if (parseLAN(move, fromRow, fromCol, toRow, toCol, promotion))
+    if (parseLAN(move, from, to, promotion))
       return true;
   }
 
   // 3. Try SAN (requires board context)
-  if (parseSAN(bb, mailbox, state, currentTurn, move, fromRow, fromCol, toRow, toCol, promotion))
+  if (parseSAN(bb, mailbox, state, currentTurn, move, from, to, promotion))
     return true;
 
   return false;

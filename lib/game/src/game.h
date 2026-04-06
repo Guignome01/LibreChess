@@ -28,7 +28,8 @@
 // Usage:
 //   Game game;
 //   game.newGame();
-//   MoveResult r = game.makeMove(6, 4, 4, 4);  // e2e4
+//   MoveResult r = game.makeMove("e2e4");  // coordinate string
+//   MoveResult r = game.makeMove(SQ_E2, SQ_E4);  // Square-native
 //   if (game.isGameOver()) { ... }
 // ---------------------------------------------------------------------------
 namespace LibreChess {
@@ -48,6 +49,7 @@ class Game {
 
   // --- Mutations ---
 
+  MoveResult makeMove(Square from, Square to, char promotion = ' ');
   MoveResult makeMove(int fromRow, int fromCol, int toRow, int toCol, char promotion = ' ');
   MoveResult makeMove(const std::string& move);
   bool loadFEN(const std::string& fen);
@@ -89,6 +91,7 @@ class Game {
 
   const BitboardSet& bitboards() const { return board_.bitboards(); }
   const Piece* mailbox() const { return board_.mailbox(); }
+  Piece getSquare(Square sq) const { return board_.getSquare(sq); }
   Piece getSquare(int row, int col) const {
     return board_.getSquare(rowColToSquare(row, col));
   }
@@ -102,6 +105,9 @@ class Game {
 
   // --- Convenience wrappers ---
 
+  void getPossibleMoves(Square sq, MoveList& moves) const {
+    board_.getPossibleMoves(sq, moves);
+  }
   void getPossibleMoves(int row, int col, MoveList& moves) const {
     board_.getPossibleMoves(rowColToSquare(row, col), moves);
   }
@@ -121,6 +127,9 @@ class Game {
 
 
 
+  EnPassantInfo checkEnPassant(Square from, Square to) const {
+    return board_.checkEnPassant(from, to);
+  }
   EnPassantInfo checkEnPassant(int fromRow, int fromCol, int toRow, int toCol) const {
     return board_.checkEnPassant(rowColToSquare(fromRow, fromCol),
                                  rowColToSquare(toRow, toCol));
@@ -135,10 +144,13 @@ class Game {
   static PieceType pieceType(Piece p) { return piece::pieceType(p); }
   static char pieceToChar(Piece p) { return piece::pieceToChar(p); }
   static const char* colorName(Color c) { return piece::colorName(c); }
-  static std::string squareName(int row, int col) { return utils::squareName(row, col); }
+  static std::string squareName(int row, int col) { return ::LibreChess::squareName(row, col); }
   static char fileChar(int col) { return utils::fileChar(col); }
-  static char rankChar(int row) { return utils::rankChar(row); }
+  static char rankChar(int row) { return ::LibreChess::rankChar(row); }
 
+  CastlingInfo checkCastling(Square from, Square to) const {
+    return board_.checkCastling(from, to);
+  }
   CastlingInfo checkCastling(int fromRow, int fromCol,
                              int toRow, int toCol) const {
     return board_.checkCastling(rowColToSquare(fromRow, fromCol),

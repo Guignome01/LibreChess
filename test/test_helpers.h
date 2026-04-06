@@ -19,6 +19,24 @@
 
 using namespace LibreChess;
 
+// ---------------------------------------------------------------------------
+// Display-coordinate helpers (row/col ↔ LERF) — test-only utilities
+// ---------------------------------------------------------------------------
+// Row/col convention (matching game layer / firmware):
+//   row 0 = rank 8 (black back rank), col 0 = file a.
+//   col is identical to file.  row = 7 - rank.
+// Production code uses rankOf/fileOf/makeSquare (LERF) instead.
+// Firmware uses rowColToSquare/squareToRow/squareToCol from game/types.h.
+// ---------------------------------------------------------------------------
+
+constexpr Square squareOf(int row, int col) {
+  return (7 - row) * 8 + col;
+}
+
+constexpr int rowOf(Square sq) {
+  return 7 - (sq >> 3);  // 7 - rank
+}
+
 static uint64_t nowUs() {
   using namespace std::chrono;
   return static_cast<uint64_t>(
@@ -89,8 +107,8 @@ inline MoveEntry makeEntry(int fr, int fc, int tr, int tc, Piece piece,
   e.from = squareOf(fr, fc); e.to = squareOf(tr, tc);
   e.piece = piece; e.captured = captured; e.promotion = promo;
   e.flags = 0;
-  if (captured != Piece::NONE) e.flags |= ME_CAPTURE;
-  if (promo != Piece::NONE) e.flags |= ME_PROMOTION;
+  if (captured != Piece::NONE) e.flags |= MR_CAPTURE;
+  if (promo != Piece::NONE) e.flags |= MR_PROMOTION;
   e.epCapturedSq = SQ_NONE;
   return e;
 }
@@ -133,21 +151,20 @@ inline std::string moveToStr(Move m) {
     static constexpr char PROMO_CHARS[] = {'n', 'b', 'r', 'q'};
     promo = PROMO_CHARS[m.promoIndex()];
   }
-  return notation::toCoordinate(rowOf(m.from), fileOf(m.from), rowOf(m.to),
-                                fileOf(m.to), promo);
+  return notation::toCoordinate(m.from, m.to, promo);
 }
 
 /// Parse a SAN move string into coordinate notation using the position context.
 inline std::string sanToCoordinate(const Position& pos,
                                    const std::string& san) {
-  int fromRow, fromCol, toRow, toCol;
+  Square from, to;
   char promotion = ' ';
   bool ok =
       notation::parseSAN(pos.bitboards(), pos.mailbox(), pos.positionState(),
-                         pos.sideToMove(), san, fromRow, fromCol, toRow, toCol,
+                         pos.sideToMove(), san, from, to,
                          promotion);
   if (!ok) return "";
-  return notation::toCoordinate(fromRow, fromCol, toRow, toCol, promotion);
+  return notation::toCoordinate(from, to, promotion);
 }
 
 /// Pre-allocated hash tables shared across test positions.

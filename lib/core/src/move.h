@@ -127,14 +127,15 @@ constexpr MoveResult invalidMoveResult() {
 }
 
 // ---------------------------------------------------------------------------
-// MoveEntry flag bits — packed into a single uint8_t.
+// MoveEntry flag bits.
+//
+// MoveEntry reuses MR_* constants directly (MR_CAPTURE through MR_CHECK).
+// MR_VALID (bit 0) is MoveResult-only and excluded by ME_FLAG_MASK.
 // ---------------------------------------------------------------------------
 
-static constexpr uint8_t ME_CAPTURE   = 1 << 0;
-static constexpr uint8_t ME_EP        = 1 << 1;
-static constexpr uint8_t ME_CASTLING  = 1 << 2;
-static constexpr uint8_t ME_PROMOTION = 1 << 3;
-static constexpr uint8_t ME_CHECK     = 1 << 4;
+// Mask for copying common flags from MoveResult to MoveEntry.
+static constexpr uint8_t ME_FLAG_MASK =
+    MR_CAPTURE | MR_EP | MR_CASTLING | MR_PROMOTION | MR_CHECK;
 
 // ---------------------------------------------------------------------------
 // MoveEntry — a single move record in the game history.
@@ -147,15 +148,15 @@ struct MoveEntry {
   Piece piece;           // piece that moved (original, before any promotion)
   Piece captured;        // piece captured (Piece::NONE if none)
   Piece promotion;       // piece promoted to (Piece::NONE if not a promotion)
-  uint8_t flags;         // packed booleans (ME_CAPTURE | ME_EP | ...)
+  uint8_t flags;         // packed booleans (MR_CAPTURE | MR_EP | ...)
   Square epCapturedSq;   // en passant captured pawn square (SQ_NONE if N/A)
   PositionState prevState;  // position state before the move (enables undo)
 
-  constexpr bool isCapture()   const { return flags & ME_CAPTURE; }
-  constexpr bool isEnPassant() const { return flags & ME_EP; }
-  constexpr bool isCastling()  const { return flags & ME_CASTLING; }
-  constexpr bool isPromotion() const { return flags & ME_PROMOTION; }
-  constexpr bool isCheck()     const { return flags & ME_CHECK; }
+  constexpr bool isCapture()   const { return flags & MR_CAPTURE; }
+  constexpr bool isEnPassant() const { return flags & MR_EP; }
+  constexpr bool isCastling()  const { return flags & MR_CASTLING; }
+  constexpr bool isPromotion() const { return flags & MR_PROMOTION; }
+  constexpr bool isCheck()     const { return flags & MR_CHECK; }
 
   // Build a MoveEntry from move squares and result.
   static MoveEntry build(Square from, Square to,
@@ -175,12 +176,7 @@ struct MoveEntry {
     entry.piece = piece;
     entry.captured = captured;
     entry.promotion = result.isPromotion() ? result.promotedTo : Piece::NONE;
-    entry.flags = 0;
-    if (result.isCapture())   entry.flags |= ME_CAPTURE;
-    if (result.isEnPassant()) entry.flags |= ME_EP;
-    if (result.isCastling())  entry.flags |= ME_CASTLING;
-    if (result.isPromotion()) entry.flags |= ME_PROMOTION;
-    if (result.isCheck())     entry.flags |= ME_CHECK;
+    entry.flags = result.flags & ME_FLAG_MASK;
     entry.epCapturedSq = result.epCapturedSq;
     entry.prevState = prevState;
     return entry;

@@ -69,12 +69,10 @@ void Game::discardRecording() {
 // Mutations
 // ---------------------------------------------------------------------------
 
-MoveResult Game::makeMove(int fromRow, int fromCol, int toRow, int toCol, char promotion) {
+MoveResult Game::makeMove(Square from, Square to, char promotion) {
   if (gameOver_) return invalidMoveResult();
 
   // Save pre-move state for history
-  Square from = rowColToSquare(fromRow, fromCol);
-  Square to = rowColToSquare(toRow, toCol);
   Piece piece = board_.getSquare(from);
   Piece targetPiece = board_.getSquare(to);
   PositionState prevState = board_.positionState();
@@ -90,8 +88,8 @@ MoveResult Game::makeMove(int fromRow, int fromCol, int toRow, int toCol, char p
                          : result.isCapture()   ? "capture"
                                                 : "move";
   logger_.infof("%s: %c %s -> %s", moveType, piece::pieceToChar(piece),
-                 utils::squareName(fromRow, fromCol).c_str(),
-                 utils::squareName(toRow, toCol).c_str());
+                 utils::squareName(from).c_str(),
+                 utils::squareName(to).c_str());
   if (result.isPromotion())
     logger_.infof("Pawn promoted to %c", piece::pieceToChar(result.promotedTo));
 
@@ -116,12 +114,17 @@ MoveResult Game::makeMove(int fromRow, int fromCol, int toRow, int toCol, char p
   return result;
 }
 
+MoveResult Game::makeMove(int fromRow, int fromCol, int toRow, int toCol, char promotion) {
+  return makeMove(rowColToSquare(fromRow, fromCol),
+                  rowColToSquare(toRow, toCol), promotion);
+}
+
 MoveResult Game::makeMove(const std::string& move) {
-  int fromRow, fromCol, toRow, toCol;
+  Square from, to;
   char promotion = ' ';
-  if (!notation::parseCoordinate(move, fromRow, fromCol, toRow, toCol, promotion))
+  if (!notation::parseCoordinate(move, from, to, promotion))
     return invalidMoveResult();
-  return makeMove(fromRow, fromCol, toRow, toCol, promotion);
+  return makeMove(from, to, promotion);
 }
 
 bool Game::loadFEN(const std::string& fen) {
@@ -188,8 +191,7 @@ int Game::getHistory(std::string out[], int maxMoves, MoveFormat format) const {
     for (int i = 0; i < count; ++i) {
       const MoveEntry& m = history_.getMove(i);
       char promo = m.isPromotion() ? piece::pieceToChar(m.promotion) : ' ';
-      out[i] = notation::toCoordinate(squareToRow(m.from), squareToCol(m.from),
-                                      squareToRow(m.to), squareToCol(m.to), promo);
+      out[i] = notation::toCoordinate(m.from, m.to, promo);
     }
     return count;
   }
@@ -231,12 +233,19 @@ int Game::getHistory(std::string out[], int maxMoves, MoveFormat format) const {
 // ---------------------------------------------------------------------------
 
 std::string Game::toCoordinate(int fromRow, int fromCol, int toRow, int toCol, char promotion) {
-  return notation::toCoordinate(fromRow, fromCol, toRow, toCol, promotion);
+  return notation::toCoordinate(rowColToSquare(fromRow, fromCol),
+                                rowColToSquare(toRow, toCol), promotion);
 }
 
 bool Game::parseCoordinate(const std::string& move, int& fromRow, int& fromCol,
                                 int& toRow, int& toCol, char& promotion) {
-  return notation::parseCoordinate(move, fromRow, fromCol, toRow, toCol, promotion);
+  Square from, to;
+  if (!notation::parseCoordinate(move, from, to, promotion)) return false;
+  fromRow = squareToRow(from);
+  fromCol = squareToCol(from);
+  toRow   = squareToRow(to);
+  toCol   = squareToCol(to);
+  return true;
 }
 
 // ---------------------------------------------------------------------------

@@ -634,6 +634,33 @@ void test_game_cache_invalidated_on_load_fen(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Display-coordinate helpers (game/types.h)
+// ---------------------------------------------------------------------------
+
+void test_display_rankChar_all_rows(void) {
+  TEST_ASSERT_EQUAL_CHAR('8', LibreChess::rankChar(0));
+  TEST_ASSERT_EQUAL_CHAR('7', LibreChess::rankChar(1));
+  TEST_ASSERT_EQUAL_CHAR('6', LibreChess::rankChar(2));
+  TEST_ASSERT_EQUAL_CHAR('5', LibreChess::rankChar(3));
+  TEST_ASSERT_EQUAL_CHAR('4', LibreChess::rankChar(4));
+  TEST_ASSERT_EQUAL_CHAR('3', LibreChess::rankChar(5));
+  TEST_ASSERT_EQUAL_CHAR('2', LibreChess::rankChar(6));
+  TEST_ASSERT_EQUAL_CHAR('1', LibreChess::rankChar(7));
+}
+
+void test_display_squareName_corners(void) {
+  TEST_ASSERT_EQUAL_STRING("a8", LibreChess::squareName(0, 0).c_str());
+  TEST_ASSERT_EQUAL_STRING("h8", LibreChess::squareName(0, 7).c_str());
+  TEST_ASSERT_EQUAL_STRING("a1", LibreChess::squareName(7, 0).c_str());
+  TEST_ASSERT_EQUAL_STRING("h1", LibreChess::squareName(7, 7).c_str());
+}
+
+void test_display_squareName_center(void) {
+  TEST_ASSERT_EQUAL_STRING("e4", LibreChess::squareName(4, 4).c_str());
+  TEST_ASSERT_EQUAL_STRING("d5", LibreChess::squareName(3, 3).c_str());
+}
+
+// ---------------------------------------------------------------------------
 // Registration
 // ---------------------------------------------------------------------------
 
@@ -707,4 +734,9 @@ void register_game_tests() {
   RUN_TEST(test_game_fen_updates_after_move);
   RUN_TEST(test_game_cache_invalidated_on_undo);
   RUN_TEST(test_game_cache_invalidated_on_load_fen);
+
+  // Display-coordinate helpers (game/types.h)
+  RUN_TEST(test_display_rankChar_all_rows);
+  RUN_TEST(test_display_squareName_corners);
+  RUN_TEST(test_display_squareName_center);
 }

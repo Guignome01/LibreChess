@@ -5,8 +5,6 @@
 //
 // Uses Little-Endian Rank-File (LERF) mapping.  Canonical coordinate
 // primitives are rankOf(sq), fileOf(sq), and makeSquare(rank, file).
-// Legacy display-oriented helpers (rowOf, colOf, squareOf) are retained
-// temporarily for migration — new code must use rank/file exclusively.
 //
 // Includes square type and coordinate conversion, compass-rose direction
 // constants, single-square bitboard construction, population count,
@@ -82,22 +80,6 @@ constexpr int SOUTH_EAST = SOUTH + EAST;  // -7
 constexpr int SOUTH_WEST = SOUTH + WEST;  // -9
 
 // ---------------------------------------------------------------------------
-// Display-coordinate boundary helpers (row/col ↔ LERF)
-// ---------------------------------------------------------------------------
-// Row/col convention (used by game layer, notation, firmware):
-//   row 0 = rank 8 (black back rank), col 0 = file a.
-//   col is identical to file.  row = 7 - rank.
-// Core internals use rankOf/fileOf/makeSquare instead.
-// ---------------------------------------------------------------------------
-
-constexpr Square squareOf(int row, int col) {
-  return (7 - row) * 8 + col;
-}
-
-constexpr int rowOf(Square sq) {
-  return 7 - (sq >> 3);  // 7 - rank
-}
-
 // ---------------------------------------------------------------------------
 // Core bitboard type
 // ---------------------------------------------------------------------------

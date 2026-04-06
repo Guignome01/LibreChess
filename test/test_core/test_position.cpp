@@ -822,11 +822,11 @@ static MoveEntry makeBoardEntry(int fr, int fc, int tr, int tc, Piece piece,
   e.from = squareOf(fr, fc); e.to = squareOf(tr, tc);
   e.piece = piece; e.captured = captured; e.promotion = promo;
   e.flags = 0;
-  if (captured != Piece::NONE) e.flags |= ME_CAPTURE;
-  if (ep) e.flags |= ME_EP;
-  if (castle) e.flags |= ME_CASTLING;
-  if (promo != Piece::NONE) e.flags |= ME_PROMOTION;
-  if (check) e.flags |= ME_CHECK;
+  if (captured != Piece::NONE) e.flags |= MR_CAPTURE;
+  if (ep) e.flags |= MR_EP;
+  if (castle) e.flags |= MR_CASTLING;
+  if (promo != Piece::NONE) e.flags |= MR_PROMOTION;
+  if (check) e.flags |= MR_CHECK;
   e.epCapturedSq = epSq;
   e.prevState = prev;
   return e;
