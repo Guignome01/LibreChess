@@ -1,6 +1,6 @@
 // Time-based position test suites — WAC, BK, ERET.
 //
-// Loads positions from standard .epd files (in ../test_suites/), runs each
+// Loads positions from standard .epd files (in ../suites/), runs each
 // through the engine with a per-position time budget, and checks whether the
 // engine's best move matches the expected move (bm) or avoids a bad move (am).
 // Results are informational — individual mismatches print diagnostics but do
@@ -27,7 +27,7 @@ using namespace LibreChess;
 static SharedTables tables;
 
 /// EPD directory resolved relative to this source file.
-static const std::string EPD_DIR = testFileDir(__FILE__) + "../test_suites/";
+static const std::string EPD_DIR = testFileDir(__FILE__) + "../suites/";
 
 /// Per-position time budget in milliseconds.  Each position gets this much
 /// time to find the best move — the standard approach for EPD test suites.

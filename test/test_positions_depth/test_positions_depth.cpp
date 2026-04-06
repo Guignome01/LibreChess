@@ -5,7 +5,7 @@
 // against a calibrated baseline — any regression in search quality will fail
 // the test.
 //
-// Loads EPD files from ../test_suites/.  Move comparison uses coordinate
+// Loads EPD files from ../suites/.  Move comparison uses coordinate
 // notation (the proven pattern from test_search.cpp).
 //
 // Reference: https://www.chessprogramming.org/Test-Positions
@@ -26,7 +26,7 @@ using namespace LibreChess;
 static SharedTables tables;
 
 /// EPD directory resolved relative to this source file.
-static const std::string EPD_DIR = testFileDir(__FILE__) + "../test_suites/";
+static const std::string EPD_DIR = testFileDir(__FILE__) + "../suites/";
 
 /// Fixed search depth — deterministic, no time dependency.
 static constexpr int DEPTH = 10;
