@@ -271,7 +271,7 @@ static constexpr int LMP_THRESHOLD[] = {0, 5, 12, 20, 30, 42};  // indexed by de
 //
 // HISTORY_PRUNE_DEPTH: maximum depth at which history pruning applies.
 // HISTORY_PRUNE_THRESHOLD: the per-depth scaling factor.  A move is pruned
-// if history[color][from][to] < -THRESHOLD * depth.
+// if history[color][pieceType-1][to] < -THRESHOLD * depth.
 //
 // Reference: https://www.chessprogramming.org/History_Leaf_Pruning
 // ---------------------------------------------------------------------------
@@ -416,7 +416,7 @@ inline int scoreFromTT(int score, int ply) {
 //
 // Score priority bands (within stages):
 //   Good captures:  MVV-LVA (victim*16 - attacker) + captureHistory  [SEE≥0]
-//   Quiets:         history[color][from][to]  (0 .. ~7000)
+//   Quiets:         history[color][pieceType-1][to]  (0 .. ~7000)
 //   Bad captures:   SEE value (negative)                              [SEE<0]
 //
 // References:
@@ -542,12 +542,14 @@ inline void pickBest(MoveList& moves, int16_t scores[], int start,
 // every callsite uses the same logic.  Returns 0 / no-op on invalid index.
 // ---------------------------------------------------------------------------
 
-// Read a captureHistory score with full bounds validation.
-inline int16_t safeCaptureHistScore(const SearchState& ss, int pieceIdx,
+// Read a captureHistory score with bounds validation.
+inline int16_t safeCaptureHistScore(const SearchState& ss,
+                                    PieceType attacker,
                                     PieceType victim, int toSq) {
+  int ai = raw(attacker) - 1;
   int vi = raw(victim) - 1;
-  if (isValidPieceIndex(pieceIdx) && vi >= 0 && vi < 6)
-    return ss.captureHistory[pieceIdx][vi][toSq];
+  if (ai >= 0 && ai < 6 && vi >= 0 && vi < 6)
+    return ss.captureHistory[ai][vi][toSq];
   return 0;
 }
 
@@ -833,8 +835,7 @@ private:
                                       : pieceType(mailbox[m.to]);
         PieceType attacker = pieceType(mailbox[m.from]);
         int mvvlva = scoreMVVLVA(victim, attacker);
-        int capHistIdx = pieceIndex(mailbox[m.from]);
-        int capHist = safeCaptureHistScore(*ss, capHistIdx, victim, m.to);
+        int capHist = safeCaptureHistScore(*ss, attacker, victim, m.to);
         scores[i] = static_cast<int16_t>(mvvlva + capHist / 16);
       } else {
         scores[i] = static_cast<int16_t>(seeVal);
@@ -870,7 +871,7 @@ private:
       const Move& m = quietMoves.moves[i];
       int idx = moves.count;
       moves.moves[idx] = m;
-      scores[idx] = ss->history[c][m.from][m.to];
+      scores[idx] = ss->history[c][raw(pieceType(mailbox[m.from])) - 1][m.to];
       seeValues[idx] = SEE_NOT_COMPUTED;
       ++moves.count;
     }
@@ -917,20 +918,20 @@ inline void updateHistory(int16_t& h, int bonus) {
 inline void updateCaptureCutoffHistory(
     const Move& m, const Position& pos, SearchState& state, int bonus,
     const PackedMove* capturesSearched, int captureCount) {
-  int chIdx = pieceIndex(pos.mailbox()[m.from]);
+  int ai = raw(pieceType(pos.mailbox()[m.from])) - 1;
   PieceType victim = m.isEP() ? PieceType::PAWN
                                : pieceType(pos.mailbox()[m.to]);
   int vi = raw(victim) - 1;
-  if (isValidPieceIndex(chIdx) && vi >= 0 && vi < 6)
-    updateHistory(state.captureHistory[chIdx][vi][m.to], bonus);
+  if (ai >= 0 && ai < 6 && vi >= 0 && vi < 6)
+    updateHistory(state.captureHistory[ai][vi][m.to], bonus);
   for (int ci = 0; ci < captureCount - 1; ++ci) {
     const Move cm = unpackMove(capturesSearched[ci]);
-    int prevIdx = pieceIndex(pos.mailbox()[cm.from]);
+    int pai = raw(pieceType(pos.mailbox()[cm.from])) - 1;
     PieceType prevVictim = cm.isEP() ? PieceType::PAWN
                                      : pieceType(pos.mailbox()[cm.to]);
     int pvi = raw(prevVictim) - 1;
-    if (isValidPieceIndex(prevIdx) && pvi >= 0 && pvi < 6)
-      updateHistory(state.captureHistory[prevIdx][pvi][cm.to], -bonus);
+    if (pai >= 0 && pai < 6 && pvi >= 0 && pvi < 6)
+      updateHistory(state.captureHistory[pai][pvi][cm.to], -bonus);
   }
 }
 
@@ -953,7 +954,7 @@ inline void updateQuietCutoffHeuristics(
     int bonus, const PackedMove* quietsSearched, int quietCount,
     Piece prevPiece, int prevTo) {
   updateKillers(m, ply, state);
-  updateHistory(state.history[raw(pos.sideToMove())][m.from][m.to], bonus);
+  updateHistory(state.history[raw(pos.sideToMove())][raw(pieceType(pos.mailbox()[m.from])) - 1][m.to], bonus);
 
   // History gravity: penalize previously searched quiet moves that
   // failed to cause a cutoff.  The cutoff move itself (last entry)
@@ -961,7 +962,7 @@ inline void updateQuietCutoffHeuristics(
   Color side = pos.sideToMove();
   for (int q = 0; q < quietCount - 1; ++q) {
     Move qm = unpackMove(quietsSearched[q]);
-    updateHistory(state.history[raw(side)][qm.from][qm.to], -bonus);
+    updateHistory(state.history[raw(side)][raw(pieceType(pos.mailbox()[qm.from])) - 1][qm.to], -bonus);
   }
 
   // Store as countermove for the opponent's previous (piece, toSq).
@@ -1590,7 +1591,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     if (!pvNode && !inCheck && depth <= HISTORY_PRUNE_DEPTH &&
         movesSearched > 0 && !m.isCapture() && !m.isPromotion()) {
       uint8_t mc = raw(pos.sideToMove());
-      int16_t hist = state.history[mc][m.from][m.to];
+      int16_t hist = state.history[mc][raw(pieceType(pos.mailbox()[m.from])) - 1][m.to];
       if (hist < -HISTORY_PRUNE_THRESHOLD * depth) {
         STAT_INC(historyPrunes);
         continue;
@@ -1675,7 +1676,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
         // Reduced-depth zero-window scout search.
         // pos is in post-make state; toggle side to get the move maker.
         uint8_t mc = raw(pos.sideToMove()) ^ 1;
-        int16_t hist = state.history[mc][m.from][m.to];
+        int16_t hist = state.history[mc][raw(pieceType(movingPiece)) - 1][m.to];
         int reduction = computeLMRReduction(depth, movesSearched,
                                             hist, improving, pvNode);
 
@@ -1803,9 +1804,9 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
 
   SearchResult result;
 
-  // Heap-allocate SearchState (~32 KiB) to avoid overflowing the FreeRTOS
-  // task stack.  Contains history[2][64][64] (16 KiB), captureHistory (9 KiB),
-  // countermoves (1.5 KiB), and triangular PV table (~4 KiB).
+  // Heap-allocate SearchState to avoid overflowing the FreeRTOS task stack.
+  // Contains history[2][6][64] (1.5 KiB), captureHistory[6][6][64] (4.5 KiB),
+  // countermoves (1.5 KiB), and triangular PV table (~3 KiB).
   // Returns nullptr on OOM instead of calling std::terminate() (ESP32 has
   // C++ exceptions disabled).
   auto statePtr = make_unique_nothrow<SearchState>();

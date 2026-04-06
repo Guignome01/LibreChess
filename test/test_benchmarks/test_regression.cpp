@@ -28,7 +28,7 @@ static constexpr int NODE_DEPTH = 10;
 
 /// Maximum allowed total node count (calibrated baseline × 1.15).
 /// Set to 0 to disable assertion (calibration mode).
-static constexpr uint64_t NODE_BASELINE = 3906779;
+static constexpr uint64_t NODE_BASELINE = 3957182;
 
 // ---------------------------------------------------------------------------
 // Node count regression — 10 diverse positions at fixed depth

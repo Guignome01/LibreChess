@@ -108,7 +108,7 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 | Per-ply negamax (MovePicker w/ int16_t arrays + locals) | ~1,950 B × depth | stack |
 | Per-ply quiescence (MoveList + int16_t scores + locals) | ~1,200 B × QS depth | stack |
 | At depth 15 + 6 ext + 8 QS | ~51 KiB | stack |
-| SearchState (history + killers + countermoves + PV table) | ~35 KiB | **heap** (`std::unique_ptr`) |
+| SearchState (history + killers + countermoves + PV table) | ~11 KiB | **heap** (`std::unique_ptr`) |
 | Transposition table | varies | **heap** (`new[]`) |
 
 ### Per-Ply Recursion Breakdown

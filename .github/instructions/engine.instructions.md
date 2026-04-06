@@ -69,7 +69,7 @@ API modules handle raw HTTP + TLS. Providers handle chess-domain logic and FreeR
 
 `LibreChessProvider` runs the search in a FreeRTOS task (`lcTask`) with a 64 KiB stack. The Engine is heap-allocated via `std::unique_ptr` with explicit `reset()` before `vTaskDelete(nullptr)` to ensure destructor runs (releases TT, pawn hash, eval hash). Major allocations:
 
-- **SearchState** (~33 KiB: `history[2][64][64]` = 16 KiB, `killers[64][2]` = 256 B via `PackedMove`, `countermoves[12][64]` = 1.5 KiB, `staticEvals[64]` = 128 B, PV table 64×32×2 = 4 KiB via `PackedMove`, `MAX_PV_LEN=32`) — **heap-allocated** via `std::unique_ptr` in `findBestMove()`.
+- **SearchState** (~11 KiB: `history[2][6][64]` = 1.5 KiB piece-to history, `captureHistory[6][6][64]` = 4.5 KiB, `killers[64][2]` = 256 B via `PackedMove`, `countermoves[12][64]` = 1.5 KiB, `staticEvals[64]` = 128 B, PV table 64×24×2 = 3 KiB via `PackedMove`, `MAX_PV_LEN=24`) — **heap-allocated** via `std::unique_ptr` in `findBestMove()`.
 - **Transposition table** — heap-allocated (`new TTEntry[]`), dynamically sized to available heap (reserves extra 16 KiB for eval hash tables), capped at 128 KiB.
 - **Pawn hash table** — 8 KiB (1024 entries × 8B `PawnEntry`), heap-allocated by `Engine`. Caches pawn structure MG/EG scores; ~95%+ hit rate.
 - **Eval hash table** — 8 KiB (1024 entries × 8B `EvalEntry`), heap-allocated by `Engine`. Caches full `evaluatePosition()` results.

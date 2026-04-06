@@ -42,9 +42,9 @@ static constexpr int DRAW_SCORE = 0;
 static constexpr int MAX_PLY    = 64;
 
 // Maximum PV line length stored per ply.  Practical search depths rarely
-// exceed 25-30 plies including extensions; 32 provides generous headroom
-// while halving the PV table from 8 KiB to 4 KiB.
-static constexpr int MAX_PV_LEN = 32;
+// exceed 25-30 plies including extensions; 24 provides headroom
+// while keeping the PV table at 3 KiB (64 × 24 × 2B).
+static constexpr int MAX_PV_LEN = 24;
 
 // ---------------------------------------------------------------------------
 // Platform-agnostic time function — returns milliseconds.
@@ -217,15 +217,17 @@ struct SearchState {
   // Reference: https://www.chessprogramming.org/Killer_Move
   PackedMove killers[MAX_PLY][2];
 
-  // History heuristic: [color][from][to] — accumulated quiet move scores.
+  // History heuristic: [color][pieceType-1][toSquare] — piece-to history.
+  // Compact alternative to butterfly [from][to] boards.  ~1.5 KiB.
   // Reference: https://www.chessprogramming.org/History_Heuristic
-  int16_t history[2][64][64];
+  int16_t history[2][6][64];
 
-  // Capture history: [pieceIndex][victimType-1][toSquare] — scores
-  // for captures, distinguished by what piece is captured.  Indexed as
-  // captureHistory[attacker][raw(victimType)-1][to].  ~9 KiB.
+  // Capture history: [attackerType-1][victimType-1][toSquare] — scores
+  // for captures, distinguished by attacker and victim piece types.
+  // Indexed as captureHistory[raw(attackerType)-1][raw(victimType)-1][to].
+  // ~4.5 KiB (compact: color-agnostic attacker dimension).
   // Reference: https://www.chessprogramming.org/History_Heuristic#Capture_History
-  int16_t captureHistory[12][6][64];
+  int16_t captureHistory[6][6][64];
 
   // Countermove heuristic: for each (piece, toSquare) of the previous move,
   // stores the quiet move that caused a beta cutoff in response.  Used as a

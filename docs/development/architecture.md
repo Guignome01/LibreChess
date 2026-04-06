@@ -23,7 +23,7 @@ Engine (lib/engine/):
    ├─ owns Position (from core)
    └─ owns TranspositionTable + stop control
   search (fail-soft alpha-beta + quiescence + iterative deepening + check ext + PVS + NMP + LMR + LMP + history pruning + razoring + lazy eval + aspiration windows + IIR + delta pruning + futility pruning + pawn-defended-pawn QS pruning + SEE-based ordering + countermove heuristic + mate distance pruning + triangular PV table)
-  SearchState (heap-allocated via std::unique_ptr in findBestMove, ~39 KiB)
+  SearchState (heap-allocated via std::unique_ptr in findBestMove, ~11 KiB)
 
 Firmware (src/):
   GameMode (abstract base, src/game_mode/)
