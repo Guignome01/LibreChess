@@ -232,6 +232,8 @@ void test_recorder_has_active_game(void) {
 void test_recorder_get_active_game_info(void) {
   setupRecorder();
   storage.gameActive = true;
+  storage.storedHeader.result = GameResult::IN_PROGRESS;
+  storage.storedHeader.winnerColor = '?';
   storage.storedHeader.playerColor = 'b';
   storage.storedHeader.meta[0] = MODE_BOT;
   storage.storedHeader.meta[1] = 0;

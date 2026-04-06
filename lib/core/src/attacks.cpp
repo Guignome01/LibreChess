@@ -14,11 +14,13 @@ Bitboard KNIGHT[64] = {};
 Bitboard KING[64] = {};
 Bitboard PAWN[2][64] = {};
 
-// Diagonal masks (a1-h8 direction), one per square, inclusive of the square.
-static Bitboard DIAG_MASK[64];
+// Diagonal masks (a1-h8 direction), one per diagonal.
+// Index: rank - file + 7 (range 0–14).
+static Bitboard DIAG[15];
 
-// Anti-diagonal masks (h1-a8 direction), one per square, inclusive of square.
-static Bitboard ANTI_DIAG_MASK[64];
+// Anti-diagonal masks (h1-a8 direction), one per anti-diagonal.
+// Index: rank + file (range 0–14).
+static Bitboard ANTI_DIAG[15];
 
 // First-rank attack table: for each file (0-7) and each 6-bit inner
 // occupancy pattern (bits 1-6 of the rank), stores the 8-bit attack mask
@@ -106,25 +108,16 @@ static Bitboard lineHQ(Bitboard occ, Square sq, Bitboard mask) {
 // ---------------------------------------------------------------------------
 
 static void initDiagMasks() {
-  for (Square sq = 0; sq < 64; ++sq) {
-    int rank = rankOf(sq), file = fileOf(sq);
-
-    // Diagonal (rank - file = constant)
-    Bitboard diag = 0;
-    int startR = (rank >= file) ? rank - file : 0;
-    int startF = (file >= rank) ? file - rank : 0;
-    for (int r = startR, f = startF; r < 8 && f < 8; ++r, ++f)
-      diag |= squareBB(r * 8 + f);
-    DIAG_MASK[sq] = diag;
-
-    // Anti-diagonal (rank + file = constant)
-    Bitboard adiag = 0;
-    int sum = rank + file;
-    int startR2 = (sum <= 7) ? 0 : sum - 7;
-    int startF2 = (sum <= 7) ? sum : 7;
-    for (int r = startR2, f = startF2; r < 8 && f >= 0; ++r, --f)
-      adiag |= squareBB(r * 8 + f);
-    ANTI_DIAG_MASK[sq] = adiag;
+  for (int d = 0; d < 15; ++d) {
+    Bitboard diag = 0, adiag = 0;
+    for (int r = 0; r < 8; ++r) {
+      int df = r - d + 7;   // file for diagonal d at rank r
+      int af = d - r;       // file for anti-diagonal d at rank r
+      if (df >= 0 && df < 8) diag  |= squareBB(r * 8 + df);
+      if (af >= 0 && af < 8) adiag |= squareBB(r * 8 + af);
+    }
+    DIAG[d] = diag;
+    ANTI_DIAG[d] = adiag;
   }
 }
 
@@ -182,8 +175,9 @@ Bitboard rook(Square sq, Bitboard occupied) {
 }
 
 Bitboard bishop(Square sq, Bitboard occupied) {
-  return lineHQ(occupied, sq, DIAG_MASK[sq])
-       | lineHQ(occupied, sq, ANTI_DIAG_MASK[sq]);
+  int rank = rankOf(sq), file = fileOf(sq);
+  return lineHQ(occupied, sq, DIAG[rank - file + 7])
+       | lineHQ(occupied, sq, ANTI_DIAG[rank + file]);
 }
 
 // ---------------------------------------------------------------------------

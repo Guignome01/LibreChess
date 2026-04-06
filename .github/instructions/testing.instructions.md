@@ -59,7 +59,7 @@ test/
 │   ├── bk.epd                           Bratko-Kopec — 24 positions (Bratko/Kopec, CPW verbatim)
 │   └── eret.epd                         Eigenmann Rapid Engine Test — 111 positions (Eigenmann, CPW verbatim)
 ├── test_benchmarks/                     Performance benchmarks (standalone)
-│   └── test_benchmarks.cpp              Micro-benchmarks: make/unmake timing, EP make/unmake, evaluatePosition, perft(5) Mnps, search depth-8 knps
+│   └── test_benchmarks.cpp              Micro-benchmarks: make/unmake timing, EP make/unmake, evaluatePosition (single + multi-position), bishop() attacks, perft(5) Mnps, search depth-8 (single + multi-position) knps
 └── test_perft/                          Perft suite (standalone, heavyweight)
     └── test_perft.cpp                   Perft move-tree enumeration with detailed counters (captures, EP, castles, promotions, checks, checkmates)
 ```
@@ -162,4 +162,4 @@ Leaper attack tables (knight on e4, king on a1, pawn attacks per color). Slider 
 Engine accuracy benchmarks using standard `.epd` files loaded at runtime via the EPD parser. Each suite reads its `.epd` file, parses each line into an `EPDRecord`, runs `search::findBestMove` with a fixed time budget (500ms/position), converts both expected (SAN) and engine (Move) results to coordinate notation, and compares. Shared `TranspositionTable`, `PawnHashTable`, and `EvalHashTable` are allocated once at startup and cleared between suites. Suites: **WAC** (Win At Chess, 300 positions), **BK** (Bratko-Kopec, 24 positions), **ERET** (Eigenmann Rapid Engine Test, 111 positions). Tests are informational — they assert only that at least one position is solved, printing individual mismatches and overall pass rate.
 
 ### Performance Benchmarks (`test_benchmarks/test_benchmarks.cpp`)
-Micro-benchmark suite for hot-path timing baselines. Five tests measure `std::chrono::steady_clock` timing: make/unmake round-trip (no EP), make/unmake round-trip (EP position), `evaluatePosition` call, perft(5) throughput in Mnps, and search at depth 8 reporting knps/nodes/score. Tests are informational (always PASS) — they print ns/op or throughput metrics for regression tracking. No assertions on timing values.
+Micro-benchmark suite for hot-path timing baselines. Eight tests measure `std::chrono::steady_clock` timing: make/unmake round-trip (no EP), make/unmake round-trip (EP position), `evaluatePosition` call (single position), multi-position `evaluatePosition` (5 positions, averaged), `bishop()` attack generation (500K calls with varied sq+occupancy), perft(5) throughput in Mnps, single-position search at depth 8, and multi-position search (3 positions, averaged) reporting knps/nodes/score. Tests are informational (always PASS) — they print ns/op or throughput metrics for regression tracking. No assertions on timing values.

@@ -536,7 +536,7 @@ static void printResults() {
 
   // --- C++ formatted MATERIAL array (MG) ---
   printf("// --- C++ Material arrays ---\n");
-  printf("EVAL_CONST int MATERIAL[] = {");
+  printf("EVAL_CONST MAT_ELEM MATERIAL[] = {");
   for (int i = 0; i < 5; ++i) {
     if (i > 0) printf(", ");
     printf("%d", eval::tuning::getValue(matMgIdx[i]));
@@ -544,7 +544,7 @@ static void printResults() {
   printf(", 0};\n");
 
   // --- C++ formatted MATERIAL_EG array ---
-  printf("EVAL_CONST int MATERIAL_EG[] = {");
+  printf("EVAL_CONST MAT_ELEM MATERIAL_EG[] = {");
   for (int i = 0; i < 5; ++i) {
     if (i > 0) printf(", ");
     printf("%d", eval::tuning::getValue(matEgIdx[i]));
@@ -554,7 +554,7 @@ static void printResults() {
   // --- C++ formatted PST arrays ---
   for (int tbl = 0; tbl < 12; ++tbl) {
     printf("// --- %s ---\n", pstNames[tbl]);
-    printf("EVAL_CONST int %s[64] = {\n", pstNames[tbl]);
+    printf("EVAL_CONST PST_ELEM %s[64] = {\n", pstNames[tbl]);
     for (int sq = 0; sq < 64; ++sq) {
       int val = (pstIdx[tbl][sq] >= 0) ? eval::tuning::getValue(pstIdx[tbl][sq]) : 0;
       if (sq % 8 == 0) printf("  ");

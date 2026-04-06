@@ -12,8 +12,8 @@
 //     file + 6-bit inner occupancy).
 //   - File/diagonal/anti-diagonal attacks: Hyperbola Quintessence —
 //     branchless o^(o-2r) subtraction trick with byte-swap for the
-//     negative ray direction. Diagonal masks (DIAG_MASK[64],
-//     ANTI_DIAG_MASK[64]) are precomputed at startup.
+//     negative ray direction. Diagonal masks (DIAG[15],
+//     ANTI_DIAG[15]) are precomputed at startup.
 //
 // References:
 //   https://www.chessprogramming.org/Bitboards

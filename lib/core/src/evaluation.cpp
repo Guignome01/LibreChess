@@ -16,9 +16,15 @@
 #ifdef TUNING
 #define EVAL_CONST              // mutable, external linkage
 #define EVAL_FIXED const        // immutable, external linkage
+// Tuner accesses arrays via int* (TuneEntry), so element types stay int.
+#define PST_ELEM int
+#define MAT_ELEM int
 #else
 #define EVAL_CONST static constexpr   // immutable, file-local
 #define EVAL_FIXED static constexpr   // immutable, file-local
+// Production: narrow element types for smaller .bss / Flash footprint.
+#define PST_ELEM int8_t
+#define MAT_ELEM int16_t
 #endif
 
 namespace {
@@ -28,11 +34,30 @@ using piece::pieceIndex;
 
 // ---------------------------------------------------------------------------
 // Pawn-structure masks — file-local, initialized lazily.
+//
+// Passed and forward masks are stored for White only; Black masks are
+// derived at query time via vertical mirror (byteSwap64 + sq^56).  This
+// halves the .bss footprint (−1,024 bytes).  The derivation cost is
+// negligible because pawn structure is cached in the pawn hash table
+// (~95% hit rate).
+//
+// The isolated-pawn mask (adjacent files) is derived inline from
+// adjacentFilesMask(), eliminating a dedicated 64-byte table.
 // ---------------------------------------------------------------------------
 
-Bitboard pawnPassedMask[2][64] = {};
-Bitboard pawnIsolatedMask[8] = {};
-Bitboard pawnForwardMask[2][64] = {};
+Bitboard pawnPassedMask[64] = {};    // White-only; Black via mirror
+Bitboard pawnForwardMask[64] = {};   // White-only; Black via mirror
+
+// Vertical mirror — swaps ranks (rank 1↔8, 2↔7, etc.).
+static inline uint64_t byteSwap64(uint64_t v) {
+#if defined(__GNUC__) || defined(__clang__)
+  return __builtin_bswap64(v);
+#else
+  v = ((v >> 8) & 0x00FF00FF00FF00FFULL) | ((v & 0x00FF00FF00FF00FFULL) << 8);
+  v = ((v >> 16) & 0x0000FFFF0000FFFFULL) | ((v & 0x0000FFFF0000FFFFULL) << 16);
+  return (v >> 32) | (v << 32);
+#endif
+}
 
 Bitboard adjacentFilesMask(int file) {
   Bitboard mask = 0;
@@ -41,13 +66,23 @@ Bitboard adjacentFilesMask(int file) {
   return mask;
 }
 
+// Passed-pawn mask for either color.  White: direct lookup.
+// Black: mirror the mask for the vertically reflected square.
+inline Bitboard passedMask(Color c, Square sq) {
+  if (c == Color::WHITE) return pawnPassedMask[sq];
+  return byteSwap64(pawnPassedMask[sq ^ 56]);
+}
+
+// Forward-file mask for either color (same file, ranks ahead).
+inline Bitboard forwardMask(Color c, Square sq) {
+  if (c == Color::WHITE) return pawnForwardMask[sq];
+  return byteSwap64(pawnForwardMask[sq ^ 56]);
+}
+
 void initPawnMasksImpl() {
   static bool initialized = false;
   if (initialized) return;
   initialized = true;
-
-  for (int file = 0; file < 8; ++file)
-    pawnIsolatedMask[file] = adjacentFilesMask(file);
 
   for (Square sq = 0; sq < 64; ++sq) {
     const int rank = rankOf(sq);
@@ -57,24 +92,17 @@ void initPawnMasksImpl() {
     if (file > 0) sameAndAdjacentFiles |= fileBB(file - 1);
     if (file < 7) sameAndAdjacentFiles |= fileBB(file + 1);
 
-    Bitboard whitePassed = 0, blackPassed = 0;
-    Bitboard whiteForward = 0, blackForward = 0;
+    Bitboard whitePassed = 0;
+    Bitboard whiteForward = 0;
 
     for (int r = rank + 1; r < 8; ++r) {
       Bitboard rankMask = rankBB(r);
       whitePassed |= sameAndAdjacentFiles & rankMask;
       whiteForward |= fileBB(file) & rankMask;
     }
-    for (int r = rank - 1; r >= 0; --r) {
-      Bitboard rankMask = rankBB(r);
-      blackPassed |= sameAndAdjacentFiles & rankMask;
-      blackForward |= fileBB(file) & rankMask;
-    }
 
-    pawnPassedMask[raw(Color::WHITE)][sq] = whitePassed;
-    pawnPassedMask[raw(Color::BLACK)][sq] = blackPassed;
-    pawnForwardMask[raw(Color::WHITE)][sq] = whiteForward;
-    pawnForwardMask[raw(Color::BLACK)][sq] = blackForward;
+    pawnPassedMask[sq] = whitePassed;
+    pawnForwardMask[sq] = whiteForward;
   }
 }
 
@@ -98,8 +126,8 @@ namespace eval {
 //
 // Reference: https://www.chessprogramming.org/Material
 // ---------------------------------------------------------------------------
-EVAL_CONST int MATERIAL[] = {87, 386, 419, 549, 1093, 0};
-EVAL_CONST int MATERIAL_EG[] = {80, 230, 250, 468, 956, 0};
+EVAL_CONST MAT_ELEM MATERIAL[] = {87, 386, 419, 549, 1093, 0};
+EVAL_CONST MAT_ELEM MATERIAL_EG[] = {80, 230, 250, 468, 956, 0};
 
 // ---------------------------------------------------------------------------
 // Piece-square tables — centipawns, LERF order (a1=0, h8=63).
@@ -115,7 +143,7 @@ EVAL_CONST int MATERIAL_EG[] = {80, 230, 250, 468, 956, 0};
 
 // --- Midgame PSTs ---
 
-EVAL_CONST int PST_PAWN_MG[64] = {
+EVAL_CONST PST_ELEM PST_PAWN_MG[64] = {
      0,   0,   0,   0,   0,   0,   0,   0,
     -4,  -5,  -6,   0,   2,  18,  15,   4,
     -3,  -9,   3,   0,   8,  -4,   6,   0,
@@ -126,7 +154,7 @@ EVAL_CONST int PST_PAWN_MG[64] = {
      0,   0,   0,   0,   0,   0,   0,   0
 };
 
-EVAL_CONST int PST_KNIGHT_MG[64] = {
+EVAL_CONST PST_ELEM PST_KNIGHT_MG[64] = {
      0,  -8,  -1,  -1,  -2,   0,  -8,   0,
     -1,   0,   0,   7,   6,   0,   0,   0,
     -5,  -1,   3,   2,   2,   9,   2,  -3,
@@ -137,7 +165,7 @@ EVAL_CONST int PST_KNIGHT_MG[64] = {
     -2,   0,   0,   0,   0,  -1,   0,  -1
 };
 
-EVAL_CONST int PST_BISHOP_MG[64] = {
+EVAL_CONST PST_ELEM PST_BISHOP_MG[64] = {
      0,  -1,  -3,  -1,   0, -13,   0,  -1,
      0,   9,   0,   1,   4,   1,  19,   0,
      0,   1,   3,  -2,   3,   4,   1,  -1,
@@ -148,7 +176,7 @@ EVAL_CONST int PST_BISHOP_MG[64] = {
     -1,   0,   0,   0,   0,   0,   0,   0
 };
 
-EVAL_CONST int PST_ROOK_MG[64] = {
+EVAL_CONST PST_ELEM PST_ROOK_MG[64] = {
      0,   1,   3,   5,   6,  15,  -5,  -8,
     -2,  -1,  -1,  -1,  -1,   0,   0,  -2,
     -2,   0,  -1,   0,   0,   0,   0,   0,
@@ -159,7 +187,7 @@ EVAL_CONST int PST_ROOK_MG[64] = {
      0,   0,   0,   0,   0,   0,   0,   0
 };
 
-EVAL_CONST int PST_QUEEN_MG[64] = {
+EVAL_CONST PST_ELEM PST_QUEEN_MG[64] = {
      0,  -1,   0,  13,   1,  -1,   0,   0,
     -1,   0,   3,   6,   8,   1,   0,   0,
     -2,   0,   0,   1,   1,   2,   1,  -1,
@@ -170,7 +198,7 @@ EVAL_CONST int PST_QUEEN_MG[64] = {
     -1,   0,   0,   0,   0,   0,   0,   0
 };
 
-EVAL_CONST int PST_KING_MG[64] = {
+EVAL_CONST PST_ELEM PST_KING_MG[64] = {
     -1,   2,   1,  -8,  -8,  -1,  19,  -1,
      0,   0,   0,  -5,  -6,  -1,   4,   2,
      0,   0,   0,  -1,  -1,   1,   1,   0,
@@ -183,7 +211,7 @@ EVAL_CONST int PST_KING_MG[64] = {
 
 // --- Endgame PSTs ---
 
-EVAL_CONST int PST_PAWN_EG[64] = {
+EVAL_CONST PST_ELEM PST_PAWN_EG[64] = {
      0,   0,   0,   0,   0,   0,   0,   0,
     -2,  -1,   2,   0,   1,   3,  -2,  -6,
     -5,  -3,  -1,   0,   2,   0,  -3,  -5,
@@ -194,7 +222,7 @@ EVAL_CONST int PST_PAWN_EG[64] = {
      0,   0,   0,   0,   0,   0,   0,   0
 };
 
-EVAL_CONST int PST_KNIGHT_EG[64] = {
+EVAL_CONST PST_ELEM PST_KNIGHT_EG[64] = {
      0,  -1,   0,   0,   0,   0,  -2,   0,
      0,   0,  -1,   1,   1,   0,   0,   0,
     -1,   0,  -1,   1,   1,  -1,   0,  -1,
@@ -205,7 +233,7 @@ EVAL_CONST int PST_KNIGHT_EG[64] = {
     -1,   0,   0,   0,   0,  -1,   0,  -1
 };
 
-EVAL_CONST int PST_BISHOP_EG[64] = {
+EVAL_CONST PST_ELEM PST_BISHOP_EG[64] = {
     -1,   0,  -2,   0,   0,  -2,   0,  -1,
      0,   0,  -1,   1,   1,   0,   2,   0,
      0,   1,   1,   1,   3,   1,   0,   0,
@@ -216,7 +244,7 @@ EVAL_CONST int PST_BISHOP_EG[64] = {
      0,   0,   0,   0,   0,   0,   0,   0
 };
 
-EVAL_CONST int PST_ROOK_EG[64] = {
+EVAL_CONST PST_ELEM PST_ROOK_EG[64] = {
      2,   1,   1,   2,   1,   4,  -1,  -3,
     -1,   0,   0,   0,   0,   0,   0,  -1,
     -1,   0,  -1,   0,   0,   0,   0,   0,
@@ -227,7 +255,7 @@ EVAL_CONST int PST_ROOK_EG[64] = {
      1,   1,   1,   0,   0,   0,   0,   0
 };
 
-EVAL_CONST int PST_QUEEN_EG[64] = {
+EVAL_CONST PST_ELEM PST_QUEEN_EG[64] = {
      0,   0,   0,  -1,   0,   0,   0,   0,
      0,   0,   0,   1,   1,   0,   0,   0,
     -1,  -1,   0,   0,   0,   1,   1,   0,
@@ -238,7 +266,7 @@ EVAL_CONST int PST_QUEEN_EG[64] = {
      0,   0,   0,   0,   0,   0,   0,   0
 };
 
-EVAL_CONST int PST_KING_EG[64] = {
+EVAL_CONST PST_ELEM PST_KING_EG[64] = {
     -1,   0,   0,  -5,  -5,  -2,  -5,  -7,
     -1,   0,   1,  -1,   0,   5,   4,  -2,
     -1,   0,   2,   0,   1,   5,   2,  -1,
@@ -253,11 +281,11 @@ EVAL_CONST int PST_KING_EG[64] = {
 
 // Indexed by piece type offset (PAWN=0 .. KING=5).
 // File-local PST pointer lookup tables.
-static const int* const PST_MG[6] = {
+static const PST_ELEM* const PST_MG[6] = {
     PST_PAWN_MG, PST_KNIGHT_MG, PST_BISHOP_MG,
     PST_ROOK_MG, PST_QUEEN_MG,  PST_KING_MG};
 
-static const int* const PST_EG[6] = {
+static const PST_ELEM* const PST_EG[6] = {
     PST_PAWN_EG, PST_KNIGHT_EG, PST_BISHOP_EG,
     PST_ROOK_EG, PST_QUEEN_EG,  PST_KING_EG};
 
@@ -274,17 +302,19 @@ static const int* const PST_EG[6] = {
 // Reference: https://www.chessprogramming.org/Piece-Square_Tables
 // ---------------------------------------------------------------------------
 
-static int PSQT_MG[12][64];
-static int PSQT_EG[12][64];
+static int16_t PSQT_MG[12][64];
+static int16_t PSQT_EG[12][64];
 static bool psqtReady_ = false;
 
 static void buildPSQT() {
   for (int type = 0; type < 6; ++type) {
     for (Square sq = 0; sq < 64; ++sq) {
-      PSQT_MG[type][sq]     =  (MATERIAL[type]    + PST_MG[type][sq]);
-      PSQT_EG[type][sq]     =  (MATERIAL_EG[type] + PST_EG[type][sq]);
-      PSQT_MG[type + 6][sq] = -(MATERIAL[type]    + PST_MG[type][sq ^ 56]);
-      PSQT_EG[type + 6][sq] = -(MATERIAL_EG[type] + PST_EG[type][sq ^ 56]);
+      int mg =  (MATERIAL[type]    + PST_MG[type][sq]);
+      int eg =  (MATERIAL_EG[type] + PST_EG[type][sq]);
+      PSQT_MG[type][sq]     = static_cast<int16_t>( mg);
+      PSQT_EG[type][sq]     = static_cast<int16_t>( eg);
+      PSQT_MG[type + 6][sq] = static_cast<int16_t>(-(MATERIAL[type]    + PST_MG[type][sq ^ 56]));
+      PSQT_EG[type + 6][sq] = static_cast<int16_t>(-(MATERIAL_EG[type] + PST_EG[type][sq ^ 56]));
     }
   }
   psqtReady_ = true;
@@ -349,20 +379,20 @@ int computeMaterial(const BitboardSet& bb) {
 void initPawnMasks() { initPawnMasksImpl(); }
 
 bool isPassed(Square sq, Color color, Bitboard enemyPawns) {
-  return (enemyPawns & pawnPassedMask[raw(color)][sq]) == 0;
+  return (enemyPawns & passedMask(color, sq)) == 0;
 }
 
 bool isIsolated(Square sq, Bitboard friendlyPawns) {
-  return (friendlyPawns & pawnIsolatedMask[fileOf(sq)]) == 0;
+  return (friendlyPawns & adjacentFilesMask(fileOf(sq))) == 0;
 }
 
 bool isDoubled(Square sq, Color color, Bitboard friendlyPawns) {
-  return (friendlyPawns & pawnForwardMask[raw(color)][sq]) != 0;
+  return (friendlyPawns & forwardMask(color, sq)) != 0;
 }
 
 bool isBackward(Square sq, Color color, Bitboard friendlyPawns, Bitboard enemyPawnAttacks) {
   const int file = fileOf(sq);
-  Bitboard adjacentPawns = friendlyPawns & pawnIsolatedMask[file];
+  Bitboard adjacentPawns = friendlyPawns & adjacentFilesMask(file);
   if (!adjacentPawns) return false;
 
   Square nextSq = SQ_NONE;
@@ -823,23 +853,19 @@ static int chebyshevDist(Square a, Square b) {
 EVAL_CONST int PASSER_OWN_KING   = 0;  // tuned to 0 — kept as tuning placeholder
 EVAL_CONST int PASSER_ENEMY_KING = 7;
 
-static void evalPassedPawnKingDist(const BitboardSet& bb, int& egScore) {
+static void evalPassedPawnKingDist(const BitboardSet& bb,
+                                  const Bitboard passedPawns[2],
+                                  int& egScore) {
   Bitboard wkBB = bb.byPiece[pieceIndex('K')];
   Bitboard bkBB = bb.byPiece[pieceIndex('k')];
   if (!wkBB || !bkBB) return;
   Square kingSq[2] = {lsb(wkBB), lsb(bkBB)};
 
   for (int c = 0; c < 2; ++c) {
-    int sign        = (c == 0) ? 1 : -1;
-    Color color     = static_cast<Color>(c);
-    Color enemyClr  = static_cast<Color>(1 - c);
-    Bitboard pawns  = bb.byPiece[pieceIndex(color, PieceType::PAWN)];
-    Bitboard enemy  = bb.byPiece[pieceIndex(enemyClr, PieceType::PAWN)];
-
-    Bitboard p = pawns;
+    int sign = (c == 0) ? 1 : -1;
+    Bitboard p = passedPawns[c];
     while (p) {
       Square sq = popLsb(p);
-      if (!isPassed(sq, color, enemy)) continue;
       int ownDist   = chebyshevDist(sq, kingSq[c]);
       int enemyDist = chebyshevDist(sq, kingSq[1 - c]);
       egScore += sign * (PASSER_OWN_KING * (7 - ownDist)
@@ -1328,20 +1354,19 @@ static void evalBadBishop(const BitboardSet& bb,
 EVAL_CONST int ROOK_BEHIND_OWN_PASSER_EG   =  5;
 EVAL_CONST int ROOK_BEHIND_ENEMY_PASSER_EG  = -40;
 
-static void evalRookBehindPasser(const BitboardSet& bb, int& egScore) {
+static void evalRookBehindPasser(const BitboardSet& bb,
+                                const Bitboard passedPawns[2],
+                                int& egScore) {
   for (int c = 0; c < 2; ++c) {
     int sign = (c == 0) ? 1 : -1;
     Color color         = static_cast<Color>(c);
     Color enemy         = static_cast<Color>(1 - c);
-    Bitboard pawns      = bb.byPiece[pieceIndex(color, PieceType::PAWN)];
-    Bitboard enemyPawns = bb.byPiece[pieceIndex(enemy, PieceType::PAWN)];
     Bitboard ownRooks   = bb.byPiece[pieceIndex(color, PieceType::ROOK)];
     Bitboard enemyRooks = bb.byPiece[pieceIndex(enemy, PieceType::ROOK)];
 
-    Bitboard p = pawns;
+    Bitboard p = passedPawns[c];
     while (p) {
       Square sq = popLsb(p);
-      if (!isPassed(sq, color, enemyPawns)) continue;
       Bitboard fileMask = FILE_A << fileOf(sq);
 
       // "Behind" the passer: lower rank for white (rsq < sq),
@@ -1433,12 +1458,29 @@ static int evaluateImpl(const BitboardSet& bb, int mgScore, int egScore,
   Bitboard blackPawnAtk = info.byPiece[1][piece::raw(PieceType::PAWN)];
 
   evalPawnStructure(bb, whitePawnAtk, blackPawnAtk, mgScore, egScore, pawnHash);
-  evalPassedPawnKingDist(bb, egScore);
+
+  // Collect passed pawns once — avoids redundant isPassed() calls in
+  // evalPassedPawnKingDist and evalRookBehindPasser.
+  Bitboard passedPawns[2] = {0, 0};
+  for (int c = 0; c < 2; ++c) {
+    Color color    = static_cast<Color>(c);
+    Color enemyClr = static_cast<Color>(1 - c);
+    Bitboard pawns = bb.byPiece[pieceIndex(color, PieceType::PAWN)];
+    Bitboard enemy = bb.byPiece[pieceIndex(enemyClr, PieceType::PAWN)];
+    Bitboard p = pawns;
+    while (p) {
+      Square sq = popLsb(p);
+      if (isPassed(sq, color, enemy))
+        passedPawns[c] |= squareBB(sq);
+    }
+  }
+
+  evalPassedPawnKingDist(bb, passedPawns, egScore);
   evalBishopPair(bb, mgScore, egScore);
   evalBadBishop(bb, mgScore, egScore);
   evalRookFiles(bb, mgScore, egScore);
   evalRookOnSeventh(bb, mgScore, egScore);
-  evalRookBehindPasser(bb, egScore);
+  evalRookBehindPasser(bb, passedPawns, egScore);
   evalKnightOutposts(bb, whitePawnAtk, blackPawnAtk, mgScore, egScore);
   evalKingSafety(bb, mgScore, egScore);
   evalSpace(bb, whitePawnAtk, blackPawnAtk, mgScore, egScore);
