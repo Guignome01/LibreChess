@@ -506,10 +506,9 @@ static bool isMoveValid(const BitboardSet& bb, const Piece mailbox[],
 }
 
 // Partial selection sort: find the best-scored move in [start, end) and
-// swap it to position `start`.  If `seeCache` is non-null, its entries are
-// swapped in parallel (keeps SEE values aligned with their moves).
-inline void pickBestInRange(Move moves[], int16_t scores[], int start, int end,
-                            int16_t seeCache[] = nullptr) {
+// swap it to position `start`.
+inline void pickBestInRange(Move moves[], int16_t scores[], int start,
+                            int end) {
   int bestIdx = start;
   for (int i = start + 1; i < end; ++i) {
     if (scores[i] > scores[bestIdx]) bestIdx = i;
@@ -521,18 +520,12 @@ inline void pickBestInRange(Move moves[], int16_t scores[], int start, int end,
     int16_t tmpS = scores[start];
     scores[start] = scores[bestIdx];
     scores[bestIdx] = tmpS;
-    if (seeCache) {
-      int16_t tmpSee = seeCache[start];
-      seeCache[start] = seeCache[bestIdx];
-      seeCache[bestIdx] = tmpSee;
-    }
   }
 }
 
 // Convenience: pick best in [start, moves.count).
-inline void pickBest(MoveList& moves, int16_t scores[], int start,
-                    int16_t seeCache[] = nullptr) {
-  pickBestInRange(moves.moves, scores, start, moves.count, seeCache);
+inline void pickBest(MoveList& moves, int16_t scores[], int start) {
+  pickBestInRange(moves.moves, scores, start, moves.count);
 }
 
 // ---------------------------------------------------------------------------
@@ -611,18 +604,23 @@ struct MovePicker {
   int killerPhase;  // 0 = try killer0, 1 = try killer1
 
   // Shared move storage:
-  //   [0, goodCapCount)           — good captures (SEE >= 0)
-  //   [goodCapCount, totalCaps)   — bad captures  (SEE < 0)
+  //   [0, goodCapEnd)             — candidate good captures (SEE computed lazily)
+  //   [goodCapEnd, totalCaps)     — confirmed bad captures (SEE < 0, deferred)
   //   [totalCaps, moves.count)    — quiet moves
   //
-  // Score and SEE arrays use int16_t (range ±32767) to reduce per-ply
-  // stack usage by ~1.7 KiB.  All stored values fit: MVV-LVA ≤ ~600,
-  // SEE ≤ ~900, history ≤ ±7000, SEE_NOT_COMPUTED = -32000.
+  // SEE is computed lazily when a capture is about to be yielded in
+  // GOOD_CAPTURES stage.  If SEE < 0, the capture is swapped to the bad
+  // section and goodCapEnd shrinks.  This avoids computing SEE for
+  // captures never examined due to early beta cutoff.
+  //
+  // Score array uses int16_t (range ±32767).  All stored values fit:
+  // MVV-LVA ≤ ~600, history ≤ ±7000, SEE_NOT_COMPUTED = -32000.
+  //
+  // Reference: https://www.chessprogramming.org/Move_Ordering
   MoveList moves;
   int16_t scores[MAX_MOVES];
-  int16_t seeValues[MAX_MOVES];
   int totalCaps;     // total captures generated
-  int goodCapCount;  // good captures in [0, goodCapCount)
+  int goodCapEnd;    // right boundary of candidate good captures
   int capIdx;        // next good capture index
   int badCapIdx;     // next bad capture index
   int quietIdx;      // next quiet move index
@@ -668,7 +666,7 @@ struct MovePicker {
     killerPhase  = 0;
     capIdx       = 0;
     badCapIdx    = 0;
-    goodCapCount = 0;
+    goodCapEnd   = 0;
     totalCaps    = 0;
     quietIdx     = 0;
     moves.count  = 0;
@@ -706,16 +704,31 @@ struct MovePicker {
           stage = STAGE_GOOD_CAPTURES;
           continue;
 
-        // --- Good captures (SEE >= 0) via pickBest ----------------------
+        // --- Good captures (SEE >= 0, computed lazily) -----------------
+        //
+        // Picks best-scored capture, then computes SEE on demand.  If
+        // SEE < 0 the move is swapped to the bad-capture section and
+        // goodCapEnd shrinks, avoiding wasted SEE for moves never
+        // examined due to early beta cutoff.
+        //
+        // Reference: https://www.chessprogramming.org/Static_Exchange_Evaluation
         case STAGE_GOOD_CAPTURES:
-          while (capIdx < goodCapCount) {
-            pickBestInRange(moves.moves, scores, capIdx, goodCapCount,
-                            seeValues);
-            Move m   = moves.moves[capIdx];
-            int  see = seeValues[capIdx];
+          while (capIdx < goodCapEnd) {
+            pickBestInRange(moves.moves, scores, capIdx, goodCapEnd);
+            Move m = moves.moves[capIdx];
+            if (ttYielded && m == ttMove) { ++capIdx; continue; }
+            int see = attacks::see(*bb, mailbox, m);
+            if (see < 0) {
+              // Reclassify as bad capture: swap to end of good section.
+              --goodCapEnd;
+              if (capIdx != goodCapEnd) {
+                std::swap(moves.moves[capIdx], moves.moves[goodCapEnd]);
+                std::swap(scores[capIdx], scores[goodCapEnd]);
+              }
+              continue;  // re-examine capIdx (now holds a different move)
+            }
             ++capIdx;
-            if (ttYielded && m == ttMove) continue;
-            lastSee = see;
+            lastSee = static_cast<int16_t>(see);
             return m;
           }
           killerPhase = 0;
@@ -783,20 +796,21 @@ struct MovePicker {
             lastSee = SEE_NOT_COMPUTED;
             return m;
           }
-          badCapIdx = goodCapCount;
+          badCapIdx = goodCapEnd;
           stage = STAGE_BAD_CAPTURES;
           continue;
 
-        // --- Bad captures (SEE < 0) ------------------------------------
+        // --- Bad captures (SEE < 0, deferred from GOOD_CAPTURES) ------
         case STAGE_BAD_CAPTURES:
           while (badCapIdx < totalCaps) {
-            pickBestInRange(moves.moves, scores, badCapIdx, totalCaps,
-                            seeValues);
-            Move m   = moves.moves[badCapIdx];
-            int  see = seeValues[badCapIdx];
+            pickBestInRange(moves.moves, scores, badCapIdx, totalCaps);
+            Move m = moves.moves[badCapIdx];
             ++badCapIdx;
             if (ttYielded && m == ttMove) continue;
-            lastSee = see;
+            // SEE was already determined < 0 during lazy classification;
+            // recompute for the recapture-extension consumer in negamax.
+            lastSee = static_cast<int16_t>(
+                attacks::see(*bb, mailbox, m));
             return m;
           }
           stage = STAGE_DONE;
@@ -812,8 +826,11 @@ struct MovePicker {
 
 private:
   // -----------------------------------------------------------------------
-  // Generate captures, score with MVV-LVA + SEE + captureHistory, and
-  // partition into good (front) and bad (back).
+  // Generate captures, score with MVV-LVA + captureHistory.  SEE is
+  // deferred to GOOD_CAPTURES stage (lazy evaluation) — saves expensive
+  // swap-algorithm calls for captures never examined due to beta cutoff.
+  //
+  // Reference: https://www.chessprogramming.org/MVV-LVA
   // -----------------------------------------------------------------------
 
   void initCaptures() {
@@ -825,35 +842,21 @@ private:
     movegen::generateCaptures(*bb, mailbox, side, *posState, legalCtx, moves);
     totalCaps = moves.count;
 
+    // Score all captures uniformly with MVV-LVA + captureHistory.
+    // SEE is deferred to GOOD_CAPTURES stage (lazy evaluation).
     for (int i = 0; i < totalCaps; ++i) {
       const Move& m = moves.moves[i];
-      int seeVal = attacks::see(*bb, mailbox, m);
-      seeValues[i] = static_cast<int16_t>(seeVal);
-
-      if (seeVal >= 0) {
-        PieceType victim   = m.isEP() ? PieceType::PAWN
-                                      : pieceType(mailbox[m.to]);
-        PieceType attacker = pieceType(mailbox[m.from]);
-        int mvvlva = scoreMVVLVA(victim, attacker);
-        int capHist = safeCaptureHistScore(*ss, attacker, victim, m.to);
-        scores[i] = static_cast<int16_t>(mvvlva + capHist / 16);
-      } else {
-        scores[i] = static_cast<int16_t>(seeVal);
-      }
+      PieceType victim   = m.isEP() ? PieceType::PAWN
+                                    : pieceType(mailbox[m.to]);
+      PieceType attacker = pieceType(mailbox[m.from]);
+      int mvvlva   = scoreMVVLVA(victim, attacker);
+      int capHist  = safeCaptureHistScore(*ss, attacker, victim, m.to);
+      scores[i] = static_cast<int16_t>(mvvlva + capHist / 16);
     }
 
-    // Partition: good captures to [0, goodCapCount), bad to the rest.
-    goodCapCount = 0;
-    for (int i = 0; i < totalCaps; ++i) {
-      if (seeValues[i] >= 0) {
-        if (i != goodCapCount) {
-          std::swap(moves.moves[i], moves.moves[goodCapCount]);
-          std::swap(scores[i], scores[goodCapCount]);
-          std::swap(seeValues[i], seeValues[goodCapCount]);
-        }
-        ++goodCapCount;
-      }
-    }
+    // All captures are candidate good captures initially; bad ones are
+    // reclassified lazily when SEE is computed in GOOD_CAPTURES stage.
+    goodCapEnd = totalCaps;
   }
 
   // -----------------------------------------------------------------------
@@ -872,7 +875,6 @@ private:
       int idx = moves.count;
       moves.moves[idx] = m;
       scores[idx] = ss->history[c][raw(pieceType(mailbox[m.from])) - 1][m.to];
-      seeValues[idx] = SEE_NOT_COMPUTED;
       ++moves.count;
     }
     quietIdx = totalCaps;

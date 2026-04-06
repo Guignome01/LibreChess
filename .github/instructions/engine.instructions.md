@@ -74,10 +74,10 @@ API modules handle raw HTTP + TLS. Providers handle chess-domain logic and FreeR
 - **Pawn hash table** — 8 KiB (1024 entries × 8B `PawnEntry`), heap-allocated by `Engine`. Caches pawn structure MG/EG scores; ~95%+ hit rate.
 - **Eval hash table** — 8 KiB (1024 entries × 8B `EvalEntry`), heap-allocated by `Engine`. Caches full `evaluatePosition()` results.
 - **Engine** (owns Position + TT + pawn/eval hash tables) — **heap-allocated** via `std::unique_ptr` in `taskFunction()`. Position contains `HashHistory` (128 × 8B = 1 KiB) plus board state (~300B).
-- **Per-ply negamax** — ~1,950 B per ply (MovePicker with MoveList 658B + int16_t scores[218] 436B + int16_t seeValues[218] 436B + other fields + PackedMove quietsSearched[32] + capturesSearched[32] 128B + UndoInfo + locals). Uses `int16_t` arrays to reduce per-ply stack footprint (all score values fit: MVV-LVA ≤ 600, SEE ≤ 900, history ≤ ±7000).
+- **Per-ply negamax** — ~1,500 B per ply (MovePicker with MoveList 658B + int16_t scores[218] 436B + other fields + PackedMove quietsSearched[32] + capturesSearched[32] 128B + UndoInfo + locals). Uses `int16_t` scores array. SEE is computed lazily in the GOOD_CAPTURES stage (not stored in an array).
 - **Per-ply quiescence** — ~1.2 KiB per ply (MoveList 658B + int16_t capScores[218] 436B + UndoInfo + locals).
 
-Max depth 8 + extensions (~6) + 16 QS plies ≈ 50 KiB (fits in 64 KiB). See `docs/development/additional-topics.md` for the full budget breakdown.
+Max depth 8 + extensions (~6) + 16 QS plies ≈ 44 KiB (fits in 64 KiB). See `docs/development/additional-topics.md` for the full budget breakdown.
 
 ## Design Decisions
 

@@ -305,7 +305,21 @@ Bitboard attackersOfSquare(const BitboardSet& bb, Square sq,
 }
 
 bool isSquareUnderAttack(const BitboardSet& bb, Square sq, Color defendingColor) {
-  return attackersOfSquare(bb, sq, ~defendingColor) != 0;
+  Color attacking = ~defendingColor;
+  int base = piece::raw(attacking) * 6;
+
+  // Early exits: check leapers first (cheap table lookups), then sliders
+  // (expensive ray computation).  Returns as soon as any attacker is found.
+  if (PAWN[piece::raw(defendingColor)][sq] & bb.byPiece[base + 0]) return true;
+  if (KNIGHT[sq] & bb.byPiece[base + 1]) return true;
+  if (KING[sq]   & bb.byPiece[base + 5]) return true;
+
+  Bitboard rookQueens = bb.byPiece[base + 3] | bb.byPiece[base + 4];
+  if (rookQueens   && (rook(sq, bb.occupied)   & rookQueens))   return true;
+  Bitboard bishopQueens = bb.byPiece[base + 2] | bb.byPiece[base + 4];
+  if (bishopQueens && (bishop(sq, bb.occupied) & bishopQueens)) return true;
+
+  return false;
 }
 
 // ---------------------------------------------------------------------------
