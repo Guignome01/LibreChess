@@ -177,14 +177,20 @@ test/
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls for engine tests
 │   ├── test_search.cpp                 search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, time/stop control, TT store/probe/clear/pack/mate-score, move ordering, delta pruning, futility pruning, SEE ordering
 │   └── test_engine.cpp                 Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range
-├── test_tactics/                        Tactical test suites (standalone, heavyweight)
-│   ├── test_tactics.cpp                 Suite runner: loads .epd files via EPD parser, SAN→coordinate comparison, informational pass rates
+├── test_suites/                         Shared EPD test files (no .cpp — not compiled)
 │   ├── wac.epd                          Win At Chess — 300 positions (Reinfeld/Wilson, CPW verbatim)
 │   ├── bk.epd                           Bratko-Kopec — 24 positions (Bratko/Kopec, CPW verbatim)
 │   └── eret.epd                         Eigenmann Rapid Engine Test — 111 positions (Eigenmann, CPW verbatim)
-├── test_benchmarks/                     Performance benchmarks (standalone)
-│   ├── test_all.cpp                    Main entry: register calls for benchmark tests
-│   └── test_nps.cpp                    NPS benchmark: 6 standard positions, 1s/pos, informational throughput measurement
+├── test_positions_time/                 Time-based position test suites (standalone, heavyweight)
+│   └── test_positions_time.cpp          Suite runner: loads .epd files from ../test_suites/, 500ms/position, informational pass rates
+├── test_positions_depth/                Depth-based position test (standalone, deterministic)
+│   └── test_positions_depth.cpp         WAC 300 at fixed depth 10, hard assert on solve count vs calibrated baseline
+├── test_benchmarks/                     Performance benchmarks + regression tests
+│   ├── test_all.cpp                    Main entry: register calls for benchmark + regression tests
+│   ├── test_timing.cpp                  Micro-benchmarks: make/unmake, evaluate, bishop attacks, perft(5), search depth 8
+│   └── test_regression.cpp              Node count regression (10 pos × depth 10, 15% threshold) + eval regression (15 pos, exact match)
+├── test_statistics/                     Search statistics diagnostic (standalone)
+│   └── test_statistics.cpp              Runs 5 positions at depth 10, prints TT/cutoff/pruning/extension stats. Requires -DSTATS.
 └── test_perft/
     └── test_perft.cpp                  Perft validation: initial position, kiwipete, and standard positions 3–6
 ```

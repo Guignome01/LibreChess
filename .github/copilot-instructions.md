@@ -47,14 +47,17 @@ Three Python scripts run automatically (defined in `platformio.ini`): `minify.py
 
 ## Testing
 
-Unit tests run natively on the host machine (no ESP32 required) using the PlatformIO Unity test framework and the `[env:native]` build environment.
+Unit tests run natively on the host machine (no ESP32 required) using the PlatformIO Unity test framework. Two environments: `[env:native]` for all tests except statistics, `[env:native_stats]` (adds `-DSTATS`) for search statistics.
 
 ### Running Tests
 
 | Action | Command |
 |--------|--------|
-| Run all tests | `pio test -e native` |
-| Run a suite | `pio test -e native -f test_core` |
+| Run all tests | `pio test -e native -e native_stats` |
+| Run lib tests | `pio test -e native -f test_core -f test_engine -f test_game` |
+| Run positions | `pio test -e native -f test_positions_time -f test_positions_depth` |
+| Run benchmarks | `pio test -e native -f test_benchmarks` |
+| Run statistics | `pio test -e native_stats` |
 
 For test architecture, file mirroring conventions, and per-file test group details, see `.github/instructions/testing.instructions.md` (auto-loaded when editing `test/` files).
 

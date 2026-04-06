@@ -1,9 +1,5 @@
 #include <unity.h>
 
-#include <notation.h>
-#include <position.h>
-#include <search.h>
-
 #include "../test_helpers.h"
 
 using namespace LibreChess;
@@ -20,12 +16,6 @@ static search::SearchResult searchFEN(const char* fen, int depth) {
   search::SearchLimits limits;
   limits.maxDepth = depth;
   return search::findBestMove(pos, limits);
-}
-
-// Convert a Move to UCI coordinate string for readable assertions.
-static std::string moveToStr(Move m) {
-  return notation::toCoordinate(rowOf(m.from), fileOf(m.from),
-                                rowOf(m.to), fileOf(m.to));
 }
 
 // ===========================================================================

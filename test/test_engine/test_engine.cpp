@@ -1,8 +1,6 @@
 #include <unity.h>
 
 #include <engine.h>
-#include <notation.h>
-#include <search.h>
 
 #include "../test_helpers.h"
 
@@ -11,17 +9,6 @@ using namespace LibreChess;
 // ===========================================================================
 // Helpers
 // ===========================================================================
-
-// Convert a Move to UCI coordinate string for readable assertions.
-static std::string moveToStr(Move m) {
-  std::string s = notation::toCoordinate(rowOf(m.from), fileOf(m.from),
-                                         rowOf(m.to), fileOf(m.to));
-  if (m.isPromotion()) {
-    static const char promoChars[] = {'n', 'b', 'r', 'q'};
-    s += promoChars[m.promoIndex()];
-  }
-  return s;
-}
 
 static const char* STARTPOS =
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";

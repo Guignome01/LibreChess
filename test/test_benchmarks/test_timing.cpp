@@ -1,15 +1,10 @@
 #include <unity.h>
 
+#include <cstdio>
+
 #include <attacks.h>
-#include <evaluation.h>
-#include <movegen.h>
-#include <position.h>
-#include <search.h>
 
 #include "../test_helpers.h"
-
-#include <chrono>
-#include <cstdio>
 
 using namespace LibreChess;
 
@@ -23,26 +18,9 @@ using namespace LibreChess;
 // Run:  pio test -e native -f test_benchmarks
 // ===========================================================================
 
-void setUp(void) {}
-void tearDown(void) {}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-static uint64_t nowUs() {
-  using namespace std::chrono;
-  return static_cast<uint64_t>(
-      duration_cast<microseconds>(steady_clock::now().time_since_epoch())
-          .count());
-}
-
-static uint32_t chronoMillis() {
-  using namespace std::chrono;
-  static const auto epoch = steady_clock::now();
-  return static_cast<uint32_t>(
-      duration_cast<milliseconds>(steady_clock::now() - epoch).count());
-}
 
 // Recursive perft (node counting only — used as integrated make/unmake
 // + movegen stress test).
@@ -325,12 +303,10 @@ static void test_bench_search_multi(void) {
 }
 
 // ===========================================================================
-// Entry point
+// Registration
 // ===========================================================================
 
-int main(int argc, char** argv) {
-  UNITY_BEGIN();
-
+void register_timing_tests() {
   RUN_TEST(test_bench_make_unmake);
   RUN_TEST(test_bench_make_unmake_ep);
   RUN_TEST(test_bench_evaluate);
@@ -339,6 +315,4 @@ int main(int argc, char** argv) {
   RUN_TEST(test_bench_perft5);
   RUN_TEST(test_bench_search_depth8);
   RUN_TEST(test_bench_search_multi);
-
-  return UNITY_END();
 }

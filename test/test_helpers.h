@@ -2,15 +2,36 @@
 #define TEST_HELPERS_H
 
 #include <bitboard.h>
-#include <utils.h>
+#include <epd.h>
+#include <evaluation.h>
 #include <fen.h>
 #include <movegen.h>
 #include <notation.h>
 #include <position.h>
+#include <search.h>
+#include <utils.h>
 
+#include <chrono>
 #include <cstring>
+#include <fstream>
+#include <string>
+#include <vector>
 
 using namespace LibreChess;
+
+static uint64_t nowUs() {
+  using namespace std::chrono;
+  return static_cast<uint64_t>(
+      duration_cast<microseconds>(steady_clock::now().time_since_epoch())
+          .count());
+}
+
+static uint32_t chronoMillis() {
+  using namespace std::chrono;
+  static const auto epoch = steady_clock::now();
+  return static_cast<uint32_t>(
+      duration_cast<milliseconds>(steady_clock::now() - epoch).count());
+}
 
 /// Set up the standard initial chess position.
 inline void setupInitialBoard(BitboardSet& bb, Piece mailbox[]) {
@@ -78,6 +99,71 @@ inline MoveEntry makeEntry(int fr, int fc, int tr, int tc, Piece piece,
 /// Provides clear failure messages with numeric values (e.g., "Expected 1 Was 0").
 #define TEST_ASSERT_ENUM_EQ(expected, actual) \
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(expected), static_cast<uint8_t>(actual))
+
+// ---------------------------------------------------------------------------
+// Search & EPD helpers — shared across position / benchmark / stats suites.
+// ---------------------------------------------------------------------------
+
+/// Get the directory containing the given source file.
+/// Usage: testFileDir(__FILE__) returns the directory of the calling .cpp.
+inline std::string testFileDir(const char* file) {
+  std::string s(file);
+  auto pos = s.find_last_of("/\\");
+  return (pos != std::string::npos) ? s.substr(0, pos + 1) : "";
+}
+
+/// Load all EPD records from a file path.
+inline std::vector<EPDRecord> loadEPDFile(const std::string& path) {
+  std::vector<EPDRecord> records;
+  std::ifstream in(path);
+  if (!in.is_open()) return records;
+  std::string line;
+  while (std::getline(in, line)) {
+    if (line.empty()) continue;
+    EPDRecord rec = epd::parseEPDLine(line);
+    if (!rec.fen.empty()) records.push_back(rec);
+  }
+  return records;
+}
+
+/// Convert a Move to UCI coordinate string (e.g. "e2e4", "e7e8q").
+inline std::string moveToStr(Move m) {
+  char promo = ' ';
+  if (m.isPromotion()) {
+    static constexpr char PROMO_CHARS[] = {'n', 'b', 'r', 'q'};
+    promo = PROMO_CHARS[m.promoIndex()];
+  }
+  return notation::toCoordinate(rowOf(m.from), fileOf(m.from), rowOf(m.to),
+                                fileOf(m.to), promo);
+}
+
+/// Parse a SAN move string into coordinate notation using the position context.
+inline std::string sanToCoordinate(const Position& pos,
+                                   const std::string& san) {
+  int fromRow, fromCol, toRow, toCol;
+  char promotion = ' ';
+  bool ok =
+      notation::parseSAN(pos.bitboards(), pos.mailbox(), pos.positionState(),
+                         pos.sideToMove(), san, fromRow, fromCol, toRow, toCol,
+                         promotion);
+  if (!ok) return "";
+  return notation::toCoordinate(fromRow, fromCol, toRow, toCol, promotion);
+}
+
+/// Pre-allocated hash tables shared across test positions.
+struct SharedTables {
+  search::TranspositionTable tt;
+  eval::PawnHashTable pawn;
+  eval::EvalHashTable eval;
+
+  void init() {
+    tt.resize(search::DEFAULT_TT_SIZE);
+    pawn.resize(eval::DEFAULT_PAWN_HASH_SIZE);
+    eval.resize(eval::DEFAULT_EVAL_HASH_SIZE);
+  }
+  void clear() { tt.clear(); pawn.clear(); eval.clear(); }
+  void free() { tt.free(); pawn.free(); eval.free(); }
+};
 
 // Shared test globals — defined in test_shared.cpp, compiled into every suite.
 extern BitboardSet bb;

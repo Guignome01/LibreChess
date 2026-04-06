@@ -13,18 +13,24 @@ The chess libraries (`lib/core/`, `lib/game/`, `lib/engine/`) have zero Arduino 
 
 ## Running Tests
 
+Two build environments: `[env:native]` for all tests except statistics, `[env:native_stats]` (adds `-DSTATS`) for search statistics instrumentation.
+
 | Action | Command |
-|--------|---------|
-| Run all tests | `pio test -e native` |
+|--------|---------||
+| Run all tests | `pio test -e native -e native_stats` |
+| Run lib tests (core+engine+game) | `pio test -e native -f test_core -f test_engine -f test_game` |
+| Run position tests | `pio test -e native -f test_positions_time -f test_positions_depth` |
+| Run benchmarks + statistics | `pio test -e native -f test_benchmarks` then `pio test -e native_stats` |
 | Run core suite | `pio test -e native -f test_core` |
-| Run game suite | `pio test -e native -f test_game` |
 | Run engine suite | `pio test -e native -f test_engine` |
+| Run game suite | `pio test -e native -f test_game` |
 | Run perft suite | `pio test -e native -f test_perft` |
-| Run tactics suite | `pio test -e native -f test_tactics` |
+| Run benchmarks | `pio test -e native -f test_benchmarks` |
+| Run statistics | `pio test -e native_stats` |
 
 ## File Structure
 
-Tests are split into three suites mirroring the library structure (`lib/core/`, `lib/game/`, `lib/engine/`), plus an independent perft suite. Each suite compiles into its own binary. Shared globals live in `test_shared.cpp` at the test root (compiled into every suite).
+Tests are split into three suites mirroring the library structure (`lib/core/`, `lib/game/`, `lib/engine/`), plus independent position, benchmark, statistics, and perft suites. Each suite compiles into its own binary. Shared globals live in `test_shared.cpp` at the test root (compiled into every suite).
 
 ```
 test/
@@ -53,13 +59,20 @@ test/
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
 │   ├── test_search.cpp                  search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, IID, time/stop, TT, move ordering, delta pruning, futility pruning, SEE ordering, lazy eval, PV table, MDP, capture history, staged MovePicker, TT replacement, soft time, easy move, instability time extension
 │   └── test_engine.cpp                  Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range
-├── test_tactics/                        Tactical test suites (standalone, heavyweight)
-│   ├── test_tactics.cpp                 Suite runner: loads .epd files via EPD parser, SAN→coordinate comparison, informational pass rates
+├── test_suites/                         Shared EPD test files (no .cpp — not compiled)
 │   ├── wac.epd                          Win At Chess — 300 positions (Reinfeld/Wilson, CPW verbatim)
 │   ├── bk.epd                           Bratko-Kopec — 24 positions (Bratko/Kopec, CPW verbatim)
 │   └── eret.epd                         Eigenmann Rapid Engine Test — 111 positions (Eigenmann, CPW verbatim)
-├── test_benchmarks/                     Performance benchmarks (standalone)
-│   └── test_benchmarks.cpp              Micro-benchmarks: make/unmake timing, EP make/unmake, evaluatePosition (single + multi-position), bishop() attacks, perft(5) Mnps, search depth-8 (single + multi-position) knps
+├── test_positions_time/                 Time-based position test suites (standalone, heavyweight)
+│   └── test_positions_time.cpp          Suite runner: loads .epd files from ../test_suites/ via EPD parser, SAN→coordinate comparison, 500ms/position, informational pass rates
+├── test_positions_depth/                Depth-based position test (standalone, deterministic)
+│   └── test_positions_depth.cpp         WAC 300 at fixed depth 10 — hard assert on solve count vs calibrated baseline
+├── test_benchmarks/                     Performance benchmarks + regression tests
+│   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
+│   ├── test_timing.cpp                  Micro-benchmarks: make/unmake timing, EP make/unmake, evaluatePosition (single + multi-position), bishop() attacks, perft(5) Mnps, search depth-8 (single + multi-position) knps
+│   └── test_regression.cpp              Node count regression (10 positions × depth 10, 15% threshold) + eval regression (15 positions, exact match)
+├── test_statistics/                     Search statistics diagnostic (standalone)
+│   └── test_statistics.cpp              Runs 5 positions at depth 10, prints TT hit rates, cutoff ratios, pruning/extension counts, QS/main node ratios. Requires -DSTATS.
 └── test_perft/                          Perft suite (standalone, heavyweight)
     └── test_perft.cpp                   Perft move-tree enumeration with detailed counters (captures, EP, castles, promotions, checks, checkmates)
 ```
@@ -158,8 +171,17 @@ Leaper attack tables (knight on e4, king on a1, pawn attacks per color). Slider 
 ### EPD Parser (`test_epd.cpp`)
 `parseEPDLine`: basic FEN + bm opcode, multiple opcodes (bm + am + id + c0), quoted id strings, avoid move variations, comma-separated operands, c9 game result parsing (white win/draw/black win). `validateEPDLine`: valid/invalid FEN, missing fields. Accessors: `findOperation()` lookup, `id()` convenience, non-existent opcode returns nullptr yet `id()` returns empty.
 
-### Tactical Suites (`test_tactics/test_tactics.cpp`)
-Engine accuracy benchmarks using standard `.epd` files loaded at runtime via the EPD parser. Each suite reads its `.epd` file, parses each line into an `EPDRecord`, runs `search::findBestMove` with a fixed time budget (500ms/position), converts both expected (SAN) and engine (Move) results to coordinate notation, and compares. Shared `TranspositionTable`, `PawnHashTable`, and `EvalHashTable` are allocated once at startup and cleared between suites. Suites: **WAC** (Win At Chess, 300 positions), **BK** (Bratko-Kopec, 24 positions), **ERET** (Eigenmann Rapid Engine Test, 111 positions). Tests are informational — they assert only that at least one position is solved, printing individual mismatches and overall pass rate.
+### Tactical Suites (`test_positions_time/test_positions_time.cpp`)
+Engine accuracy benchmarks using standard `.epd` files loaded from `../test_suites/` at runtime via the EPD parser. Each suite reads its `.epd` file, parses each line into an `EPDRecord`, runs `search::findBestMove` with a fixed time budget (500ms/position), converts both expected (SAN) and engine (Move) results to coordinate notation, and compares. Shared `TranspositionTable`, `PawnHashTable`, and `EvalHashTable` are allocated once at startup and cleared between suites. Suites: **WAC** (Win At Chess, 300 positions), **BK** (Bratko-Kopec, 24 positions), **ERET** (Eigenmann Rapid Engine Test, 111 positions). Tests are informational — they assert only that at least one position is solved, printing individual mismatches and overall pass rate.
 
-### Performance Benchmarks (`test_benchmarks/test_benchmarks.cpp`)
+### Depth-Based Positions (`test_positions_depth/test_positions_depth.cpp`)
+Deterministic, machine-independent strength gate. Runs all 300 WAC positions at fixed depth 10 (no time limit), counts how many the engine solves, and asserts the count is ≥ a calibrated baseline (`WAC_DEPTH_BASELINE`). Used to detect search quality regressions before and after optimization changes.
+
+### Performance Benchmarks (`test_benchmarks/test_timing.cpp`)
 Micro-benchmark suite for hot-path timing baselines. Eight tests measure `std::chrono::steady_clock` timing: make/unmake round-trip (no EP), make/unmake round-trip (EP position), `evaluatePosition` call (single position), multi-position `evaluatePosition` (5 positions, averaged), `bishop()` attack generation (500K calls with varied sq+occupancy), perft(5) throughput in Mnps, single-position search at depth 8, and multi-position search (3 positions, averaged) reporting knps/nodes/score. Tests are informational (always PASS) — they print ns/op or throughput metrics for regression tracking. No assertions on timing values.
+
+### Regression Tests (`test_benchmarks/test_regression.cpp`)
+Node count and evaluation regression tests. Node count: 10 diverse positions searched at depth 10, total nodes compared against a calibrated baseline with 15% tolerance. Eval: 15 positions, static evaluation compared for exact match against calibrated values. Used to detect unintended changes to search behavior or evaluation.
+
+### Search Statistics (`test_statistics/test_statistics.cpp`)
+Diagnostic search statistics suite. Runs 5 positions at depth 10 with `search::resetStats()`/`search::getStats()` (requires `-DSTATS` build flag, set in `[env:native]`). Prints formatted tables: TT probe/hit rates, exact/lower/upper cutoff counts, beta cutoff quality (first-move cutoff %), pruning counts (NMP, futility, LMP, history, razoring, RFP), LMR search/re-search ratios, extension counts (check, singular, recapture), PVS re-search count, QS/main node distribution. Informational only — no hard assertions.

@@ -10,6 +10,7 @@
 #include "evaluation.h"
 #include "movegen.h"
 #include "piece.h"
+#include "stats.h"
 #include "utils.h"
 
 // ---------------------------------------------------------------------------
@@ -30,6 +31,19 @@ namespace LibreChess {
 namespace search {
 
 using namespace piece;
+
+// ---------------------------------------------------------------------------
+// Search statistics — guarded by -DSTATS (native test builds only).
+// ---------------------------------------------------------------------------
+
+#ifdef STATS
+SearchStats g_stats;
+void resetStats() { g_stats = SearchStats{}; }
+SearchStats getStats() { return g_stats; }
+#else
+void resetStats() {}
+SearchStats getStats() { return SearchStats{}; }
+#endif
 
 // ---------------------------------------------------------------------------
 // OOM-safe unique_ptr factory — returns nullptr on allocation failure instead
@@ -1109,6 +1123,7 @@ bool hasNonPawnMaterial(const Position& pos) {
 int quiescence(Position& pos, int alpha, int beta, int ply, int qsPly,
                SearchState& state) {
   state.nodes++;
+  STAT_INC(qNodes);
 
   // --- Ply / QS depth overflow guard ---
   // Check evasions generate all moves (including quiets), which can cause
@@ -1246,6 +1261,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
             int ply, SearchState& state, Piece prevPiece, int prevTo,
             Move excludedMove = Move()) {
   state.nodes++;
+  STAT_INC(mainNodes);
 
   // --- Ply overflow guard ---
   // Check extensions can push ply beyond MAX_PLY.  All per-ply arrays
@@ -1286,7 +1302,10 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // misevaluating forced sequences that end at the horizon.  The check
   // status is also used by NMP (as a guard) and LMR (to skip reductions).
   bool inCheck = pos.inCheck();
-  if (inCheck) ++depth;
+  if (inCheck) {
+    ++depth;
+    STAT_INC(checkExtensions);
+  }
 
   // --- Horizon: quiescence search ---
   if (depth <= 0) return quiescence(pos, alpha, beta, ply, 0, state);
@@ -1349,6 +1368,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // Reference: https://www.chessprogramming.org/Razoring
   if (!pvNode && !inCheck && depth <= 2 && depth >= 1 &&
       staticEval + RAZOR_MARGIN[depth] <= alpha) {
+    STAT_INC(razoringPrunes);
     return quiescence(pos, alpha, beta, ply, 0, state);
   }
 
@@ -1362,6 +1382,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // Reference: https://www.chessprogramming.org/Reverse_Futility_Pruning
   if (!pvNode && !inCheck && depth <= 6 &&
       staticEval - RFP_MARGIN * depth / (1 + improving) >= beta) {
+    STAT_INC(rfpPrunes);
     return staticEval;
   }
 
@@ -1377,20 +1398,26 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   const TTEntry* ttEntry = nullptr;
 
   if (state.tt) {
+    STAT_INC(ttProbes);
     const TTEntry* entry = state.tt->probe(pos.hash());
     ttEntry = entry;  // save for SE probe
+    if (entry) STAT_INC(ttHits);
     // Skip TT cutoffs when inside an exclusion search — we need to
     // search all non-excluded moves regardless of TT score.
     if (entry && entry->depth >= depth && !hasExcluded) {
       int ttScore = scoreFromTT(entry->score, ply);
-      if (entry->flag == TTFlag::EXACT)
+      if (entry->flag == TTFlag::EXACT) {
+        STAT_INC(ttExactCutoffs);
         return ttScore;
+      }
       if (entry->flag == TTFlag::LOWER_BOUND && ttScore > alpha)
         alpha = ttScore;
       else if (entry->flag == TTFlag::UPPER_BOUND && ttScore < beta)
         beta = ttScore;
-      if (alpha >= beta)
+      if (alpha >= beta) {
+        STAT_INC(ttLowerCutoffs);
         return ttScore;
+      }
     }
     if (entry)
       ttMove = unpackMove(entry->bestMove);
@@ -1440,6 +1467,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
                           ply, state, prevPiece, prevTo, ttMove);
     if (seScore < singularBeta) {
       singularExtension = 1;  // TT move is singular — extend it
+      STAT_INC(singularExtensions);
     }
   }
 
@@ -1477,6 +1505,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
 
     // Null-move cutoff: the position is so good that even passing beats beta.
     if (nullScore >= beta) {
+      STAT_INC(nullMovePrunes);
       // Don't return unproven mate scores from null-move searches —
       // they can be unreliable.  Clamp to beta instead.
       return (nullScore >= MATE_SCORE - MAX_PLY) ? beta : nullScore;
@@ -1534,6 +1563,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     // and never prune captures or promotions (tactical moves can surprise).
     if (futilityPruning && movesSearched > 0 &&
         !m.isCapture() && !m.isPromotion()) {
+      STAT_INC(futilityPrunes);
       continue;
     }
 
@@ -1545,6 +1575,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     if (!pvNode && !inCheck && depth <= 5 && movesSearched > 0 &&
         movesSearched >= LMP_THRESHOLD[depth] + (improving ? 2 : 0) &&
         !m.isCapture() && !m.isPromotion()) {
+      STAT_INC(lmpPrunes);
       continue;
     }
 
@@ -1560,7 +1591,10 @@ int negamax(Position& pos, int depth, int alpha, int beta,
         movesSearched > 0 && !m.isCapture() && !m.isPromotion()) {
       uint8_t mc = raw(pos.sideToMove());
       int16_t hist = state.history[mc][m.from][m.to];
-      if (hist < -HISTORY_PRUNE_THRESHOLD * depth) continue;
+      if (hist < -HISTORY_PRUNE_THRESHOLD * depth) {
+        STAT_INC(historyPrunes);
+        continue;
+      }
     }
 
     // Capture the moving piece identity before make() alters the mailbox.
@@ -1588,7 +1622,10 @@ int negamax(Position& pos, int depth, int alpha, int beta,
       int seVal = picker.lastSee != SEE_NOT_COMPUTED
                      ? picker.lastSee
                      : attacks::see(pos.bitboards(), pos.mailbox(), m);
-      if (seVal >= 0) extension = 1;
+      if (seVal >= 0) {
+        extension = 1;
+        STAT_INC(recaptureExtensions);
+      }
     }
 
     UndoInfo undo = pos.make(m);
@@ -1634,6 +1671,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
                    !inCheck;
 
       if (doLMR) {
+        STAT_INC(lmrSearches);
         // Reduced-depth zero-window scout search.
         // pos is in post-make state; toggle side to get the move maker.
         uint8_t mc = raw(pos.sideToMove()) ^ 1;
@@ -1652,6 +1690,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
       // If the LMR search (or skip) suggests this move might be good,
       // re-search at full depth with a zero-window.
       if (score > alpha) {
+        if (doLMR) STAT_INC(lmrReSearches);
         score = -negamax(pos, newDepth, -alpha - 1, -alpha, ply + 1, state,
                          movingPiece, m.to);
       }
@@ -1659,6 +1698,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
       // PVS re-search: if the zero-window scout failed high within the
       // PV window, we need an exact score — re-search with full window.
       if (score > alpha && score < beta) {
+        STAT_INC(pvsReSearches);
         score = -negamax(pos, newDepth, -beta, -alpha, ply + 1, state,
                          movingPiece, m.to);
       }
@@ -1688,6 +1728,8 @@ int negamax(Position& pos, int depth, int alpha, int beta,
         collectPV(state, ply, packMove(m));
 
         if (alpha >= beta) {
+          STAT_INC(betaCutoffs);
+          if (movesSearched == 1) STAT_INC(firstMoveCutoffs);
           int bonus = depth * depth;
           // Beta cutoff — update move ordering heuristics
           if (m.isCapture()) {

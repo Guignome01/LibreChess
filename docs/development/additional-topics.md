@@ -55,8 +55,10 @@ Common commands:
 | Upload firmware | `pio run -t upload` |
 | Serial monitor | `pio device monitor` |
 | Clean build | `pio run -t clean` |
-| Run all tests | `pio test -e native` |
+| Run all tests | `pio test -e native -e native_stats` |
+| Run lib tests | `pio test -e native -f test_core -f test_engine -f test_game` |
 | Run one test suite | `pio test -e native -f test_core` |
+| Run statistics | `pio test -e native_stats -f test_statistics` |
 
 Serial monitor runs at **115200 baud** (configured in `platformio.ini`).
 
@@ -173,8 +175,11 @@ Features from the [Chess Programming Wiki](https://www.chessprogramming.org/Main
 
 | Feature | Status | Description | Reference |
 |---------|--------|-------------|-----------|
-| Tactical Test Suites | Implemented | WAC, BK, ERET benchmark suites with EPD parser. Time-only mode (500ms/position). | [CPW — Test Positions](https://www.chessprogramming.org/Test-Positions) |
-| NPS Benchmarks | Implemented | Nodes-per-second measurement across 6 standard positions (opening, middlegame, endgame, tactical). 1 second per position. Informational — no hard thresholds. `test/test_benchmarks/test_nps.cpp`. | [CPW — Nodes per Second](https://www.chessprogramming.org/Nodes_per_Second) |
+| Time-Based Position Suites | Implemented | WAC, BK, ERET benchmark suites with EPD parser. 500ms/position, informational. `test/test_positions_time/test_positions_time.cpp`, EPDs in `test/test_suites/`. | [CPW — Test Positions](https://www.chessprogramming.org/Test-Positions) |
+| Depth-Based Position Gate | Implemented | WAC 300 at fixed depth 10, deterministic. Hard assert on solve count vs calibrated baseline. `test/test_positions_depth/test_positions_depth.cpp`. | [CPW — Test Positions](https://www.chessprogramming.org/Test-Positions) |
+| Timing Benchmarks | Implemented | 8 micro-benchmarks: make/unmake, evaluate, bishop attacks, perft(5), search depth 8 (single + multi-position). Informational. `test/test_benchmarks/test_timing.cpp`. | [CPW — Nodes per Second](https://www.chessprogramming.org/Nodes_per_Second) |
+| Node/Eval Regression | Implemented | Node count regression (10 positions × depth 10, 15% threshold) + eval regression (15 positions, exact match). `test/test_benchmarks/test_regression.cpp`. | — |
+| Search Statistics | Implemented | Diagnostic stats: TT hit rates, cutoff quality, pruning/extension counts, QS/main node ratios. `test/test_statistics/test_statistics.cpp`. Requires `-DSTATS`. | [CPW — Search Statistics](https://www.chessprogramming.org/Search_Statistics) |
 | Evaluation Regression Tests | Implemented | 12 fixed-position score assertions covering symmetry, material advantage, pawn structure, bishop pair, king safety, threats, phase tapering. `test/test_core/test_eval_regression.cpp`. | — |
 
 ## References

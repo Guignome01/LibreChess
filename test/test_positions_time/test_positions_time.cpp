@@ -1,108 +1,38 @@
-// Tactical test suites — WAC, BK, ERET.
+// Time-based position test suites — WAC, BK, ERET.
 //
-// Loads positions from standard .epd files, runs each through the engine at a
-// fixed search depth, and checks whether the engine's best move matches the
-// expected move (bm) or avoids a bad move (am).  Results are informational —
-// individual mismatches print diagnostics but do NOT fail the test.
+// Loads positions from standard .epd files (in ../test_suites/), runs each
+// through the engine with a per-position time budget, and checks whether the
+// engine's best move matches the expected move (bm) or avoids a bad move (am).
+// Results are informational — individual mismatches print diagnostics but do
+// NOT fail the test.
 //
 // Move comparison uses coordinate notation (e.g. "e2e4", "e7e8q") which is
 // the proven pattern from test_search.cpp.  EPD best-move operands are SAN,
 // so we parse them via notation::parseSAN() and convert to coordinates.
+//
+// Reference: https://www.chessprogramming.org/Test-Positions
 
 #include <unity.h>
 
-#include <chrono>
 #include <cstdio>
-#include <fstream>
-#include <string>
-#include <vector>
 
-#include <evaluation.h>
-#include <fen.h>
-#include <movegen.h>
-#include <notation.h>
-#include <position.h>
-#include <search.h>
-
-#include "epd.h"
+#include "../test_helpers.h"
 
 using namespace LibreChess;
-
-// ---------------------------------------------------------------------------
-// Shared hash tables — allocated once and reused across all suites.
-// Cleared between suites so results are independent.
-// ---------------------------------------------------------------------------
-
-static search::TranspositionTable sharedTT;
-static eval::PawnHashTable sharedPawnHash;
-static eval::EvalHashTable sharedEvalHash;
-
-/// Allocate shared hash tables (called once at startup).
-static void initSharedTables() {
-  sharedTT.resize(search::DEFAULT_TT_SIZE);
-  sharedPawnHash.resize(eval::DEFAULT_PAWN_HASH_SIZE);
-  sharedEvalHash.resize(eval::DEFAULT_EVAL_HASH_SIZE);
-}
-
-/// Clear all shared hash tables between suites.
-static void clearSharedTables() {
-  sharedTT.clear();
-  sharedPawnHash.clear();
-  sharedEvalHash.clear();
-}
-
-/// Free shared hash tables at shutdown.
-static void freeSharedTables() {
-  sharedTT.free();
-  sharedPawnHash.free();
-  sharedEvalHash.free();
-}
 
 // ---------------------------------------------------------------------------
 // Configuration
 // ---------------------------------------------------------------------------
 
+static SharedTables tables;
+
+/// EPD directory resolved relative to this source file.
+static const std::string EPD_DIR = testFileDir(__FILE__) + "../test_suites/";
+
 /// Per-position time budget in milliseconds.  Each position gets this much
 /// time to find the best move — the standard approach for EPD test suites.
 /// No depth cap: the engine searches as deep as it can within the budget.
 static constexpr uint32_t TACTICS_TIME_MS = 500;
-
-/// Chrono-based millisecond clock for native builds (firmware uses millis()).
-static uint32_t chronoMillis() {
-  using namespace std::chrono;
-  static const auto epoch = steady_clock::now();
-  return static_cast<uint32_t>(
-      duration_cast<milliseconds>(steady_clock::now() - epoch).count());
-}
-
-// ---------------------------------------------------------------------------
-// EPD file loading
-// ---------------------------------------------------------------------------
-
-/// Return the directory containing this source file (and the .epd files).
-/// Works whether __FILE__ expands to an absolute or relative path.
-static std::string sourceDir() {
-  std::string file = __FILE__;
-  auto pos = file.find_last_of("/\\");
-  return (pos != std::string::npos) ? file.substr(0, pos + 1) : "";
-}
-
-/// Load and parse all positions from an .epd file.
-/// Tries the path relative to this source file first, then falls back to the
-/// bare filename (works when CWD is the project root).
-static std::vector<EPDRecord> loadEPD(const std::string& filename) {
-  std::vector<EPDRecord> records;
-  std::ifstream in(sourceDir() + filename);
-  if (!in.is_open()) in.open(filename);
-
-  std::string line;
-  while (std::getline(in, line)) {
-    if (line.empty()) continue;
-    EPDRecord rec = epd::parseEPDLine(line);
-    if (!rec.fen.empty()) records.push_back(rec);
-  }
-  return records;
-}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -110,32 +40,6 @@ static std::vector<EPDRecord> loadEPD(const std::string& filename) {
 
 void setUp(void) {}
 void tearDown(void) {}
-
-/// Convert a Move to UCI coordinate string (handles promotions).
-static std::string moveToStr(Move m) {
-  char promo = ' ';
-  if (m.isPromotion()) {
-    // 0=Knight, 1=Bishop, 2=Rook, 3=Queen
-    static constexpr char PROMO_CHARS[] = {'n', 'b', 'r', 'q'};
-    promo = PROMO_CHARS[m.promoIndex()];
-  }
-  return notation::toCoordinate(rowOf(m.from), fileOf(m.from), rowOf(m.to),
-                                fileOf(m.to), promo);
-}
-
-/// Parse a SAN move string into coordinate notation using the given position.
-/// Returns empty string on failure.
-static std::string sanToCoordinate(const Position& pos,
-                                   const std::string& san) {
-  int fromRow, fromCol, toRow, toCol;
-  char promotion = ' ';
-  bool ok =
-      notation::parseSAN(pos.bitboards(), pos.mailbox(), pos.positionState(),
-                         pos.sideToMove(), san, fromRow, fromCol, toRow, toCol,
-                         promotion);
-  if (!ok) return "";
-  return notation::toCoordinate(fromRow, fromCol, toRow, toCol, promotion);
-}
 
 /// Run a single test suite loaded from an .epd file.
 ///
@@ -164,7 +68,7 @@ static int runSuite(const char* suiteName,
     limits.hardTimeMs = TACTICS_TIME_MS;
     search::SearchResult result = search::findBestMove(
         pos, limits, chronoMillis, nullptr,
-        &sharedTT, &sharedPawnHash, &sharedEvalHash);
+        &tables.tt, &tables.pawn, &tables.eval);
     std::string engineMove = moveToStr(result.bestMove);
 
     // Determine expected move list and whether it's bm or am
@@ -236,8 +140,8 @@ static int runSuite(const char* suiteName,
 // ===========================================================================
 
 static void test_wac_suite(void) {
-  clearSharedTables();
-  std::vector<EPDRecord> records = loadEPD("wac.epd");
+  tables.clear();
+  std::vector<EPDRecord> records = loadEPDFile(EPD_DIR + "wac.epd");
   int count = static_cast<int>(records.size());
   TEST_ASSERT_MESSAGE(count > 0, "Failed to load wac.epd");
 
@@ -249,8 +153,8 @@ static void test_wac_suite(void) {
 }
 
 static void test_bk_suite(void) {
-  clearSharedTables();
-  std::vector<EPDRecord> records = loadEPD("bk.epd");
+  tables.clear();
+  std::vector<EPDRecord> records = loadEPDFile(EPD_DIR + "bk.epd");
   int count = static_cast<int>(records.size());
   TEST_ASSERT_MESSAGE(count > 0, "Failed to load bk.epd");
 
@@ -262,8 +166,8 @@ static void test_bk_suite(void) {
 }
 
 static void test_eret_suite(void) {
-  clearSharedTables();
-  std::vector<EPDRecord> records = loadEPD("eret.epd");
+  tables.clear();
+  std::vector<EPDRecord> records = loadEPDFile(EPD_DIR + "eret.epd");
   int count = static_cast<int>(records.size());
   TEST_ASSERT_MESSAGE(count > 0, "Failed to load eret.epd");
 
@@ -279,12 +183,12 @@ static void test_eret_suite(void) {
 // ===========================================================================
 
 int main(int argc, char** argv) {
-  initSharedTables();
+  tables.init();
   UNITY_BEGIN();
   RUN_TEST(test_wac_suite);
   RUN_TEST(test_bk_suite);
   RUN_TEST(test_eret_suite);
   int result = UNITY_END();
-  freeSharedTables();
+  tables.free();
   return result;
 }
