@@ -20,6 +20,7 @@ Never optimize without understanding the current state first.
   - Stack sizes: FreeRTOS task allocations, recursive call depth
   - Complexity: count branches, nesting depth, function length, parameter counts
   - Duplication: identify copy-pasted logic, near-identical functions
+  - Memory footprint inventory: for struct/class optimization, build a byte-precise table of every field (type, size, offset) and every per-instance allocation. For recursive code (search), compute per-ply stack frame size (largest locals × recursion depth) and compare against FreeRTOS task stack. This inventory is the foundation for every memory optimization — skip it and you're guessing.
 - **Read related docs and instructions**: Check architecture docs and instruction files for constraints and design rationale. Understand *why* the code is the way it is before deciding it's wrong.
 
 **Output**: Present findings with concrete numbers — "this function is 120 lines with 8 nesting levels", "this struct uses 2.4KB stack", "these two functions share 90% of their logic". No vague claims like "this seems slow."

@@ -54,7 +54,7 @@ static PerftResult perft(Position& pos, int depth) {
     return result;
   }
 
-  Color turn = pos.currentTurn();
+  Color turn = pos.sideToMove();
   PositionState prevState = pos.positionState();
 
   for (Square sq = 0; sq < 64; sq++) {

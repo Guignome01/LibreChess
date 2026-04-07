@@ -102,6 +102,24 @@ enum class GameResult : uint8_t {
   ABORTED = 9
 };
 
+/// Maps a GameResult to a human-readable display string.
+inline const char* gameResultName(GameResult result) {
+  static constexpr const char* NAMES[] = {
+      "In progress",                  // 0 = IN_PROGRESS
+      "Checkmate",                    // 1 = CHECKMATE
+      "Stalemate",                    // 2 = STALEMATE
+      "Draw (50-move rule)",          // 3 = DRAW_50
+      "Draw (threefold repetition)",  // 4 = DRAW_3FOLD
+      "Resignation",                  // 5 = RESIGNATION
+      "Draw (insufficient material)", // 6 = DRAW_INSUFFICIENT
+      "Draw (agreement)",             // 7 = DRAW_AGREEMENT
+      "Timeout",                      // 8 = TIMEOUT
+      "Aborted",                      // 9 = ABORTED
+  };
+  auto idx = static_cast<uint8_t>(result);
+  return (idx < sizeof(NAMES) / sizeof(NAMES[0])) ? NAMES[idx] : "Unknown";
+}
+
 // ---------------------------------------------------------------------------
 // Position state
 // ---------------------------------------------------------------------------

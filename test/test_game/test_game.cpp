@@ -528,7 +528,7 @@ void test_game_makeMove_string_coordinate(void) {
   MoveResult r = game.makeMove("e2e4");
   TEST_ASSERT_TRUE(r.valid());
   TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, game.getSquare(4, 4));
-  TEST_ASSERT_ENUM_EQ(Color::BLACK, game.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::BLACK, game.sideToMove());
 }
 
 void test_game_makeMove_string_invalid(void) {
@@ -560,7 +560,7 @@ void test_game_board_accessor(void) {
   setUpGame();
   const Position& b = game.board();
   TEST_ASSERT_ENUM_EQ(Piece::W_KING, b.getSquare(squareOf(7, 4)));
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, b.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, b.sideToMove());
 }
 
 void test_game_history_accessor(void) {

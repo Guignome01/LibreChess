@@ -688,10 +688,10 @@ static void evalMobility(const BitboardSet& bb,
     int sign = (c == 0) ? 1 : -1;
     Bitboard friendly = bb.byColor[c];
 
-    int knightMob = popcount(info.byPiece[c][2] & ~friendly);
-    int bishopMob = popcount(info.byPiece[c][3] & ~friendly);
-    int rookMob   = popcount(info.byPiece[c][4] & ~friendly);
-    int queenMob  = popcount(info.byPiece[c][5] & ~friendly);
+    int knightMob = popcount(info.byPiece[c][raw(PieceType::KNIGHT)] & ~friendly);
+    int bishopMob = popcount(info.byPiece[c][raw(PieceType::BISHOP)] & ~friendly);
+    int rookMob   = popcount(info.byPiece[c][raw(PieceType::ROOK)]   & ~friendly);
+    int queenMob  = popcount(info.byPiece[c][raw(PieceType::QUEEN)]  & ~friendly);
 
     int mgBonus = knightMob * MOBILITY_KNIGHT_MG
                 + bishopMob * MOBILITY_BISHOP_MG
@@ -1454,8 +1454,8 @@ static int evaluateImpl(const BitboardSet& bb, int mgScore, int egScore,
 
   // Extract pawn attacks from AttackInfo (already computed via bulk shift
   // inside computeAll) — avoids redundant manual shift-OR computation.
-  Bitboard whitePawnAtk = info.byPiece[0][piece::raw(PieceType::PAWN)];
-  Bitboard blackPawnAtk = info.byPiece[1][piece::raw(PieceType::PAWN)];
+  Bitboard whitePawnAtk = info.byPiece[raw(Color::WHITE)][raw(PieceType::PAWN)];
+  Bitboard blackPawnAtk = info.byPiece[raw(Color::BLACK)][raw(PieceType::PAWN)];
 
   evalPawnStructure(bb, whitePawnAtk, blackPawnAtk, mgScore, egScore, pawnHash);
 

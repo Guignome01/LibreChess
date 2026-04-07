@@ -96,7 +96,7 @@ MoveResult GameMode::applyMove(int fromRow, int fromCol, int toRow, int toCol, c
   } else if (result.gameResult != GameResult::IN_PROGRESS) {
     boardDriver_->fireworkAnimation(LedColors::Cyan);
   } else if (result.isCheck()) {
-    Color turn = chess_->currentTurn();
+    Color turn = chess_->sideToMove();
     boardDriver_->blinkSquare(chess_->kingRow(turn), chess_->kingCol(turn), LedColors::Yellow, 3, true, true);
   }
 
@@ -412,7 +412,7 @@ void GameMode::clearResignFeedback(int row, int col) {
 bool GameMode::processResign() {
   if (!resignPending_) return false;
   resignPending_ = false;
-  handleResign(chess_->currentTurn());
+  handleResign(chess_->sideToMove());
   boardDriver_->updateSensorPrev();
   return true;
 }

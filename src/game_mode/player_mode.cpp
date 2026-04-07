@@ -19,7 +19,7 @@ void PlayerMode::update() {
   if (processResign()) return;
 
   int fromRow, fromCol, toRow, toCol;
-  if (tryPlayerMove(chess_->currentTurn(), fromRow, fromCol, toRow, toCol))
+  if (tryPlayerMove(chess_->sideToMove(), fromRow, fromCol, toRow, toCol))
     applyMove(fromRow, fromCol, toRow, toCol);
 
   boardDriver_->updateSensorPrev();

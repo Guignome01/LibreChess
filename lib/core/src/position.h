@@ -92,7 +92,6 @@ class Position {
     return mailbox_[sq];
   }
 
-  Color currentTurn() const { return currentTurn_; }
   Color sideToMove() const { return currentTurn_; }
 
   Square kingSq(Color c) const { return kingSquare_[piece::raw(c)]; }

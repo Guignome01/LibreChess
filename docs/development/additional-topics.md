@@ -109,6 +109,8 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 | Per-ply quiescence (MoveList + int16_t scores + locals) | ~1,200 B × QS depth | stack |
 | At depth 15 + 6 ext + 8 QS | ~41 KiB | stack |
 | SearchState (history + killers + countermoves + PV table) | ~11 KiB | **heap** (`std::unique_ptr`) |
+
+**Safety margin**: at depth 15 + 6 extensions + 8 QS plies, worst-case stack usage is ~41 KiB out of 64 KiB, leaving ~23 KiB headroom for FreeRTOS overhead and call-chain variability.
 | Transposition table | varies | **heap** (`new[]`) |
 
 ### Per-Ply Recursion Breakdown

@@ -297,7 +297,7 @@ void test_parseSAN_pawn_push(void) {
   b.newGame();
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "e4", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "e4", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(makeSquare(1, 4), from);  // e2
   TEST_ASSERT_EQUAL_UINT8(makeSquare(3, 4), to);    // e4
 }
@@ -307,7 +307,7 @@ void test_parseSAN_knight_move(void) {
   b.newGame();
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "Nf3", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "Nf3", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(SQ_G1, from);             // g1
   TEST_ASSERT_EQUAL_UINT8(makeSquare(2, 5), to);    // f3
 }
@@ -317,7 +317,7 @@ void test_parseSAN_pawn_capture(void) {
   b.loadFEN("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2");
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "exd5", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "exd5", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(makeSquare(3, 4), from);  // e4
   TEST_ASSERT_EQUAL_UINT8(makeSquare(4, 3), to);    // d5
 }
@@ -327,7 +327,7 @@ void test_parseSAN_kingside_castling(void) {
   b.loadFEN("r1bqk1nr/ppppbppp/2n5/4p3/4P3/5N2/PPPPBPPP/RNBQK2R w KQkq - 4 4");
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "O-O", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "O-O", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(SQ_E1, from);             // e1
   TEST_ASSERT_EQUAL_UINT8(SQ_G1, to);               // g1
 }
@@ -337,7 +337,7 @@ void test_parseSAN_queenside_castling(void) {
   b.loadFEN("r3kbnr/pppqpppp/2n5/3p1b2/3P1B2/2N5/PPPQPPPP/R3KBNR w KQkq - 6 5");
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "O-O-O", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "O-O-O", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(SQ_E1, from);             // e1
   TEST_ASSERT_EQUAL_UINT8(SQ_C1, to);               // c1
 }
@@ -347,7 +347,7 @@ void test_parseSAN_promotion(void) {
   b.loadFEN("8/4P3/8/8/8/8/4p3/4K2k w - - 0 1");
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "e8=Q", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "e8=Q", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(makeSquare(6, 4), from);  // e7
   TEST_ASSERT_EQUAL_UINT8(makeSquare(7, 4), to);    // e8
   TEST_ASSERT_EQUAL_CHAR('q', promo);
@@ -359,7 +359,7 @@ void test_parseSAN_with_check_suffix(void) {
   Square from, to;
   char promo;
   // "Nf3+" — the '+' should be stripped, parsed as Nf3
-  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "Nf3+", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "Nf3+", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(SQ_G1, from);             // g1
   TEST_ASSERT_EQUAL_UINT8(makeSquare(2, 5), to);    // f3
 }
@@ -369,7 +369,7 @@ void test_parseSAN_with_checkmate_suffix(void) {
   b.newGame();
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "Nf3#", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "Nf3#", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(SQ_G1, from);             // g1
 }
 
@@ -378,7 +378,7 @@ void test_parseSAN_empty_string(void) {
   b.newGame();
   Square from, to;
   char promo;
-  TEST_ASSERT_FALSE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "", from, to, promo));
+  TEST_ASSERT_FALSE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "", from, to, promo));
 }
 
 void test_parseSAN_disambiguation_by_file(void) {
@@ -387,7 +387,7 @@ void test_parseSAN_disambiguation_by_file(void) {
   b.loadFEN("4k3/8/8/8/8/2N3N1/8/4K3 w - - 0 1");
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "Nce4", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "Nce4", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(makeSquare(2, 2), from);  // c3
   TEST_ASSERT_EQUAL_UINT8(makeSquare(3, 4), to);    // e4
 }
@@ -398,7 +398,7 @@ void test_parseSAN_castling_with_zeros(void) {
   b.loadFEN("r1bqk1nr/ppppbppp/2n5/4p3/4P3/5N2/PPPPBPPP/RNBQK2R w KQkq - 4 4");
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "0-0", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "0-0", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(SQ_E1, from);             // e1
   TEST_ASSERT_EQUAL_UINT8(SQ_G1, to);               // g1
 }
@@ -412,7 +412,7 @@ void test_parseMove_coordinate(void) {
   b.newGame();
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseMove(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "e2e4", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseMove(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "e2e4", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(makeSquare(1, 4), from);  // e2
   TEST_ASSERT_EQUAL_UINT8(makeSquare(3, 4), to);    // e4
 }
@@ -422,7 +422,7 @@ void test_parseMove_lan(void) {
   b.newGame();
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseMove(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "Ng1-f3", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseMove(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "Ng1-f3", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(SQ_G1, from);             // g1
   TEST_ASSERT_EQUAL_UINT8(makeSquare(2, 5), to);    // f3
 }
@@ -432,7 +432,7 @@ void test_parseMove_san(void) {
   b.newGame();
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseMove(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "Nf3", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseMove(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "Nf3", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(SQ_G1, from);             // g1
   TEST_ASSERT_EQUAL_UINT8(makeSquare(2, 5), to);    // f3
 }
@@ -443,7 +443,7 @@ void test_parseMove_san_castling(void) {
   b.loadFEN("r1bqk1nr/ppppbppp/2n5/4p3/4P3/5N2/PPPPBPPP/RNBQK2R w KQkq - 4 4");
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseMove(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "O-O", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseMove(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "O-O", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(SQ_E1, from);             // e1
   TEST_ASSERT_EQUAL_UINT8(SQ_G1, to);               // g1
 }
@@ -453,7 +453,7 @@ void test_parseMove_empty_string(void) {
   b.newGame();
   Square from, to;
   char promo;
-  TEST_ASSERT_FALSE(notation::parseMove(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "", from, to, promo));
+  TEST_ASSERT_FALSE(notation::parseMove(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "", from, to, promo));
 }
 
 // ===========================================================================
@@ -496,7 +496,7 @@ void test_roundtrip_san_scholar_mate(void) {
     // Parse back
     Square pfrom, pto;
     char pp;
-    TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), san, pfrom, pto, pp));
+    TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), san, pfrom, pto, pp));
     TEST_ASSERT_EQUAL_UINT8(squareOf(s.fr, s.fc), pfrom);
     TEST_ASSERT_EQUAL_UINT8(squareOf(s.tr, s.tc), pto);
 
@@ -549,7 +549,7 @@ void test_parseSAN_en_passant_capture(void) {
   b.loadFEN("rnbqkbnr/ppp1pppp/8/3pP3/8/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 3");
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "exd6", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "exd6", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(makeSquare(4, 4), from);  // e5
   TEST_ASSERT_EQUAL_UINT8(makeSquare(5, 3), to);    // d6
 }
@@ -559,7 +559,7 @@ void test_parseSAN_promotion_with_capture(void) {
   b.loadFEN("4rb2/3P4/8/8/8/8/8/4K2k w - - 0 1");
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "dxe8=Q", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "dxe8=Q", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(makeSquare(6, 3), from);  // d7
   TEST_ASSERT_EQUAL_UINT8(makeSquare(7, 4), to);    // e8
   TEST_ASSERT_EQUAL_CHAR('q', promo);  // parseSAN lowercases promotion
@@ -571,7 +571,7 @@ void test_parseSAN_invalid_no_matching_piece(void) {
   b.newGame();
   Square from, to;
   char promo;
-  TEST_ASSERT_FALSE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "Ne4", from, to, promo));
+  TEST_ASSERT_FALSE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "Ne4", from, to, promo));
 }
 
 void test_parseLAN_pawn_capture(void) {
@@ -588,7 +588,7 @@ void test_parseSAN_disambiguation_by_rank(void) {
   b.loadFEN("4k3/8/4N3/8/8/8/4N3/4K3 w - - 0 1");
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "N2d4", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "N2d4", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(makeSquare(1, 4), from);  // e2
   TEST_ASSERT_EQUAL_UINT8(makeSquare(3, 3), to);    // d4
 }
@@ -598,7 +598,7 @@ void test_parseSAN_queenside_castling_with_zeros(void) {
   b.loadFEN("r3kbnr/pppqpppp/2n5/3p1b2/3P1B2/2N5/PPPQPPPP/R3KBNR w KQkq - 6 5");
   Square from, to;
   char promo;
-  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.currentTurn(), "0-0-0", from, to, promo));
+  TEST_ASSERT_TRUE(notation::parseSAN(b.bitboards(), b.mailbox(), b.positionState(), b.sideToMove(), "0-0-0", from, to, promo));
   TEST_ASSERT_EQUAL_UINT8(SQ_E1, from);             // e1
   TEST_ASSERT_EQUAL_UINT8(SQ_C1, to);               // c1
 }

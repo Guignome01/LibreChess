@@ -12,27 +12,6 @@
 namespace LibreChess {
 namespace utils {
 
-// ---------------------------------------------------------------------------
-// Game result name lookup
-// ---------------------------------------------------------------------------
-
-inline const char* gameResultName(GameResult result) {
-  static constexpr const char* NAMES[] = {
-      "In progress",                  // 0 = IN_PROGRESS
-      "Checkmate",                    // 1 = CHECKMATE
-      "Stalemate",                    // 2 = STALEMATE
-      "Draw (50-move rule)",          // 3 = DRAW_50
-      "Draw (threefold repetition)",  // 4 = DRAW_3FOLD
-      "Resignation",                  // 5 = RESIGNATION
-      "Draw (insufficient material)", // 6 = DRAW_INSUFFICIENT
-      "Draw (agreement)",             // 7 = DRAW_AGREEMENT
-      "Timeout",                      // 8 = TIMEOUT
-      "Aborted",                      // 9 = ABORTED
-  };
-  auto idx = static_cast<uint8_t>(result);
-  return (idx < sizeof(NAMES) / sizeof(NAMES[0])) ? NAMES[idx] : "Unknown";
-}
-
 // --- Castling rights ---
 // Bitmask: 0x01 = K, 0x02 = Q, 0x04 = k, 0x08 = q.
 
@@ -189,13 +168,6 @@ inline CastlingInfo checkCastling(const Piece mailbox[], Square from,
   }
 
   return info;
-}
-
-// --- General-purpose board queries ---
-
-// Is (row, col) within the 8×8 board?
-inline constexpr bool isValidSquare(int row, int col) {
-  return (unsigned)row < 8 && (unsigned)col < 8;
 }
 
 // ---------------------------------------------------------------------------

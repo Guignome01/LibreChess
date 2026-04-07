@@ -11,7 +11,7 @@ Formatting is enforced via `.clang-format` at the project root (Google style bas
 | Element | Convention | Example |
 |---------|-----------|---------|
 | Classes | PascalCase | `BoardDriver`, `Position`, `WiFiManagerESP32` |
-| Methods & variables | camelCase | `readSensors()`, `currentTurn`, `isGameOver` |
+| Methods & variables | camelCase | `readSensors()`, `sideToMove`, `isGameOver` |
 | Constants & macros | UPPER_SNAKE_CASE | `LED_COUNT`, `SENSOR_READ_DELAY_MS`, `DEBOUNCE_MS` |
 | File names | snake_case | `board_driver.cpp`, `game.h`, `littlefs_storage.cpp` |
 | Enum values | UPPER_SNAKE_CASE | `GameResult::CHECKMATE`, `Axis::ROWS` |

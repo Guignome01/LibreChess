@@ -41,7 +41,7 @@ Web resign: `setResignPending(true)` → `processResign()` checks the flag at th
 
 ## PlayerMode
 
-Minimal subclass — `begin()` resumes or starts a `GameModeId::PLAYER` game. `update()` calls `tryPlayerMove(currentTurn)` for alternating colors.
+Minimal subclass — `begin()` resumes or starts a `GameModeId::PLAYER` game. `update()` calls `tryPlayerMove(sideToMove)` for alternating colors.
 
 ## BotMode
 

@@ -29,7 +29,7 @@ static uint64_t perft(Position& pos, int depth) {
   uint64_t nodes = 0;
   MoveList moves;
   movegen::generateAllMoves(pos.bitboards(), pos.mailbox(),
-                            pos.currentTurn(), pos.positionState(), moves);
+                            pos.sideToMove(), pos.positionState(), moves);
   for (int i = 0; i < moves.count; i++) {
     UndoInfo undo = pos.make(moves.moves[i]);
     nodes += perft(pos, depth - 1);
@@ -50,7 +50,7 @@ static void test_bench_make_unmake(void) {
 
   MoveList moves;
   movegen::generateAllMoves(pos.bitboards(), pos.mailbox(),
-                            pos.currentTurn(), pos.positionState(), moves);
+                            pos.sideToMove(), pos.positionState(), moves);
   TEST_ASSERT_GREATER_THAN(0, moves.count);
 
   constexpr int ITERS = 200000;
@@ -83,7 +83,7 @@ static void test_bench_make_unmake_ep(void) {
 
   MoveList moves;
   movegen::generateAllMoves(pos.bitboards(), pos.mailbox(),
-                            pos.currentTurn(), pos.positionState(), moves);
+                            pos.sideToMove(), pos.positionState(), moves);
   TEST_ASSERT_GREATER_THAN(0, moves.count);
 
   constexpr int ITERS = 200000;

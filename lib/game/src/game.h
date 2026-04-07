@@ -95,7 +95,7 @@ class Game {
   Piece getSquare(int row, int col) const {
     return board_.getSquare(rowColToSquare(row, col));
   }
-  Color currentTurn() const { return board_.currentTurn(); }
+  Color sideToMove() const { return board_.sideToMove(); }
   int kingRow(Color c) const { return squareToRow(board_.kingSq(c)); }
   int kingCol(Color c) const { return squareToCol(board_.kingSq(c)); }
   uint8_t getCastlingRights() const { return board_.getCastlingRights(); }

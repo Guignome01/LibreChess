@@ -52,10 +52,10 @@ void Game::endGame(GameResult result, char winnerColor) {
   winnerColor_ = winnerColor;
 
   if (winnerColor == ' ' || winnerColor == 'd')
-    logger_.infof("Game over: %s", utils::gameResultName(result));
+    logger_.infof("Game over: %s", gameResultName(result));
   else
     logger_.infof("Game over: %s \xe2\x80\x94 %s wins!",
-                   utils::gameResultName(result), piece::colorName(winnerColor == 'w' ? Color::WHITE : Color::BLACK));
+                   gameResultName(result), piece::colorName(winnerColor == 'w' ? Color::WHITE : Color::BLACK));
 
   history_.save(result, winnerColor);  // no-op if not recording
   notifyObserver();
@@ -105,9 +105,9 @@ MoveResult Game::makeMove(Square from, Square to, char promotion) {
     endGame(result.gameResult, result.winnerColor);  // calls notifyObserver()
   } else {
     if (result.isCheck()) {
-      logger_.infof("%s is in check!", piece::colorName(board_.currentTurn()));
+      logger_.infof("%s is in check!", piece::colorName(board_.sideToMove()));
     }
-    logger_.infof("It's %s's turn", piece::colorName(board_.currentTurn()));
+    logger_.infof("It's %s's turn", piece::colorName(board_.sideToMove()));
     notifyObserver();
   }
 

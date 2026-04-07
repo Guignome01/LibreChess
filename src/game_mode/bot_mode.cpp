@@ -58,7 +58,7 @@ void BotMode::begin() {
   waitForBoardSetup();
 
   // If it's the engine's turn after setup, start requesting immediately
-  if (chess_->currentTurn() != playerColor()) {
+  if (chess_->sideToMove() != playerColor()) {
     startThinking();
     provider_->requestMove(chess_->getFen());
     botState_ = BotState::ENGINE_THINKING;
@@ -95,7 +95,7 @@ void BotMode::update() {
       }
 
       // If the game didn't end and it's now the engine's turn, start engine
-      if (!chess_->isGameOver() && chess_->currentTurn() != playerColor()) {
+      if (!chess_->isGameOver() && chess_->sideToMove() != playerColor()) {
         engineRetryCount_ = 0;
         startThinking();
         provider_->requestMove(chess_->getFen());
@@ -187,7 +187,7 @@ void BotMode::onBeforeResignConfirm() {
 }
 
 void BotMode::onResignCancelled() {
-  if (wasThinkingBeforeResign_ && chess_->currentTurn() != playerColor() && !chess_->isGameOver()) {
+  if (wasThinkingBeforeResign_ && chess_->sideToMove() != playerColor() && !chess_->isGameOver()) {
     startThinking();
     provider_->requestMove(chess_->getFen());
     botState_ = BotState::ENGINE_THINKING;

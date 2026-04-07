@@ -420,26 +420,6 @@ void test_coordinate_roundtrip(void) {
 }
 
 // ---------------------------------------------------------------------------
-// isValidSquare
-// ---------------------------------------------------------------------------
-
-void test_isValidSquare_valid(void) {
-  TEST_ASSERT_TRUE(utils::isValidSquare(0, 0));
-  TEST_ASSERT_TRUE(utils::isValidSquare(0, 7));
-  TEST_ASSERT_TRUE(utils::isValidSquare(7, 0));
-  TEST_ASSERT_TRUE(utils::isValidSquare(7, 7));
-  TEST_ASSERT_TRUE(utils::isValidSquare(3, 4));
-}
-
-void test_isValidSquare_invalid(void) {
-  TEST_ASSERT_FALSE(utils::isValidSquare(-1, 0));
-  TEST_ASSERT_FALSE(utils::isValidSquare(0, -1));
-  TEST_ASSERT_FALSE(utils::isValidSquare(8, 0));
-  TEST_ASSERT_FALSE(utils::isValidSquare(0, 8));
-  TEST_ASSERT_FALSE(utils::isValidSquare(-1, -1));
-}
-
-// ---------------------------------------------------------------------------
 // isValidPromotionChar
 // ---------------------------------------------------------------------------
 
@@ -469,16 +449,16 @@ void test_isValidPromotionChar_invalid(void) {
 // ---------------------------------------------------------------------------
 
 void test_gameResultName_all_values(void) {
-  TEST_ASSERT_EQUAL_STRING("In progress", utils::gameResultName(GameResult::IN_PROGRESS));
-  TEST_ASSERT_EQUAL_STRING("Checkmate", utils::gameResultName(GameResult::CHECKMATE));
-  TEST_ASSERT_EQUAL_STRING("Stalemate", utils::gameResultName(GameResult::STALEMATE));
-  TEST_ASSERT_EQUAL_STRING("Draw (50-move rule)", utils::gameResultName(GameResult::DRAW_50));
-  TEST_ASSERT_EQUAL_STRING("Draw (threefold repetition)", utils::gameResultName(GameResult::DRAW_3FOLD));
-  TEST_ASSERT_EQUAL_STRING("Resignation", utils::gameResultName(GameResult::RESIGNATION));
-  TEST_ASSERT_EQUAL_STRING("Draw (insufficient material)", utils::gameResultName(GameResult::DRAW_INSUFFICIENT));
-  TEST_ASSERT_EQUAL_STRING("Draw (agreement)", utils::gameResultName(GameResult::DRAW_AGREEMENT));
-  TEST_ASSERT_EQUAL_STRING("Timeout", utils::gameResultName(GameResult::TIMEOUT));
-  TEST_ASSERT_EQUAL_STRING("Aborted", utils::gameResultName(GameResult::ABORTED));
+  TEST_ASSERT_EQUAL_STRING("In progress", gameResultName(GameResult::IN_PROGRESS));
+  TEST_ASSERT_EQUAL_STRING("Checkmate", gameResultName(GameResult::CHECKMATE));
+  TEST_ASSERT_EQUAL_STRING("Stalemate", gameResultName(GameResult::STALEMATE));
+  TEST_ASSERT_EQUAL_STRING("Draw (50-move rule)", gameResultName(GameResult::DRAW_50));
+  TEST_ASSERT_EQUAL_STRING("Draw (threefold repetition)", gameResultName(GameResult::DRAW_3FOLD));
+  TEST_ASSERT_EQUAL_STRING("Resignation", gameResultName(GameResult::RESIGNATION));
+  TEST_ASSERT_EQUAL_STRING("Draw (insufficient material)", gameResultName(GameResult::DRAW_INSUFFICIENT));
+  TEST_ASSERT_EQUAL_STRING("Draw (agreement)", gameResultName(GameResult::DRAW_AGREEMENT));
+  TEST_ASSERT_EQUAL_STRING("Timeout", gameResultName(GameResult::TIMEOUT));
+  TEST_ASSERT_EQUAL_STRING("Aborted", gameResultName(GameResult::ABORTED));
 }
 
 // ---------------------------------------------------------------------------
@@ -634,10 +614,6 @@ void register_utils_tests() {
   RUN_TEST(test_fileIndex_all_files);
   RUN_TEST(test_rankIndexFromChar_all_ranks);
   RUN_TEST(test_coordinate_roundtrip);
-
-  // isValidSquare
-  RUN_TEST(test_isValidSquare_valid);
-  RUN_TEST(test_isValidSquare_invalid);
 
   // isValidPromotionChar
   RUN_TEST(test_isValidPromotionChar_valid);

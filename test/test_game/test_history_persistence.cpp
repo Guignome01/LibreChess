@@ -269,7 +269,7 @@ void test_recorder_replay_into_board(void) {
   // Board should have e4 and d5 played
   TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, board.getSquare(squareOf(4, 4)));
   TEST_ASSERT_ENUM_EQ(Piece::B_PAWN, board.getSquare(squareOf(3, 3)));
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, board.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, board.sideToMove());
 }
 
 void test_recorder_turn_based_header_flush(void) {
@@ -391,7 +391,7 @@ void test_recorder_replay_empty_after_fen(void) {
   board.newGame();
   bool ok = history.replayInto(board);
   TEST_ASSERT_TRUE(ok);
-  TEST_ASSERT_ENUM_EQ(Color::BLACK, board.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::BLACK, board.sideToMove());
   TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, board.getSquare(squareOf(4, 4)));  // e4 has white pawn
 }
 
@@ -466,7 +466,7 @@ static void teardownGame() {
 void test_game_new_game(void) {
   setupGame();
   game->newGame();
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, game->currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, game->sideToMove());
   TEST_ASSERT_FALSE(game->isGameOver());
   // Observer should have been notified
   TEST_ASSERT_TRUE(observer.callCount > 0);
@@ -481,7 +481,7 @@ void test_game_make_move(void) {
   MoveResult r = game->makeMove(6, 4, 4, 4);  // e2e4
   // startNewGame records initial FEN (FEN_MARKER 2 bytes) then addMove encodes (2 bytes) = 4
   TEST_ASSERT_EQUAL(4, (int)storage.moveData.size());
-  TEST_ASSERT_ENUM_EQ(Color::BLACK, game->currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::BLACK, game->sideToMove());
 
   // Observer notified
   TEST_ASSERT_TRUE(observer.callCount > 0);
@@ -537,7 +537,7 @@ void test_game_load_fen(void) {
   std::string fen = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1";
   bool ok = game->loadFEN(fen);
   TEST_ASSERT_TRUE(ok);
-  TEST_ASSERT_ENUM_EQ(Color::BLACK, game->currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::BLACK, game->sideToMove());
 
   // Observer notified
   TEST_ASSERT_TRUE(observer.callCount > 0);
@@ -585,7 +585,7 @@ void test_game_pass_throughs(void) {
 
   // Verify pass-through methods return correct values
   TEST_ASSERT_ENUM_EQ(Piece::W_ROOK, game->getSquare(7, 0));
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, game->currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, game->sideToMove());
   TEST_ASSERT_FALSE(game->isGameOver());
   TEST_ASSERT_ENUM_EQ(GameResult::IN_PROGRESS, game->gameResult());
 
@@ -618,7 +618,7 @@ void test_game_start_new_game(void) {
   const uint8_t meta[] = { MODE_BOT, 0, 5 };
   game->startNewGame('w', meta);
 
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, game->currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, game->sideToMove());
   TEST_ASSERT_FALSE(game->isGameOver());
 
   // Should have started recording and initialized board
@@ -643,7 +643,7 @@ void test_game_resume_game(void) {
   Game* game2 = new Game(&storage, &observer, &logger);
   bool ok = game2->resumeGame();
   TEST_ASSERT_TRUE(ok);
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, game2->currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, game2->sideToMove());
   TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, game2->getSquare(4, 4));  // e4
   TEST_ASSERT_ENUM_EQ(Piece::B_PAWN, game2->getSquare(3, 4));  // e5
   TEST_ASSERT_TRUE(observer.callCount > 0);  // Observer notified
@@ -711,7 +711,7 @@ void test_game_undo_redo(void) {
 
   // Undo e7-e5
   TEST_ASSERT_TRUE(game->undoMove());
-  TEST_ASSERT_ENUM_EQ(Color::BLACK, game->currentTurn());  // black to move again
+  TEST_ASSERT_ENUM_EQ(Color::BLACK, game->sideToMove());  // black to move again
   TEST_ASSERT_ENUM_EQ(Piece::NONE, game->getSquare(3, 4));  // e5 empty
   TEST_ASSERT_ENUM_EQ(Piece::B_PAWN, game->getSquare(1, 4));  // pawn back on e7
 
@@ -720,7 +720,7 @@ void test_game_undo_redo(void) {
 
   // Redo e7-e5
   TEST_ASSERT_TRUE(game->redoMove());
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, game->currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, game->sideToMove());
   TEST_ASSERT_ENUM_EQ(Piece::B_PAWN, game->getSquare(3, 4));  // e5 has pawn again
 
   TEST_ASSERT_FALSE(game->canRedo());

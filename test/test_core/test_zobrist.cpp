@@ -154,7 +154,7 @@ void test_computeHash_incremental_vs_full(void) {
   pos.makeMove(squareOf(7, 6), squareOf( 5, 5));  // Nf3
 
   // Full recompute from scratch
-  uint64_t full = zobrist::computeHash(pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState(), false);
+  uint64_t full = zobrist::computeHash(pos.bitboards(), pos.mailbox(), pos.sideToMove(), pos.positionState(), false);
 
   // The board's internal hash is stored in hashHistory — the last entry
   // We can verify by loading the same FEN into a fresh board
@@ -163,7 +163,7 @@ void test_computeHash_incremental_vs_full(void) {
   pos2.loadFEN(fen);
 
   // Both boards should produce the same hash from scratch
-  uint64_t full2 = zobrist::computeHash(pos2.bitboards(), pos2.mailbox(), pos2.currentTurn(), pos2.positionState(), false);
+  uint64_t full2 = zobrist::computeHash(pos2.bitboards(), pos2.mailbox(), pos2.sideToMove(), pos2.positionState(), false);
   TEST_ASSERT_EQUAL_HEX64(full, full2);
 }
 

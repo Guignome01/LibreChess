@@ -71,6 +71,7 @@ Look for patterns that vary without reason across the codebase:
 - **Code patterns** — similar operations implemented differently in different files without justification
 - **Helper extraction opportunities** — repeated multi-line logic blocks across files that could become shared helpers: identical struct construction, duplicated conditional patterns, same ternary expression (3+ occurrences), same loop structure with minor parameter differences. Flag as DRY violations with concrete extraction recommendations.
 - **Helper generalization opportunities** — multiple specific helpers or inline patterns that do almost the same thing but vary slightly. Look for: inverse converter pairs with mirrored switch/mapping logic, functions that differ only in a hard-coded parameter value, private helpers whose logic is reimplemented elsewhere because they aren't accessible, and scattered inline expressions computing the same derived value. Recommend a single general helper parameterized to cover all cases.
+- **Symmetric per-color code** — in chess evaluation, look for white/black mirrored logic that should be parameterized into a single color-agnostic loop. Compare each eval function's color loop pattern: does it declare `Color color = static_cast<Color>(c);` at the top, or use inline casts and hardcoded indices? Inconsistency signals missed unification.
 
 #### 4. Code Clarity
 Identify sections that would confuse a developer reading them for the first time:
@@ -100,7 +101,7 @@ Evaluate resource usage patterns specific to the embedded target:
 
 #### 7. Dead Code & Unused Exports
 Identify code that serves no purpose:
-- **Uncalled functions** — public/extern functions with zero callers
+- **Uncalled functions** — public/extern functions with zero callers. For each suspect, classify callers as *production* (`lib/`, `src/`) vs *test-only* (`test/`). Functions called only by tests are dead production code — the tests test themselves.
 - **Unreachable branches** — conditions that can never be true given the data flow
 - **Stale includes** — headers included but nothing from them is used
 - **Orphaned files** — source files not compiled by any build target

@@ -29,7 +29,7 @@ void test_position_new_game_board(void) {
 
 void test_position_new_game_turn(void) {
   setUpPosition();
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.sideToMove());
 }
 
 void test_position_new_game_not_over(void) {
@@ -62,7 +62,7 @@ void test_position_e2e4(void) {
   TEST_ASSERT_FALSE(r.isCastling());
   TEST_ASSERT_FALSE(r.isEnPassant());
   TEST_ASSERT_FALSE(r.isPromotion());
-  TEST_ASSERT_ENUM_EQ(Color::BLACK, pos.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::BLACK, pos.sideToMove());
   TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.getSquare(squareOf(6, 4))); // e2 empty
   TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, pos.getSquare(squareOf(4, 4))); // e4 has pawn
 }
@@ -71,7 +71,7 @@ void test_position_illegal_move_rejected(void) {
   setUpPosition();
   MoveResult r = pos.makeMove(squareOf(6, 4), squareOf( 3, 4)); // e2e5 — not legal
   TEST_ASSERT_FALSE(r.valid());
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.currentTurn()); // turn unchanged
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.sideToMove()); // turn unchanged
 }
 
 void test_position_wrong_turn_rejected(void) {
@@ -381,7 +381,7 @@ void test_position_stalemate(void) {
   TEST_ASSERT_ENUM_EQ(GameResult::STALEMATE, r.gameResult);
   TEST_ASSERT_EQUAL_CHAR('d', r.winnerColor);
   TEST_ASSERT_TRUE(Position::isStalemate(pos.bitboards(), pos.mailbox(),
-                                         pos.currentTurn(), pos.positionState()));
+                                         pos.sideToMove(), pos.positionState()));
 }
 
 // ---------------------------------------------------------------------------
@@ -482,7 +482,7 @@ void test_position_sufficient_material_kp_vs_k(void) {
 void test_position_load_fen_sets_turn(void) {
   setUpPosition();
   pos.loadFEN("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1");
-  TEST_ASSERT_ENUM_EQ(Color::BLACK, pos.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::BLACK, pos.sideToMove());
 }
 
 void test_position_load_fen_resets_game_over(void) {
@@ -512,7 +512,7 @@ void test_position_load_fen_complex(void) {
   setUpPosition();
   std::string fen = "r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4";
   pos.loadFEN(fen);
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.sideToMove());
   TEST_ASSERT_EQUAL_UINT8(0x0F, pos.getCastlingRights()); // KQkq
   TEST_ASSERT_EQUAL_INT(SQ_NONE, pos.positionState().epSquare);     // no EP
   TEST_ASSERT_EQUAL_INT(4, pos.positionState().halfmoveClock);
@@ -837,14 +837,14 @@ void test_position_reverse_move_simple(void) {
   PositionState before = pos.positionState();
   MoveResult r = pos.makeMove(squareOf(6, 4), squareOf( 4, 4));  // e2-e4
   TEST_ASSERT_TRUE(r.valid());
-  TEST_ASSERT_ENUM_EQ(Color::BLACK, pos.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::BLACK, pos.sideToMove());
 
   MoveEntry e = makeBoardEntry(6, 4, 4, 4, Piece::W_PAWN, Piece::NONE, before);
   pos.reverseMove(e);
 
   TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, pos.getSquare(squareOf(6, 4)));  // pawn back on e2
   TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.getSquare(squareOf(4, 4)));  // e4 empty
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.sideToMove());
 }
 
 void test_position_reverse_move_capture(void) {
@@ -861,7 +861,7 @@ void test_position_reverse_move_capture(void) {
 
   TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, pos.getSquare(squareOf(4, 4)));  // pawn back on e5
   TEST_ASSERT_ENUM_EQ(Piece::B_PAWN, pos.getSquare(squareOf(3, 3)));  // black pawn restored on d5
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.sideToMove());
 }
 
 void test_position_reverse_move_en_passant(void) {
@@ -881,7 +881,7 @@ void test_position_reverse_move_en_passant(void) {
   TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, pos.getSquare(squareOf(3, 4)));  // pawn back on e5
   TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.getSquare(squareOf(2, 3)));  // d6 empty
   TEST_ASSERT_ENUM_EQ(Piece::B_PAWN, pos.getSquare(squareOf(3, 3)));  // black pawn restored on d5
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.sideToMove());
 }
 
 void test_position_reverse_move_castling(void) {
@@ -899,7 +899,7 @@ void test_position_reverse_move_castling(void) {
   TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.getSquare(squareOf(7, 6)));  // g1 empty
   TEST_ASSERT_ENUM_EQ(Piece::W_ROOK, pos.getSquare(squareOf(7, 7)));  // rook back on h1
   TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.getSquare(squareOf(7, 5)));  // f1 empty
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.sideToMove());
   // Castling rights should be restored
   TEST_ASSERT_EQUAL(0x0F, pos.positionState().castlingRights);
 }
@@ -918,7 +918,7 @@ void test_position_reverse_move_promotion(void) {
 
   TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, pos.getSquare(squareOf(1, 0)));  // pawn back on a7
   TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.getSquare(squareOf(0, 0)));  // a8 empty
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.sideToMove());
 }
 
 void test_position_reverse_move_clears_game_over(void) {
@@ -938,7 +938,7 @@ void test_position_reverse_move_clears_game_over(void) {
   pos.reverseMove(e);
 
   TEST_ASSERT_FALSE(pos.isCheckmate());
-  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::WHITE, pos.sideToMove());
 }
 
 void test_position_apply_move_entry(void) {
@@ -950,7 +950,7 @@ void test_position_apply_move_entry(void) {
   TEST_ASSERT_TRUE(r.valid());
   TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, pos.getSquare(squareOf(4, 4)));
   TEST_ASSERT_ENUM_EQ(Piece::NONE, pos.getSquare(squareOf(6, 4)));
-  TEST_ASSERT_ENUM_EQ(Color::BLACK, pos.currentTurn());
+  TEST_ASSERT_ENUM_EQ(Color::BLACK, pos.sideToMove());
 }
 
 void test_position_apply_move_entry_promotion(void) {
@@ -1349,7 +1349,7 @@ void test_make_hash_matches_compute(void) {
 
   uint64_t incremental = pos.hash();
   uint64_t computed = zobrist::computeHash(
-      pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState(), false);
+      pos.bitboards(), pos.mailbox(), pos.sideToMove(), pos.positionState(), false);
   TEST_ASSERT_EQUAL_UINT64(computed, incremental);
 }
 
@@ -1362,7 +1362,7 @@ void test_make_hash_matches_compute_capture(void) {
 
   uint64_t incremental = pos.hash();
   uint64_t computed = zobrist::computeHash(
-      pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState(), false);
+      pos.bitboards(), pos.mailbox(), pos.sideToMove(), pos.positionState(), false);
   TEST_ASSERT_EQUAL_UINT64(computed, incremental);
 }
 
@@ -1375,7 +1375,7 @@ void test_make_hash_matches_compute_castling(void) {
 
   uint64_t incremental = pos.hash();
   uint64_t computed = zobrist::computeHash(
-      pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState(), false);
+      pos.bitboards(), pos.mailbox(), pos.sideToMove(), pos.positionState(), false);
   TEST_ASSERT_EQUAL_UINT64(computed, incremental);
 }
 
@@ -1388,7 +1388,7 @@ void test_make_hash_matches_compute_ep(void) {
 
   uint64_t incremental = pos.hash();
   uint64_t computed = zobrist::computeHash(
-      pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState(), false);
+      pos.bitboards(), pos.mailbox(), pos.sideToMove(), pos.positionState(), false);
   TEST_ASSERT_EQUAL_UINT64(computed, incremental);
 }
 
@@ -1402,7 +1402,7 @@ void test_make_hash_matches_compute_promotion(void) {
 
   uint64_t incremental = pos.hash();
   uint64_t computed = zobrist::computeHash(
-      pos.bitboards(), pos.mailbox(), pos.currentTurn(), pos.positionState(), false);
+      pos.bitboards(), pos.mailbox(), pos.sideToMove(), pos.positionState(), false);
   TEST_ASSERT_EQUAL_UINT64(computed, incremental);
 }
 
