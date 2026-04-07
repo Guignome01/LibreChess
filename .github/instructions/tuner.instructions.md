@@ -1,5 +1,6 @@
 ---
 applyTo: "tools/tune/**"
+description: "Offline tuner: Texel's tuning method with Adam optimizer. Eval parameter optimization using EPD corpus and trace extraction."
 ---
 
 # Tuner — Texel's Tuning Method with Adam Optimizer
@@ -148,3 +149,11 @@ When adding new eval terms to `evaluation.cpp`:
 4. Rebuild and run
 
 When changing hyperparameters, adjust the constants at the top of `tune.cpp`. The learning rate (`ADAM_LR`) is the most sensitive — if MSE oscillates, lower it; if convergence is too slow, raise it.
+
+## Related Instruction Files
+
+| File | Relationship |
+|------|--------------|
+| `trace.instructions.md` | `TraceEntry`, `Trace`, `TrainingPosition` types — trace is the primary input |
+| `evaluation.instructions.md` | Tuner modifies eval parameters; `buildRegistry()` wraps eval constants |
+| `epd.instructions.md` | Corpus format uses EPD parser types |

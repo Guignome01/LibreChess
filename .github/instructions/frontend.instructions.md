@@ -59,3 +59,10 @@ All server communication uses a strict two-file pattern:
 
 - `pieces/` — 12 SVG chess pieces (`wK.svg`, `bQ.svg`, etc.)
 - `sounds/` — Move sounds (`move.nogz.mp3`, `capture.nogz.mp3`)
+
+## Related Instruction Files
+
+| File | Relationship |
+|------|--------------|
+| `api.instructions.md` | API contract the frontend consumes — endpoints, request/response formats |
+| `wifi-manager.instructions.md` | Backend serving these files and handling API requests |

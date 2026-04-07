@@ -1,5 +1,6 @@
 ---
 applyTo: "src/engine/**"
+description: "Firmware engine providers: EngineProvider base class, StockfishProvider, LichessProvider, LibreChessProvider. FreeRTOS task lifecycle, difficulty levels, API integration."
 ---
 
 # Engine Provider Architecture
@@ -94,3 +95,12 @@ Max depth 8 + extensions (~6) + 16 QS plies ≈ 44 KiB (fits in 64 KiB). See `do
 - **Lichess sets `canResume = false`** — Lichess game state comes from the server, not from flash. If the device reboots mid-game, `initialize()` re-discovers the active game from the Lichess API. Stockfish sets `canResume = true` because the game state is local.
 
 - **Lichess reconnects with exponential backoff** — on stream disconnect, the task retries with 1s→2s→4s→8s delays, up to 5 attempts. The game pauses (player can still interact with the board) during reconnection. If all attempts fail, the game is aborted rather than left in a broken state.
+
+## Related Instruction Files
+
+| File | Relationship |
+|------|--------------|
+| `engine-facade.instructions.md` | `LibreChessProvider` creates and drives the `Engine` facade |
+| `search.instructions.md` | References `SearchLimits`, `SearchResult`, `SearchState` sizes |
+| `game-mode.instructions.md` | `BotMode` composes `EngineProvider*`, drives the thinking state machine |
+| `engine-library.instructions.md` | The library wrapped by `LibreChessProvider` |

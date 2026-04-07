@@ -10,7 +10,7 @@ This project provides context files for AI coding assistants:
 | `.github/instructions/*.instructions.md` | Scoped instructions (auto-loaded by `applyTo` pattern) |
 | `.github/skills/*/SKILL.md` | Workflow skills (loaded on keyword match) |
 
-`copilot-instructions.md` contains the project architecture summary, conventions, and engineering principles. Scoped instruction files provide detailed context for specific areas (core library, game mode, engine, board driver, frontend, testing, API, WiFi manager) and load automatically when editing matching files.
+`copilot-instructions.md` contains the project architecture summary, conventions, and engineering principles. Scoped instruction files provide per-file and per-module context (one for each core/game/engine source file, plus firmware modules like board driver, game mode, engine providers, frontend, testing, API, WiFi manager) and load automatically when editing matching files via `applyTo` patterns.
 
 ### Workflow: Consult Documentation First
 
@@ -35,7 +35,7 @@ When a code change affects architecture, public APIs, endpoints, configuration, 
 - Build or dependency changes → update [installation.md](installation.md)
 - Architecture or internal design changes → update [architecture.md](architecture.md)
 - New LED behaviors, menu changes, or physical interaction changes → update the relevant file in `docs/guides/`
-- Chess logic changes in `lib/core/` → update or add unit tests in `test/`, update `core-library.instructions.md` and `testing.instructions.md` as needed (see Completion Checklist in `core-library.instructions.md`)
+- Chess logic changes in `lib/core/`, `lib/game/`, or `lib/engine/` → update or add unit tests in `test/`, update the relevant per-file instruction file (e.g., `position.instructions.md`, `search.instructions.md`) and library-level instruction file (`core.instructions.md`, `game-library.instructions.md`, or `engine-library.instructions.md`) as needed (see Completion Checklist in each)
 - Any behavior change documented in a `.github/instructions/` file → update the instruction file in the same change
 
 ## CLI Quick Reference

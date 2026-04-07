@@ -120,3 +120,11 @@ Multipart file upload. Validates ESP32 magic byte (`0xE9`). Requires `X-OTA-Pass
 | `/` | LittleFS `/` | Default: `index.html`. Auto-detects `.gz` with `Content-Encoding: gzip` |
 
 For full endpoint documentation with all request/response examples, see `docs/development/api.md`.
+
+## Related Instruction Files
+
+| File | Relationship |
+|------|--------------|
+| `wifi-manager.instructions.md` | Backend implementation of these endpoints |
+| `frontend.instructions.md` | Frontend consumer (provider.js calls these endpoints) |
+| `game-mode.instructions.md` | `POST /gameselect` maps to mode selection logic |

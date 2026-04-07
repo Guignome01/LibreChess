@@ -107,3 +107,9 @@ Settings stored via Arduino `Preferences`. Always call `SystemUtils::ensureNvsIn
 - **Triple-buffered sensors prevent glitch reads** — `sensorRaw` (latest hardware read) → `sensorState` (debounced, stable) → `sensorPrev` (previous frame snapshot). Change detection compares `sensorState` vs `sensorPrev`. The debounce window (125ms) eliminates false triggers from magnet edge effects when pieces slide between squares.
 
 - **Colors have fixed semantics** — the color table in `led_colors.h` is a project-wide contract. Cyan always means "piece origin", red always means "capture/error", etc. This consistency lets players learn the visual language once and apply it everywhere. Never reuse a color for a different meaning.
+
+## Related Instruction Files
+
+| File | Relationship |
+|------|--------------|
+| `game-mode.instructions.md` | Primary consumer of `BoardDriver` — LED feedback and sensor reading |

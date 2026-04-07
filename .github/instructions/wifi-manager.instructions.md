@@ -112,3 +112,12 @@ For the complete HTTP API endpoint reference, see `.github/instructions/api.inst
 - **Singleton pattern for event callbacks** — `WiFi.onEvent()` requires a static function, so a static `instance` pointer provides access to the instance. This is the only singleton in the project and exists only because the ESP32 WiFi API requires it.
 
 - **OTA password is hashed, not stored plaintext** — SHA-256 + random salt via `mbedtls`. The salt prevents rainbow table attacks. The password is validated per-upload via the `X-OTA-Password` header, and the ESP32 magic byte (`0xE9`) check prevents uploading non-firmware files.
+
+## Related Instruction Files
+
+| File | Relationship |
+|------|--------------|
+| `api.instructions.md` | Full HTTP API endpoint reference |
+| `game-headers.instructions.md` | Implements `IGameObserver` interface |
+| `game.instructions.md` | Receives `Game*` for board state queries |
+| `frontend.instructions.md` | The web UI it serves |

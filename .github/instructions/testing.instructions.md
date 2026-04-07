@@ -1,6 +1,6 @@
 ---
 description: "Use when writing, modifying, or debugging unit tests. Covers test architecture, file mirroring convention, test helpers, and per-file test group descriptions."
-applyTo: "test/**, lib/core/**, lib/game/**, lib/engine/**"
+applyTo: "test/**"
 ---
 
 # Unit Testing Guide
@@ -59,12 +59,12 @@ test/
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
 │   ├── test_search.cpp                  search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, IID, time/stop, TT, move ordering, delta pruning, futility pruning, SEE ordering, lazy eval, PV table, MDP, capture history, staged MovePicker, TT replacement, soft time, easy move, instability time extension
 │   └── test_engine.cpp                  Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range
-├── test_suites/                         Shared EPD test files (no .cpp — not compiled)
+├── suites/                              Shared EPD test files (no .cpp — not compiled)
 │   ├── wac.epd                          Win At Chess — 300 positions (Reinfeld/Wilson, CPW verbatim)
 │   ├── bk.epd                           Bratko-Kopec — 24 positions (Bratko/Kopec, CPW verbatim)
 │   └── eret.epd                         Eigenmann Rapid Engine Test — 111 positions (Eigenmann, CPW verbatim)
 ├── test_positions_time/                 Time-based position test suites (standalone, heavyweight)
-│   └── test_positions_time.cpp          Suite runner: loads .epd files from ../test_suites/ via EPD parser, SAN→coordinate comparison, 500ms/position, informational pass rates
+│   └── test_positions_time.cpp          Suite runner: loads .epd files from ../suites/ via EPD parser, SAN→coordinate comparison, 500ms/position, informational pass rates
 ├── test_positions_depth/                Depth-based position test (standalone, deterministic)
 │   └── test_positions_depth.cpp         WAC 300 at fixed depth 10 — hard assert on solve count vs calibrated baseline
 ├── test_benchmarks/                     Performance benchmarks + regression tests
@@ -172,7 +172,7 @@ Leaper attack tables (knight on e4, king on a1, pawn attacks per color). Slider 
 `parseEPDLine`: basic FEN + bm opcode, multiple opcodes (bm + am + id + c0), quoted id strings, avoid move variations, comma-separated operands, c9 game result parsing (white win/draw/black win). `validateEPDLine`: valid/invalid FEN, missing fields. Accessors: `findOperation()` lookup, `id()` convenience, non-existent opcode returns nullptr yet `id()` returns empty.
 
 ### Tactical Suites (`test_positions_time/test_positions_time.cpp`)
-Engine accuracy benchmarks using standard `.epd` files loaded from `../test_suites/` at runtime via the EPD parser. Each suite reads its `.epd` file, parses each line into an `EPDRecord`, runs `search::findBestMove` with a fixed time budget (500ms/position), converts both expected (SAN) and engine (Move) results to coordinate notation, and compares. Shared `TranspositionTable`, `PawnHashTable`, and `EvalHashTable` are allocated once at startup and cleared between suites. Suites: **WAC** (Win At Chess, 300 positions), **BK** (Bratko-Kopec, 24 positions), **ERET** (Eigenmann Rapid Engine Test, 111 positions). Tests are informational — they assert only that at least one position is solved, printing individual mismatches and overall pass rate.
+Engine accuracy benchmarks using standard `.epd` files loaded from `../suites/` at runtime via the EPD parser. Each suite reads its `.epd` file, parses each line into an `EPDRecord`, runs `search::findBestMove` with a fixed time budget (500ms/position), converts both expected (SAN) and engine (Move) results to coordinate notation, and compares. Shared `TranspositionTable`, `PawnHashTable`, and `EvalHashTable` are allocated once at startup and cleared between suites. Suites: **WAC** (Win At Chess, 300 positions), **BK** (Bratko-Kopec, 24 positions), **ERET** (Eigenmann Rapid Engine Test, 111 positions). Tests are informational — they assert only that at least one position is solved, printing individual mismatches and overall pass rate.
 
 ### Depth-Based Positions (`test_positions_depth/test_positions_depth.cpp`)
 Deterministic, machine-independent strength gate. Runs all 300 WAC positions at fixed depth 10 (no time limit), counts how many the engine solves, and asserts the count is ≥ a calibrated baseline (`WAC_DEPTH_BASELINE`). Used to detect search quality regressions before and after optimization changes.
@@ -185,3 +185,12 @@ Node count and evaluation regression tests. Node count: 10 diverse positions sea
 
 ### Search Statistics (`test_statistics/test_statistics.cpp`)
 Diagnostic search statistics suite. Runs 5 positions at depth 10 with `search::resetStats()`/`search::getStats()` (requires `-DSTATS` build flag, set in `[env:native]`). Prints formatted tables: TT probe/hit rates, exact/lower/upper cutoff counts, beta cutoff quality (first-move cutoff %), pruning counts (NMP, futility, LMP, history, razoring, RFP), LMR search/re-search ratios, extension counts (check, singular, recapture), PVS re-search count, QS/main node distribution. Informational only — no hard assertions.
+
+## Related Instruction Files
+
+| File | Relationship |
+|------|--------------|
+| `core.instructions.md` | Core library whose modules are tested in `test_core/` |
+| `game-library.instructions.md` | Game library tested in `test_game/` |
+| `engine-library.instructions.md` | Engine library tested in `test_engine/` |
+| `epd.instructions.md` | EPD parser used by positional test suites (`test_positions_*`) |

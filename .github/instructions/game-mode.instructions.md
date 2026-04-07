@@ -1,5 +1,6 @@
 ---
 applyTo: "src/game_mode/**"
+description: "Firmware game modes: GameMode base, PlayerMode, BotMode. State machine, resign gesture, board setup, engine composition."
 ---
 
 # Game Mode Architecture
@@ -78,3 +79,14 @@ Composes an `EngineProvider*` (strategy pattern, owned — deleted in destructor
 - **BotMode owns the provider** — `BotMode` deletes the `EngineProvider*` in its destructor. This makes game mode transitions clean: destroying a `BotMode` automatically cancels any running engine task and frees the provider. The provider is never shared between modes.
 
 - **Navigation blocked during engine thinking** — `isNavigationAllowed()` returns `false` in `ENGINE_THINKING`. Without this, a menu navigation during an active FreeRTOS task would corrupt state. The web UI gets `409 Conflict` from `POST /nav` during this window.
+
+## Related Instruction Files
+
+| File | Relationship |
+|------|--------------|
+| `game.instructions.md` | `GameMode` holds a `Game*` — sole interface to chess logic |
+| `board-driver.instructions.md` | `GameMode` holds a `BoardDriver*` for LED/sensor interaction |
+| `engine.instructions.md` | `BotMode` composes `EngineProvider*` |
+| `game-headers.instructions.md` | `meta[]` semantic overlay (`GameModeId`, engineId, difficulty) |
+| `wifi-manager.instructions.md` | `GameMode` holds a `WiFiManagerESP32*` |
+| `api.instructions.md` | `POST /gameselect` params map to mode selection |
