@@ -59,9 +59,13 @@ static int runDepthSuite(const std::vector<EPDRecord>& records) {
     // Depth-only search — no time limit
     search::SearchLimits limits;
     limits.maxDepth = DEPTH;
+    search::SearchState state;
+    state.timeFunc = chronoMillis;
+    state.tt = &tables.tt;
+    state.pawnHash = &tables.pawn;
+    state.evalHash = &tables.eval;
     search::SearchResult result = search::findBestMove(
-        pos, limits, chronoMillis, nullptr,
-        &tables.tt, &tables.pawn, &tables.eval);
+        pos, limits, state);
     std::string engineMove = moveToStr(result.bestMove);
 
     // Check bm/am

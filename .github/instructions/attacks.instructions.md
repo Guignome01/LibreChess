@@ -5,13 +5,13 @@ description: "Precomputed attack tables, slider functions (HQ), x-ray attacks, A
 
 # Attacks (`lib/core/src/attacks.h/cpp`)
 
-Precomputed leaper tables and O(1) slider functions. Stateless namespace (~3 KiB tables, initialized once via `init()`).
+Precomputed leaper tables and O(1) slider functions. Stateless namespace (~3 KiB tables, computed at compile time).
 
 ## Public API
 
-**Init**: `init()` — initialize leaper tables (idempotent)
+**Init**: `init()` — inline no-op, retained for backward compatibility
 
-**Leaper tables**: `KNIGHT[64]`, `KING[64]`, `PAWN[2][64]` (~2.5 KiB)
+**Leaper tables**: `KNIGHT[64]`, `KING[64]`, `PAWN[2][64]` (~2.5 KiB) — `extern const` in header, defined via constexpr builder functions in .cpp. Wrapper structs (`Table64`, `PawnTable`) with `operator[]` provide transparent array-like access.
 
 **Sliders** (O(1)):
 - `rook(sq, occ)` — first-rank lookup table (512-byte `FIRST_RANK_ATTACKS[8][64]`) + Hyperbola Quintessence
@@ -22,7 +22,8 @@ Precomputed leaper tables and O(1) slider functions. Stateless namespace (~3 KiB
 **Geometry**: `between(s1, s2)` — squares strictly between, exclusive
 
 **Attack detection**:
-- `isSquareUnderAttack(bb, sq, defendingColor)` — early-exit: leapers first, sliders second
+- `isSquareUnderAttack(bb, sq, defendingColor)` — early-exit: leapers first, sliders second. Delegates to `isSquareUnderAttackOcc` with `bb.occupied`.
+- `isSquareUnderAttackOcc(bb, sq, defendingColor, occupancy)` — occupancy-aware variant: uses provided `occupancy` for slider queries instead of `bb.occupied`. Enables hypothetical-board attack checks (e.g. king-move fast path in `leavesInCheck()` without copying `BitboardSet`). [CPW — Square Attacked By](https://www.chessprogramming.org/Square_Attacked_By)
 - `attackersOfSquare(bb, sq, attackingColor)` — bitboard of all attackers
 
 **Attack maps**:
@@ -35,8 +36,9 @@ Precomputed leaper tables and O(1) slider functions. Stateless namespace (~3 KiB
 ## Design Notes
 
 - **Hyperbola Quintessence** — branchless `o^(o-2r)` subtraction trick with byte-swap for negative rays. [CPW — HQ](https://www.chessprogramming.org/Hyperbola_Quintessence)
-- **First-rank table** — 512-byte `FIRST_RANK_ATTACKS[8][64]` indexed by file + 6-bit inner occupancy for rank attacks.
-- **Diagonal masks** — `DIAG[15]`, `ANTI_DIAG[15]` indexed by `rank-file+7` and `rank+file`, precomputed at startup (~240 bytes).
+- **First-rank table** — 512-byte `FIRST_RANK_ATTACKS[8][64]` indexed by file + 6-bit inner occupancy for rank attacks. `static constexpr` in attacks.cpp (placed in .rodata).
+- **Diagonal masks** — `DIAG[15]`, `ANTI_DIAG[15]` indexed by `rank-file+7` and `rank+file`. `static constexpr` in attacks.cpp (~240 bytes, placed in .rodata).
+- **Compile-time tables** — All leaper and slider tables are built by constexpr functions and placed in .rodata (flash), not BSS (RAM). The `extern const` + constexpr builder pattern is used because MinGW GCC rejects `inline constexpr` variables.
 
 ## Testing
 

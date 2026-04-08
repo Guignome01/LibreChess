@@ -165,9 +165,11 @@ static void test_bench_search_depth8(void) {
   search::SearchLimits limits;
   limits.maxDepth = 8;
 
+  search::SearchState state;
+  state.timeFunc = chronoMillis;
   uint64_t start = nowUs();
   search::SearchResult result =
-      search::findBestMove(pos, limits, chronoMillis);
+      search::findBestMove(pos, limits, state);
   uint64_t elapsed = nowUs() - start;
 
   double knps = (result.nodes / 1000.0) / (elapsed / 1000000.0);
@@ -230,7 +232,6 @@ static void test_bench_bishop_attacks(void) {
   // Build a set of varied (square, occupancy) pairs for realistic testing.
   // Use a simple PRNG to generate non-trivial occupancies.
   constexpr int ITERS = 500000;
-  attacks::init();
 
   // Precompute random occupancies with a fast xorshift32.
   static uint64_t occs[64];
@@ -283,9 +284,11 @@ static void test_bench_search_multi(void) {
     search::SearchLimits limits;
     limits.maxDepth = 8;
 
+    search::SearchState state;
+    state.timeFunc = chronoMillis;
     uint64_t start = nowUs();
     search::SearchResult result =
-        search::findBestMove(pos, limits, chronoMillis);
+        search::findBestMove(pos, limits, state);
     uint64_t elapsed = nowUs() - start;
 
     totalNodes += result.nodes;
@@ -303,6 +306,51 @@ static void test_bench_search_multi(void) {
 }
 
 // ===========================================================================
+// Benchmark: generateAllMoves throughput
+//
+// Measures legal move generation calls/sec across diverse positions to
+// establish a movegen throughput baseline.  Useful for evaluating whether
+// filterPieceMoves refactors (e.g. direct-emit) yield measurable gains.
+// ===========================================================================
+
+static void test_bench_movegen_throughput(void) {
+  static const char* FENS[] = {
+    "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+    "r1bq1rk1/pp2ppbp/2np1np1/8/2BNP3/2N1BP2/PPPQ2PP/R3K2R w KQ - 4 9",
+    "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+    "r4rk1/1pp1qppp/p1np1n2/2b1p1B1/2B1P1b1/3P1N1P/PPP1NPP1/R2Q1RK1 w - - 0 10",
+  };
+  constexpr int NPOS = 5;
+  constexpr int ITERS = 100000;
+
+  Position pos;
+  uint64_t totalCalls = 0;
+  uint64_t totalUs = 0;
+
+  for (int p = 0; p < NPOS; ++p) {
+    pos.loadFEN(FENS[p]);
+
+    uint64_t start = nowUs();
+    for (int i = 0; i < ITERS; ++i) {
+      MoveList moves;
+      movegen::generateAllMoves(pos.bitboards(), pos.mailbox(),
+                                pos.sideToMove(), pos.positionState(), moves);
+    }
+    uint64_t elapsed = nowUs() - start;
+
+    totalCalls += ITERS;
+    totalUs += elapsed;
+  }
+
+  double callsPerSec = (totalCalls * 1000000.0) / totalUs;
+  printf("  generateAllMoves: %d pos x %d iters in %llu us (%.0f calls/s)\n",
+         NPOS, ITERS, (unsigned long long)totalUs, callsPerSec);
+
+  TEST_ASSERT_TRUE(true);
+}
+
+// ===========================================================================
 // Registration
 // ===========================================================================
 
@@ -315,4 +363,5 @@ void register_timing_tests() {
   RUN_TEST(test_bench_perft5);
   RUN_TEST(test_bench_search_depth8);
   RUN_TEST(test_bench_search_multi);
+  RUN_TEST(test_bench_movegen_throughput);
 }

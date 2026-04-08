@@ -1,11 +1,11 @@
 ---
-applyTo: "lib/core/src/trace.*"
+applyTo: "tools/tune/trace.*"
 description: "Trace extraction for offline tuning (#ifdef TUNING only). Use when editing trace.h or trace.cpp."
 ---
 
-# Trace (`lib/core/src/trace.h/cpp`)
+# Trace (`tools/tune/trace.h/cpp`)
 
-Trace extraction for offline tuning. Compiled only with `-DTUNING`. Stateless namespace.
+Trace extraction for offline tuning. Lives in `tools/tune/` and is compiled only by the tuner Makefile (always `-DTUNING`). No `#ifdef TUNING` guard — the file location ensures it is never included in production builds. Stateless namespace.
 
 ## Public API
 

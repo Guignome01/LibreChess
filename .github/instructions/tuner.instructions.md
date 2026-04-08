@@ -9,7 +9,7 @@ Reference: https://www.chessprogramming.org/Texel%27s_Tuning_Method
 
 ## Overview
 
-Offline gradient-descent optimizer for `EVAL_CONST` evaluation parameters. Compiles `lib/core/` and `lib/engine/` with `-DTUNING` (making `EVAL_CONST` expand to empty instead of `constexpr`), enabling runtime parameter mutation. The tuner uses precomputed sparse traces (feature vectors) and the Adam optimizer to minimize the MSE between predicted game outcomes (sigmoid of evaluation score) and actual game results from a labeled corpus.
+Offline gradient-descent optimizer for `EVAL_CONST` evaluation parameters. Compiles `lib/core/` with `-DTUNING` (making `EVAL_CONST` expand to empty instead of `constexpr`), enabling runtime parameter mutation. The tuner uses precomputed sparse traces (feature vectors) and the Adam optimizer to minimize the MSE between predicted game outcomes (sigmoid of evaluation score) and actual game results from a labeled corpus.
 
 ## Architecture
 
@@ -23,7 +23,7 @@ corpus.epd ─┬─ loadCorpus()       → RawEntry[]  (bitboards + results)
              └─ printResults()     → C++ output  (copy-paste into evaluation.cpp)
 ```
 
-### Key Types (from `trace.h`)
+### Key Types (from `tools/tune/trace.h`)
 
 | Type | Purpose |
 |------|---------|
@@ -145,7 +145,7 @@ make pipeline                      # Build + run in one step
 When adding new eval terms to `evaluation.cpp`:
 1. Add the `EVAL_CONST` parameter(s) to the eval code
 2. Register them in `buildRegistry()` with appropriate name, bounds, and step
-3. Add matching trace entries in `extractTrace()` (in `trace.cpp`) — coefficients must exactly mirror how `evaluatePosition()` uses the parameter
+3. Add matching trace entries in `extractTrace()` (in `tools/tune/trace.cpp`) — coefficients must exactly mirror how `evaluatePosition()` uses the parameter
 4. Rebuild and run
 
 When changing hyperparameters, adjust the constants at the top of `tune.cpp`. The learning rate (`ADAM_LR`) is the most sensitive — if MSE oscillates, lower it; if convergence is too slow, raise it.

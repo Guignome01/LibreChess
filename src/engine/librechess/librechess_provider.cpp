@@ -12,19 +12,26 @@
 // ---------------------------------------------------------------------------
 // LibreChessProvider — on-board chess engine using the core search library.
 //
-// The Engine (TT, pawn hash, eval hash) is created once in initialize() and
-// persists for the game’s lifetime, avoiding heap fragmentation from per-move
-// alloc/free cycles.  Each requestMove() spawns a FreeRTOS task that:
+// The Engine (TT, pawn hash, eval hash, SearchState) is created once in
+// initialize() and persists for the game's lifetime, avoiding heap
+// fragmentation from per-move alloc/free cycles.  Each requestMove() spawns
+// a FreeRTOS task that:
 //   1. Wires the cancellation flag for this search.
 //   2. Calls calculateMove(fen, limits) on the persistent Engine.
 //   3. Converts the SearchResult to an EngineResult.
 //   4. Sets the result and marks ready.
 //
-// Only SearchState (~31 KiB) is heap-allocated per search.  The TT persists
-// across moves, enabling cross-move transposition reuse for stronger play.
+// The TT and SearchState persist across moves, enabling cross-move
+// transposition reuse for stronger play and eliminating per-search
+// heap allocation entirely.
 //
 // The task is cooperative-cancellable via ctx->cancel → SearchLimits.stop.
 // ---------------------------------------------------------------------------
+
+// Shared heap-sizing constants — used in both initialize() and taskFunction().
+static constexpr size_t MIN_FREE_HEAP      = 32 * 1024;
+static constexpr size_t EVAL_HASH_OVERHEAD = 20 * 1024;   // pawn + eval hash
+static constexpr size_t SEARCH_OVERHEAD    = 16 * 1024;   // SearchState (~10 KiB + headroom)
 
 LibreChessProvider::LibreChessProvider(int level, char playerColor, ILogger* logger)
     : EngineProvider(logger), playerColor_(playerColor) {
@@ -45,15 +52,12 @@ bool LibreChessProvider::initialize(EngineInitResult& result) {
   // --- Create persistent Engine with heap-sized TT ---
   //
   // The TT is sized once against available heap, capped at 128 KiB.
-  // Hash tables (pawn 8 KiB + eval 8 KiB) are allocated inside the Engine
+  // Hash tables (pawn 4 KiB + eval 16 KiB) are allocated inside the Engine
   // constructor.  All three persist across moves — no per-move fragmentation.
-  // Reserve headroom for the per-search SearchState (~32 KiB) and a safety
+  // Reserve headroom for the per-search SearchState (~10 KiB) and a safety
   // margin for other tasks (32 KiB).
-  static constexpr size_t MAX_TT_BYTES      = 128 * 1024;
-  static constexpr size_t MIN_FREE_HEAP      = 32 * 1024;
-  static constexpr size_t EVAL_HASH_OVERHEAD = 16 * 1024;   // pawn + eval hash
-  static constexpr size_t SEARCH_OVERHEAD    = 40 * 1024;   // SearchState (~32 KiB + padding)
-  static constexpr size_t TOTAL_OVERHEAD     = MIN_FREE_HEAP + EVAL_HASH_OVERHEAD + SEARCH_OVERHEAD;
+  static constexpr size_t MAX_TT_BYTES  = 128 * 1024;
+  static constexpr size_t TOTAL_OVERHEAD = MIN_FREE_HEAP + EVAL_HASH_OVERHEAD + SEARCH_OVERHEAD;
   static constexpr size_t ENTRY_SIZE = sizeof(LibreChess::search::TTEntry);
 
   size_t freeHeap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
@@ -161,11 +165,9 @@ void LibreChessProvider::taskFunction(void* param) {
   // Wire the cancellation flag for this search.
   ctx->engine->setExternalStop(&ctx->cancel);
 
-  // Verify the heap can still satisfy the per-search SearchState (~32 KiB).
+  // Verify the heap can still satisfy the per-search SearchState (~10 KiB).
   // The persistent Engine's TT and hash tables are already allocated, so
   // only SearchState + a free margin for other tasks need to be available.
-  static constexpr size_t MIN_FREE_HEAP   = 32 * 1024;
-  static constexpr size_t SEARCH_OVERHEAD = 40 * 1024;  // SearchState (~32 KiB + padding)
 
   size_t freeHeap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
   size_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
@@ -180,7 +182,7 @@ void LibreChessProvider::taskFunction(void* param) {
     return;
   }
 
-  // Search — SearchState (~31 KiB) is heap-allocated internally per search.
+  // Search — SearchState (~10 KiB) is heap-allocated internally per search.
   LibreChess::search::SearchLimits limits;
   limits.maxDepth = (ctx->depth > 0) ? ctx->depth : 6;
 

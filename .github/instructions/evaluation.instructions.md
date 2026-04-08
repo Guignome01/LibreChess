@@ -14,6 +14,8 @@ Tapered evaluation returning centipawns (`int`), white-relative. Interpolates MG
 - `evaluatePosition(bb, mgMatPST, egMatPST, pawnHash)` — with pre-computed material+PST
 - `evaluatePosition(bb, mgMatPST, egMatPST, phase, pawnHash)` — with pre-computed phase (hot path from search)
 
+**Extracted parameters** — all tunable evaluation constants (material values, PST tables, pawn structure bonuses, king safety weights, mobility/threat/space terms) live in `eval_params.h`. The `EVAL_CONST`/`EVAL_FIXED`/`PST_ELEM`/`MAT_ELEM` macros are also defined there.
+
 **Material + PST**:
 - `PSQTPair pieceSquareMGEG(pieceIdx, sq)` — single lookup from flat `PSQT_MG/EG[12][64]`
 - `PSQTPair computeMaterialPST(bb)` — full board scan, returns MG+EG
@@ -22,9 +24,9 @@ Tapered evaluation returning centipawns (`int`), white-relative. Interpolates MG
 - `computeGamePhase(bb)` — N=1, B=1, R=2, Q=4; max 24
 - `invalidatePSQT()` — force PSQT rebuild (tuning builds only)
 
-**Hash tables** (1024 entries × 8B = 8 KiB each, always-replace):
-- `PawnHashTable` — caches pawn structure MG/EG keyed by `computePawnHash()`. ~95%+ hit rate.
-- `EvalHashTable` — caches full evaluation keyed by position Zobrist hash.
+**Hash tables** (both inherit `HashTableBase` from `hash_table.h`):
+- `PawnHashTable` — caches pawn structure MG/EG + `passedPawns[2]` bitboards, keyed by `computePawnHash()`. 512 entries × 24B = 12 KiB. ~92%+ hit rate. Passed pawn bitboards are cached to avoid re-scanning pawns for king distance and rook-behind-passer evaluation.
+- `EvalHashTable` — caches full evaluation keyed by position Zobrist hash. 4096 entries × 8B = 32 KiB (2048 entries = 16 KiB under `HARDWARE_LIMITATION`).
 
 ## Evaluation Terms
 
@@ -52,8 +54,8 @@ Tapered evaluation returning centipawns (`int`), white-relative. Interpolates MG
 
 - **Color-parameterized loops**: `for (int c = 0; c < 2; ++c)` with `sign = (c == 0) ? 1 : -1` and `c * 6` offset into `byPiece[]`. Applied across ALL bilateral eval terms. New eval functions MUST follow this pattern — never duplicate white/black code.
 - **Flat PSQT lookup** — `PSQT_MG/EG[12][64]` combine material + PST + color sign. Lazy-built, `invalidatePSQT()` for tuning.
-- **Pawn-structure masks** — lazy-initialized `pawnPassedMask[64]`, `pawnForwardMask[64]` (white-only, file-scoped; black derived via `byteSwap64(mask[sq^56])`). `adjacentFilesMask()` inline for isolated detection.
-- **Passed pawns collected once** — `evaluateImpl` stores `passedPawns[2]` bitboards, shared by `evalPassedPawnKingDist()` and `evalRookBehindPasser()`.
+- **Pawn-structure masks** — `static constexpr PawnMasks` struct in anonymous namespace, containing `passed[64]` and `forward[64]` arrays (white-only, placed in .rodata; black derived via `byteSwap64(mask[sq^56])`). `adjacentFilesMask()` inline for isolated detection. `initPawnMasks()` is a no-op retained for backward compatibility.
+- **Passed pawns cached in pawn hash** — `PawnEntry` stores `Bitboard passedPawns[2]` alongside MG/EG scores. `evalPawnStructure` builds the bitboards during its pawn loop and stores them in the hash. On pawn hash hit, bitboards are retrieved without re-scanning. Shared by `evalPassedPawnKingDist()` and `evalRookBehindPasser()`.
 - **Tempo bonus** — applied in search layer, not in eval.
 
 ## Testing

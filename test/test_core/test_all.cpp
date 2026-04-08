@@ -15,6 +15,7 @@ void tearDown(void) {}
 // Registration functions defined in other translation units
 void register_attacks_tests();
 void register_bitboard_tests();
+void register_engine_tests();
 void register_epd_tests();
 void register_eval_regression_tests();
 void register_evaluation_tests();
@@ -23,6 +24,7 @@ void register_movegen_tests();
 void register_notation_tests();
 void register_piece_tests();
 void register_position_tests();
+void register_search_tests();
 void register_utils_tests();
 void register_zobrist_tests();
 
@@ -40,5 +42,7 @@ int main(int argc, char** argv) {
   register_notation_tests();
   register_zobrist_tests();
   register_position_tests();
+  register_search_tests();
+  register_engine_tests();
   return UNITY_END();
 }

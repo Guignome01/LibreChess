@@ -76,18 +76,35 @@ struct ScoredMove {
 
 // ---------------------------------------------------------------------------
 // Unified move list — used for both per-piece and full-position generation.
-// Capacity 218 = theoretical max legal moves.
+//
+// MoveListBase<N> is a fixed-capacity buffer of N moves.  The default
+// MoveList (N = MAX_MOVES = 218) covers the theoretical maximum legal
+// moves in any position.  Smaller specialisations (e.g. QS_MAX_MOVES)
+// reduce per-ply stack usage in the quiescence search.
 // ---------------------------------------------------------------------------
 
 static constexpr int MAX_MOVES = 218;
 
-struct MoveList {
-  Move moves[MAX_MOVES];
+template <int N = MAX_MOVES>
+struct MoveListBase {
+  Move moves[N];
   int count = 0;
 
-  void add(Move m) { moves[count++] = m; }
+  void add(Move m) {
+    if (count < N) moves[count++] = m;
+  }
   void clear() { count = 0; }
 };
+
+// Standard full-capacity move list used by movegen and game layers.
+using MoveList = MoveListBase<MAX_MOVES>;
+
+// Compact move list for quiescence search — 128 moves covers all realistic
+// positions (captures, promotions, and check evasions) while saving 450
+// bytes/ply vs the full 218-capacity list.  Positions with >128 legal moves
+// are synthetic constructions that never arise in practical play.
+static constexpr int QS_MAX_MOVES = 128;
+using QSMoveList = MoveListBase<QS_MAX_MOVES>;
 
 // ---------------------------------------------------------------------------
 // MoveResult flag bits — packed into a single uint8_t.

@@ -47,14 +47,14 @@ Configuration via `LichessConfig` — just an OAuth `apiToken`.
 
 ## LibreChessProvider
 
-On-board engine provider. Constructor: `LibreChessProvider(level, playerColor, logger)`. Level (1–8) selects from `LibreChessProvider::LEVELS[8]` (depths 1–8). Forwards `logger` to `EngineProvider`. Uses the `Engine` facade from `lib/engine/` — no network required. `initialize()` always succeeds (no handshake needed), sets `mode = GameModeId::BOT`, `canResume = true`.
+On-board engine provider. Constructor: `LibreChessProvider(level, playerColor, logger)`. Level (1–8) selects from `LibreChessProvider::LEVELS[8]` (depths 1–8). Forwards `logger` to `EngineProvider`. Uses the `Engine` facade from `lib/core/` — no network required. `initialize()` always succeeds (no handshake needed), sets `mode = GameModeId::BOT`, `canResume = true`.
+
+`initialize()` creates a persistent `Engine` with a heap-sized TT (capped at 128 KiB). The Engine, TT, hash tables, and SearchState persist across moves — no per-move heap fragmentation. Heap sizing uses unified file-scope constants: `MIN_FREE_HEAP` (32 KiB), `EVAL_HASH_OVERHEAD` (20 KiB), `SEARCH_OVERHEAD` (16 KiB).
 
 Each `requestMove()` spawns a FreeRTOS task (64 KiB stack) that:
-1. Sizes the TT based on available heap (`heap_caps_get_free_size / 4`, capped at 128 KiB, minimum 64 entries)
-2. Creates an `Engine` instance with the computed TT size, sets `millis` as the time function
-3. Wires `ctx->cancel` → `engine.setExternalStop()` for cooperative cancellation
-4. Builds `SearchLimits` (depth-based) and calls `engine.calculateMove(fen, limits)`
-5. Extracts best move coordinate via `notation::toCoordinate()` and evaluation from `SearchResult`
+1. Wires `ctx->cancel` → `engine.setExternalStop()` for cooperative cancellation
+2. Builds `SearchLimits` (depth-based) and calls `engine.calculateMove(fen, limits)` on the persistent Engine
+3. Extracts best move coordinate via `notation::toCoordinate()` and evaluation from `SearchResult`
 
 `checkResult()` uses `peekResult()` + `finishTask()` to read the evaluation before cleanup. `getEvaluation()` returns the last search score for the web UI eval bar.
 
@@ -68,15 +68,15 @@ API modules handle raw HTTP + TLS. Providers handle chess-domain logic and FreeR
 
 ## Memory
 
-`LibreChessProvider` runs the search in a FreeRTOS task (`lcTask`) with a 64 KiB stack. The Engine is heap-allocated via `std::unique_ptr` with explicit `reset()` before `vTaskDelete(nullptr)` to ensure destructor runs (releases TT, pawn hash, eval hash). Major allocations:
+`LibreChessProvider` runs the search in a FreeRTOS task (`lcTask`) with a 64 KiB stack. The Engine is created once in `initialize()` and persists for the game's lifetime (TT, hash tables, SearchState all reuse across moves). The persistent Engine is destroyed in the `LibreChessProvider` destructor after cancelling any running task. Major allocations:
 
-- **SearchState** (~11 KiB: `history[2][6][64]` = 1.5 KiB piece-to history, `captureHistory[6][6][64]` = 4.5 KiB, `killers[64][2]` = 256 B via `PackedMove`, `countermoves[12][64]` = 1.5 KiB, `staticEvals[64]` = 128 B, PV table 64×24×2 = 3 KiB via `PackedMove`, `MAX_PV_LEN=24`) — **heap-allocated** via `std::unique_ptr` in `findBestMove()`.
-- **Transposition table** — heap-allocated (`new TTEntry[]`), dynamically sized to available heap (reserves extra 16 KiB for eval hash tables), capped at 128 KiB.
-- **Pawn hash table** — 8 KiB (1024 entries × 8B `PawnEntry`), heap-allocated by `Engine`. Caches pawn structure MG/EG scores; ~95%+ hit rate.
-- **Eval hash table** — 8 KiB (1024 entries × 8B `EvalEntry`), heap-allocated by `Engine`. Caches full `evaluatePosition()` results.
-- **Engine** (owns Position + TT + pawn/eval hash tables) — **heap-allocated** via `std::unique_ptr` in `taskFunction()`. Position contains `HashHistory` (128 × 8B = 1 KiB) plus board state (~300B).
-- **Per-ply negamax** — ~1,500 B per ply (MovePicker with MoveList 658B + int16_t scores[218] 436B + other fields + PackedMove quietsSearched[32] + capturesSearched[32] 128B + UndoInfo + locals). Uses `int16_t` scores array. SEE is computed lazily in the GOOD_CAPTURES stage (not stored in an array).
-- **Per-ply quiescence** — ~1.2 KiB per ply (MoveList 658B + int16_t capScores[218] 436B + UndoInfo + locals).
+- **SearchState** (~10 KiB: `history[2][6][64]` = 1.5 KiB piece-to history, `captureHistory[6][6][64]` = 4.5 KiB, `killers[48][2]` = 192 B via `PackedMove`, `countermoves[12][64]` = 1.5 KiB, `staticEvals[48]` = 96 B, PV table 48×24×2 = 2.3 KiB via `PackedMove`, `pvLength[48]` = 48 B) — **pre-allocated** in `Engine` constructor, reused across searches. `findBestMove()` resets `nodes`/`stopped` per search. Eliminates per-search heap alloc/free cycle.
+- **Transposition table** — heap-allocated (`new TTEntry[]`), dynamically sized to available heap (reserves extra 20 KiB for eval hash tables), capped at 128 KiB.
+- **Pawn hash table** — 4 KiB (512 entries × 8B `PawnEntry`), heap-allocated by `Engine`. Caches pawn structure MG/EG scores; ~92%+ hit rate.
+- **Eval hash table** — 16 KiB (2048 entries × 8B `EvalEntry` under `HARDWARE_LIMITATION`), heap-allocated by `Engine`. Caches full `evaluatePosition()` results.
+- **Engine** (owns Position + TT + pawn/eval hash tables + SearchState) — **heap-allocated** once in `initialize()`, persists across moves. Position contains `HashHistory` (128 × 8B = 1 KiB) plus board state (~300B).
+- **Per-ply negamax** — ~1,500 B per ply (MovePicker with MoveList 658B + int16_t scores[218] 436B + other fields + PackedMove quietsSearched[32] + capturesSearched[32] 128B + UndoInfo + locals). Uses `int16_t` scores array. SEE cached in scores[] when reclassifying bad captures.
+- **Per-ply quiescence** — ~600 B per ply (QSMoveList 390B + int16_t capScores[128] 256B + UndoInfo + locals).
 
 Max depth 8 + extensions (~6) + 16 QS plies ≈ 44 KiB (fits in 64 KiB). See `docs/development/additional-topics.md` for the full budget breakdown.
 
@@ -103,4 +103,4 @@ Max depth 8 + extensions (~6) + 16 QS plies ≈ 44 KiB (fits in 64 KiB). See `do
 | `engine-facade.instructions.md` | `LibreChessProvider` creates and drives the `Engine` facade |
 | `search.instructions.md` | References `SearchLimits`, `SearchResult`, `SearchState` sizes |
 | `game-mode.instructions.md` | `BotMode` composes `EngineProvider*`, drives the thinking state machine |
-| `engine-library.instructions.md` | The library wrapped by `LibreChessProvider` |
+| `core.instructions.md` | The library containing the `Engine` facade |

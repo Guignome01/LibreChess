@@ -10,12 +10,10 @@
 // Stored once per corpus position alongside the game result.  Used by the
 // Adam optimizer to compute analytical gradients without re-evaluating.
 //
-// Only available in tuning builds (-DTUNING).
+// Lives in tools/tune/ — compiled only by the tuner Makefile (always -DTUNING).
 //
 // Reference: https://www.chessprogramming.org/Texel%27s_Tuning_Method
 // ---------------------------------------------------------------------------
-
-#ifdef TUNING
 
 #include <cstdint>
 #include <vector>
@@ -77,7 +75,5 @@ int findParam(const char* name);
 
 }  // namespace eval
 }  // namespace LibreChess
-
-#endif  // TUNING
 
 #endif  // LIBRECHESS_TRACE_H

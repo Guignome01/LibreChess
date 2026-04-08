@@ -45,7 +45,7 @@ class Engine {
                                      const search::SearchLimits& limits);
 
   // Set the time function (firmware passes millis(), tests pass a mock).
-  void setTimeFunc(search::TimeFunc fn) { timeFunc_ = fn; }
+  void setTimeFunc(search::TimeFunc fn) { state_.timeFunc = fn; }
 
   // Wire an external stop flag (e.g. ctx->cancel in EngineProvider).
   // When set, calculateMove() will use this flag for SearchLimits::stop
@@ -61,9 +61,9 @@ class Engine {
   search::TranspositionTable tt_;
   eval::PawnHashTable pawnHash_;
   eval::EvalHashTable evalHash_;
+  search::SearchState state_;
   std::atomic<bool> stop_{false};
   std::atomic<bool>* externalStop_ = nullptr;
-  search::TimeFunc timeFunc_ = nullptr;
 };
 
 }  // namespace LibreChess

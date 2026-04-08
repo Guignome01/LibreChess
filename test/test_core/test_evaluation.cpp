@@ -523,12 +523,14 @@ static void test_pawn_hash_store_and_probe(void) {
   ph.resize(64);
 
   uint64_t hash = 0xDEADBEEFCAFEBABEULL;
-  ph.store(hash, 42, -17);
+  ph.store(hash, 42, -17, 0x100, 0x200);
 
   const eval::PawnEntry* e = ph.probe(hash);
   TEST_ASSERT_NOT_NULL(e);
   TEST_ASSERT_EQUAL_INT(42, e->mgScore);
   TEST_ASSERT_EQUAL_INT(-17, e->egScore);
+  TEST_ASSERT_EQUAL_HEX64(0x100, e->passedPawns[0]);
+  TEST_ASSERT_EQUAL_HEX64(0x200, e->passedPawns[1]);
 
   ph.free();
 }
@@ -538,7 +540,7 @@ static void test_pawn_hash_clear_invalidates(void) {
   ph.resize(64);
 
   uint64_t hash = 0x1111222233334444ULL;
-  ph.store(hash, 10, 20);
+  ph.store(hash, 10, 20, 0, 0);
   TEST_ASSERT_NOT_NULL(ph.probe(hash));
 
   ph.clear();

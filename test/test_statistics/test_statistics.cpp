@@ -68,9 +68,13 @@ static void test_search_statistics(void) {
 
     search::SearchLimits limits;
     limits.maxDepth = STATS_DEPTH;
+    search::SearchState state;
+    state.timeFunc = chronoMillis;
+    state.tt = &tables.tt;
+    state.pawnHash = &tables.pawn;
+    state.evalHash = &tables.eval;
     search::SearchResult result =
-        search::findBestMove(pos, limits, chronoMillis, nullptr,
-                             &tables.tt, &tables.pawn, &tables.eval);
+        search::findBestMove(pos, limits, state);
 
     search::SearchStats s = search::getStats();
     uint64_t totalNodes = s.mainNodes + s.qNodes;

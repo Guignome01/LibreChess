@@ -7,75 +7,108 @@ namespace attacks {
 using namespace LibreChess;
 
 // ---------------------------------------------------------------------------
-// Table storage
+// Constexpr leaper table builders
 // ---------------------------------------------------------------------------
 
-Bitboard KNIGHT[64] = {};
-Bitboard KING[64] = {};
-Bitboard PAWN[2][64] = {};
+static constexpr Table64 buildKnight() {
+  Table64 t{};
+  for (Square sq = 0; sq < 64; ++sq) {
+    Bitboard bb = squareBB(sq);
+    Bitboard a = 0;
+    a |= (bb & ~FILE_H) << 17;            // NNE
+    a |= (bb & ~FILE_A) << 15;            // NNW
+    a |= (bb & ~FILE_H) >> 15;            // SSE
+    a |= (bb & ~FILE_A) >> 17;            // SSW
+    a |= (bb & ~FILE_G & ~FILE_H) << 10;  // ENE
+    a |= (bb & ~FILE_G & ~FILE_H) >> 6;   // ESE
+    a |= (bb & ~FILE_A & ~FILE_B) << 6;   // WNW
+    a |= (bb & ~FILE_A & ~FILE_B) >> 10;  // WSW
+    t.data[sq] = a;
+  }
+  return t;
+}
 
-// Diagonal masks (a1-h8 direction), one per diagonal.
-// Index: rank - file + 7 (range 0–14).
-static Bitboard DIAG[15];
+static constexpr Table64 buildKing() {
+  Table64 t{};
+  for (Square sq = 0; sq < 64; ++sq) {
+    Bitboard bb = squareBB(sq);
+    t.data[sq] = shiftNorth(bb) | shiftSouth(bb)
+               | shiftEast(bb)  | shiftWest(bb)
+               | shiftNE(bb)    | shiftNW(bb)
+               | shiftSE(bb)    | shiftSW(bb);
+  }
+  return t;
+}
 
-// Anti-diagonal masks (h1-a8 direction), one per anti-diagonal.
-// Index: rank + file (range 0–14).
-static Bitboard ANTI_DIAG[15];
-
-// First-rank attack table: for each file (0-7) and each 6-bit inner
-// occupancy pattern (bits 1-6 of the rank), stores the 8-bit attack mask
-// on that rank. Used for O(1) rank attack lookup.
-static uint8_t FIRST_RANK_ATTACKS[8][64];
+static constexpr PawnTable buildPawn() {
+  PawnTable t{};
+  for (Square sq = 0; sq < 64; ++sq) {
+    Bitboard bb = squareBB(sq);
+    t.data[0][sq] = shiftNE(bb) | shiftNW(bb);  // WHITE
+    t.data[1][sq] = shiftSE(bb) | shiftSW(bb);  // BLACK
+  }
+  return t;
+}
 
 // ---------------------------------------------------------------------------
-// Table initialization
+// Leaper table definitions — const, placed in .rodata (Flash on ESP32).
+// Initialized at compile time via constexpr builders.
 // ---------------------------------------------------------------------------
 
-// Knight offsets as (file_delta, rank_delta) pairs.
-// A knight moves in an L-shape: 2 squares in one axis, 1 in the other.
-static void initKnightAttacks() {
-  for (Square sq = 0; sq < 64; ++sq) {
-    Bitboard bb = squareBB(sq);
-    Bitboard attacks = 0;
+const Table64   KNIGHT = buildKnight();
+const Table64   KING   = buildKing();
+const PawnTable PAWN   = buildPawn();
 
-    // Two north, one east/west
-    attacks |= (bb & ~FILE_H) << 17;            // NNE
-    attacks |= (bb & ~FILE_A) << 15;            // NNW
-    // Two south, one east/west
-    attacks |= (bb & ~FILE_H) >> 15;            // SSE
-    attacks |= (bb & ~FILE_A) >> 17;            // SSW
-    // Two east, one north/south
-    attacks |= (bb & ~FILE_G & ~FILE_H) << 10;  // ENE
-    attacks |= (bb & ~FILE_G & ~FILE_H) >> 6;   // ESE
-    // Two west, one north/south
-    attacks |= (bb & ~FILE_A & ~FILE_B) << 6;   // WNW
-    attacks |= (bb & ~FILE_A & ~FILE_B) >> 10;  // WSW
+// ---------------------------------------------------------------------------
+// Constexpr slider mask/table builders (file-scope, used by rook/bishop)
+// ---------------------------------------------------------------------------
 
-    KNIGHT[sq] = attacks;
+struct DiagTables {
+  Bitboard diag[15] = {};
+  Bitboard antiDiag[15] = {};
+  constexpr DiagTables() {
+    for (int d = 0; d < 15; ++d) {
+      Bitboard dm = 0, am = 0;
+      for (int r = 0; r < 8; ++r) {
+        int df = r - d + 7;
+        int af = d - r;
+        if (df >= 0 && df < 8) dm |= squareBB(r * 8 + df);
+        if (af >= 0 && af < 8) am |= squareBB(r * 8 + af);
+      }
+      diag[d] = dm;
+      antiDiag[d] = am;
+    }
   }
-}
+};
 
-// King can step one square in any of the 8 compass directions.
-static void initKingAttacks() {
-  for (Square sq = 0; sq < 64; ++sq) {
-    Bitboard bb = squareBB(sq);
-    Bitboard attacks = shiftNorth(bb) | shiftSouth(bb)
-                     | shiftEast(bb)  | shiftWest(bb)
-                     | shiftNE(bb)    | shiftNW(bb)
-                     | shiftSE(bb)    | shiftSW(bb);
-    KING[sq] = attacks;
+struct FirstRankTable {
+  uint8_t data[8][64] = {};
+  constexpr FirstRankTable() {
+    for (int file = 0; file < 8; ++file) {
+      for (int occ6 = 0; occ6 < 64; ++occ6) {
+        uint8_t occ = static_cast<uint8_t>(occ6 << 1);
+        uint8_t result = 0;
+        for (int f = file + 1; f < 8; ++f) {
+          result |= static_cast<uint8_t>(1 << f);
+          if (occ & (1 << f)) break;
+        }
+        for (int f = file - 1; f >= 0; --f) {
+          result |= static_cast<uint8_t>(1 << f);
+          if (occ & (1 << f)) break;
+        }
+        data[file][occ6] = result;
+      }
+    }
   }
-}
+};
 
-// Pawn attacks are the diagonal capture squares (not pushes).
-// White pawns attack NE and NW; black pawns attack SE and SW.
-static void initPawnAttacks() {
-  for (Square sq = 0; sq < 64; ++sq) {
-    Bitboard bb = squareBB(sq);
-    PAWN[0][sq] = shiftNE(bb) | shiftNW(bb);  // WHITE
-    PAWN[1][sq] = shiftSE(bb) | shiftSW(bb);  // BLACK
-  }
-}
+static constexpr DiagTables     DIAG_TABLES{};
+static constexpr FirstRankTable FIRST_RANK_TABLE{};
+
+// Convenience aliases
+static constexpr auto& DIAG           = DIAG_TABLES.diag;
+static constexpr auto& ANTI_DIAG      = DIAG_TABLES.antiDiag;
+static constexpr auto& FIRST_RANK_ATTACKS = FIRST_RANK_TABLE.data;
 
 // ---------------------------------------------------------------------------
 // Byte swap for Hyperbola Quintessence
@@ -101,62 +134,6 @@ static Bitboard lineHQ(Bitboard occ, Square sq, Bitboard mask) {
   reverse -= 2 * byteSwap64(piece);
   forward ^= byteSwap64(reverse);
   return forward & maskEx;
-}
-
-// ---------------------------------------------------------------------------
-// Diagonal/anti-diagonal mask initialization
-// ---------------------------------------------------------------------------
-
-static void initDiagMasks() {
-  for (int d = 0; d < 15; ++d) {
-    Bitboard diag = 0, adiag = 0;
-    for (int r = 0; r < 8; ++r) {
-      int df = r - d + 7;   // file for diagonal d at rank r
-      int af = d - r;       // file for anti-diagonal d at rank r
-      if (df >= 0 && df < 8) diag  |= squareBB(r * 8 + df);
-      if (af >= 0 && af < 8) adiag |= squareBB(r * 8 + af);
-    }
-    DIAG[d] = diag;
-    ANTI_DIAG[d] = adiag;
-  }
-}
-
-// ---------------------------------------------------------------------------
-// First-rank attack table initialization
-// ---------------------------------------------------------------------------
-
-static void initFirstRankAttacks() {
-  for (int file = 0; file < 8; ++file) {
-    for (int occ6 = 0; occ6 < 64; ++occ6) {
-      uint8_t occ = occ6 << 1;
-      uint8_t result = 0;
-      for (int f = file + 1; f < 8; ++f) {
-        result |= static_cast<uint8_t>(1 << f);
-        if (occ & (1 << f)) break;
-      }
-      for (int f = file - 1; f >= 0; --f) {
-        result |= static_cast<uint8_t>(1 << f);
-        if (occ & (1 << f)) break;
-      }
-      FIRST_RANK_ATTACKS[file][occ6] = result;
-    }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Master initialization
-// ---------------------------------------------------------------------------
-
-void init() {
-  static bool initialized = false;
-  if (initialized) return;
-  initialized = true;
-
-  initKnightAttacks();
-  initKingAttacks();
-  initPawnAttacks();
-  initDiagMasks();
-  initFirstRankAttacks();
 }
 
 // ---------------------------------------------------------------------------
@@ -305,6 +282,11 @@ Bitboard attackersOfSquare(const BitboardSet& bb, Square sq,
 }
 
 bool isSquareUnderAttack(const BitboardSet& bb, Square sq, Color defendingColor) {
+  return isSquareUnderAttackOcc(bb, sq, defendingColor, bb.occupied);
+}
+
+bool isSquareUnderAttackOcc(const BitboardSet& bb, Square sq,
+                            Color defendingColor, Bitboard occupancy) {
   Color attacking = ~defendingColor;
   int base = piece::raw(attacking) * 6;
 
@@ -315,9 +297,9 @@ bool isSquareUnderAttack(const BitboardSet& bb, Square sq, Color defendingColor)
   if (KING[sq]   & bb.byPiece[base + 5]) return true;
 
   Bitboard rookQueens = bb.byPiece[base + 3] | bb.byPiece[base + 4];
-  if (rookQueens   && (rook(sq, bb.occupied)   & rookQueens))   return true;
+  if (rookQueens   && (rook(sq, occupancy)   & rookQueens))   return true;
   Bitboard bishopQueens = bb.byPiece[base + 2] | bb.byPiece[base + 4];
-  if (bishopQueens && (bishop(sq, bb.occupied) & bishopQueens)) return true;
+  if (bishopQueens && (bishop(sq, occupancy) & bishopQueens)) return true;
 
   return false;
 }

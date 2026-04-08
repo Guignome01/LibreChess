@@ -591,7 +591,6 @@ int main(int argc, char* argv[]) {
 
   // Initialize eval infrastructure.
   eval::initPawnMasks();
-  attacks::init();
 
   // Build name→index map for trace extraction.
   eval::buildParamMap();

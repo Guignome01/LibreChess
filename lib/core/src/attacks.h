@@ -4,8 +4,9 @@
 // ---------------------------------------------------------------------------
 // Precomputed attack tables and slider attack functions.
 //
-// Leaper attacks (knight, king, pawn) are stored in lookup tables —
-// one Bitboard per square, computed once at startup via init().
+// Leaper attacks (knight, king, pawn) are stored in const lookup tables —
+// one Bitboard per square, computed at compile time via constexpr builders
+// and placed in .rodata (Flash on ESP32) instead of .bss (RAM).
 //
 // Slider attacks (rook, bishop, queen) use two O(1) techniques:
 //   - Rank attacks: first-rank lookup table (512 bytes, indexed by
@@ -13,7 +14,7 @@
 //   - File/diagonal/anti-diagonal attacks: Hyperbola Quintessence —
 //     branchless o^(o-2r) subtraction trick with byte-swap for the
 //     negative ray direction. Diagonal masks (DIAG[15],
-//     ANTI_DIAG[15]) are precomputed at startup.
+//     ANTI_DIAG[15]) are precomputed at compile time.
 //
 // References:
 //   https://www.chessprogramming.org/Bitboards
@@ -27,17 +28,33 @@ namespace LibreChess {
 namespace attacks {
 
 // ---------------------------------------------------------------------------
-// Precomputed leaper tables (initialized by init())
+// Constexpr table wrapper structs — support operator[] for transparent
+// array-like access while allowing extern const definitions in one TU.
 // ---------------------------------------------------------------------------
 
-extern Bitboard KNIGHT[64];
-extern Bitboard KING[64];
-extern Bitboard PAWN[2][64];  // [0] = WHITE, [1] = BLACK
+struct Table64 {
+  Bitboard data[64] = {};
+  constexpr const Bitboard& operator[](int i) const { return data[i]; }
+};
 
-// Must be called once before using any attack function.
-// Initializes leaper tables (knight, king, pawn) and slider masks.
-// Safe to call multiple times (idempotent).
-void init();
+struct PawnTable {
+  Bitboard data[2][64] = {};
+  constexpr const Bitboard* operator[](int i) const { return data[i]; }
+};
+
+// ---------------------------------------------------------------------------
+// Precomputed leaper tables (const, placed in .rodata / Flash)
+//
+// Defined once in attacks.cpp via constexpr builders.
+// Access: KNIGHT[sq], KING[sq], PAWN[color][sq] — same API as raw arrays.
+// ---------------------------------------------------------------------------
+
+extern const Table64   KNIGHT;
+extern const Table64   KING;
+extern const PawnTable PAWN;
+
+// No-op retained for backward compatibility (tables are const-initialized).
+inline void init() {}
 
 // ---------------------------------------------------------------------------
 // Slider attack functions
@@ -111,6 +128,15 @@ Bitboard attackersOfSquare(const LibreChess::BitboardSet& bb, Square sq,
 // the attacker is the opposite color.
 bool isSquareUnderAttack(const LibreChess::BitboardSet& bb, Square sq,
                          Color defendingColor);
+
+// Occupancy-aware variant of isSquareUnderAttack.  Slider queries use the
+// provided `occupancy` instead of bb.occupied, allowing callers to model
+// board changes (e.g. removing the king from its origin square) without
+// copying the entire BitboardSet.  Leaper checks are unaffected by occupancy.
+// Used by movegen's king-move legality fast path to avoid a 120-byte
+// BitboardSet copy per candidate king move.
+bool isSquareUnderAttackOcc(const LibreChess::BitboardSet& bb, Square sq,
+                            Color defendingColor, Bitboard occupancy);
 
 // ---------------------------------------------------------------------------
 // Static Exchange Evaluation (SEE)

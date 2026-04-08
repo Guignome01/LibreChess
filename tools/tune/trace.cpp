@@ -1,5 +1,3 @@
-#ifdef TUNING
-
 #include "trace.h"
 #include "attacks.h"
 #include "evaluation.h"
@@ -1034,5 +1032,3 @@ int getStep(int i)            { return buildRegistry()[i].step; }
 
 }  // namespace eval
 }  // namespace LibreChess
-
-#endif  // TUNING

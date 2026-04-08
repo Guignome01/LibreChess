@@ -1,5 +1,5 @@
 {
   "name": "core",
   "version": "1.0.0",
-  "description": "Chess foundation — board representation, movegen, evaluation, notation, FEN. No Arduino dependencies."
+  "description": "Chess engine — board representation, movegen, evaluation, search, Engine facade, notation, FEN. No Arduino dependencies."
 }

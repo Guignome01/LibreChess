@@ -60,5 +60,4 @@ Every change to `lib/game/` MUST include:
 | `history.instructions.md` | Per-file — History move log + recording |
 | `game-headers.instructions.md` | Per-file — types.h, storage.h, observer.h |
 | `core.instructions.md` | Upstream dependency (`core ← game`) |
-| `engine-library.instructions.md` | Sibling library (no direct dependency) |
 | `testing.instructions.md` | Test architecture and per-group details |

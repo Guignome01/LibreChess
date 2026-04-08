@@ -10,6 +10,7 @@
 #include <stdint.h>
 
 #include "bitboard.h"
+#include "hash_table.h"
 
 namespace LibreChess {
 namespace eval {
@@ -22,39 +23,28 @@ namespace eval {
 // structures change infrequently during search (~1 pawn move per 30 plies),
 // hit rates of 95%+ are typical.
 //
-// Entry size: 8 bytes.  Default 1024 entries = 8 KiB.
+// Entry size: 8 bytes.  Default 512 entries = 4 KiB.
 // Reference: https://www.chessprogramming.org/Pawn_Hash_Table
 // ---------------------------------------------------------------------------
 
-static constexpr int DEFAULT_PAWN_HASH_SIZE = 1024;
+static constexpr int DEFAULT_PAWN_HASH_SIZE = 512;
 
 struct PawnEntry {
   uint32_t key;       // Upper 32 bits of pawn Zobrist hash (verification)
   int16_t  mgScore;   // Midgame pawn structure score (white-relative)
   int16_t  egScore;   // Endgame pawn structure score (white-relative)
+  Bitboard passedPawns[2]; // Passed pawn bitboards [WHITE][BLACK]
 };
 
-static_assert(sizeof(PawnEntry) == 8, "PawnEntry should be 8 bytes");
+static_assert(sizeof(PawnEntry) == 24, "PawnEntry should be 24 bytes");
 
-struct PawnHashTable {
-  PawnEntry* entries = nullptr;
-  int size = 0;   // Number of entries (power of 2)
-  int mask = 0;   // size - 1
-
-  // Allocate entries.  `numEntries` is rounded down to nearest power of 2.
-  void resize(int numEntries);
-
-  // Release memory.
-  void free();
-
-  // Clear all entries (zero-fill).
-  void clear();
-
+struct PawnHashTable : HashTableBase<PawnEntry> {
   // Probe the table for a matching entry.  Returns nullptr on miss.
   const PawnEntry* probe(uint64_t hash) const;
 
   // Store an entry (always-replace).
-  void store(uint64_t hash, int16_t mgScore, int16_t egScore);
+  void store(uint64_t hash, int16_t mgScore, int16_t egScore,
+             Bitboard passedWhite, Bitboard passedBlack);
 };
 
 // ---------------------------------------------------------------------------
@@ -65,11 +55,16 @@ struct PawnHashTable {
 // common in search trees).  The cached score is the raw white-relative
 // evaluatePosition() output — the search layer applies STM flip and tempo.
 //
-// Entry size: 8 bytes.  Default 1024 entries = 8 KiB.
+// Entry size: 8 bytes.  Default 4096 entries = 32 KiB (2048 = 16 KiB on
+// memory-constrained targets).
 // Reference: https://www.chessprogramming.org/Evaluation_Hash_Table
 // ---------------------------------------------------------------------------
 
-static constexpr int DEFAULT_EVAL_HASH_SIZE = 1024;
+#ifdef HARDWARE_LIMITATION
+static constexpr int DEFAULT_EVAL_HASH_SIZE = 2048;
+#else
+static constexpr int DEFAULT_EVAL_HASH_SIZE = 4096;
+#endif
 
 struct EvalEntry {
   uint32_t key;       // Upper 32 bits of position Zobrist hash (verification)
@@ -79,20 +74,7 @@ struct EvalEntry {
 
 static_assert(sizeof(EvalEntry) == 8, "EvalEntry should be 8 bytes");
 
-struct EvalHashTable {
-  EvalEntry* entries = nullptr;
-  int size = 0;   // Number of entries (power of 2)
-  int mask = 0;   // size - 1
-
-  // Allocate entries.  `numEntries` is rounded down to nearest power of 2.
-  void resize(int numEntries);
-
-  // Release memory.
-  void free();
-
-  // Clear all entries (zero-fill).
-  void clear();
-
+struct EvalHashTable : HashTableBase<EvalEntry> {
   // Probe the table for a matching entry.  Returns nullptr on miss.
   const EvalEntry* probe(uint64_t hash) const;
 

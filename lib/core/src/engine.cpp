@@ -5,8 +5,9 @@
 // ---------------------------------------------------------------------------
 // Engine — direct-call facade for the chess search engine.
 //
-// Thin wrapper over search::findBestMove() that owns a Position, TT, and
-// stop control.  No string serialization — all data flows as structs.
+// Thin wrapper over search::findBestMove() that owns a Position, TT,
+// hash tables, and SearchState.  All per-search state is pre-allocated
+// in the constructor, eliminating per-move heap fragmentation.
 // ---------------------------------------------------------------------------
 
 namespace LibreChess {
@@ -19,6 +20,9 @@ Engine::Engine(int ttSize) {
   tt_.resize(ttSize);
   pawnHash_.resize(eval::DEFAULT_PAWN_HASH_SIZE);
   evalHash_.resize(eval::DEFAULT_EVAL_HASH_SIZE);
+  state_.tt       = &tt_;
+  state_.pawnHash = &pawnHash_;
+  state_.evalHash = &evalHash_;
   pos_.loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
 }
 
@@ -56,8 +60,7 @@ search::SearchResult Engine::calculateMove(const std::string& fen,
   stop_.store(false, std::memory_order_relaxed);
   internalLimits.stop = externalStop_ ? externalStop_ : &stop_;
 
-  return search::findBestMove(pos_, internalLimits, timeFunc_, nullptr, &tt_,
-                              &pawnHash_, &evalHash_);
+  return search::findBestMove(pos_, internalLimits, state_);
 }
 
 }  // namespace LibreChess

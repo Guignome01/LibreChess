@@ -1,6 +1,6 @@
 ---
-applyTo: "lib/core/src/piece.h, lib/core/src/utils.h, lib/core/src/bitboard.h, lib/core/src/types.h, lib/core/src/move.h, lib/core/src/logger.h"
-description: "Core header-only files: piece, utils, bitboard, types, move, logger. Foundational types and helpers shared across all core modules."
+applyTo: "lib/core/src/piece.h, lib/core/src/utils.h, lib/core/src/bitboard.h, lib/core/src/types.h, lib/core/src/move.h, lib/core/src/logger.h, lib/core/src/hash_table.h"
+description: "Core header-only files: piece, utils, bitboard, types, move, logger, hash_table. Foundational types and helpers shared across all core modules."
 ---
 
 # Core Headers (`lib/core/src/`)
@@ -22,7 +22,9 @@ Header-only foundations shared by all core modules.
 - `Move` — 3 bytes: `from`, `to`, `flags` (MOVE_CAPTURE, MOVE_EP, MOVE_CASTLING, MOVE_PROMOTION + 2-bit promo index). Constexpr accessors: `isCapture()`, `isEP()`, `isCastling()`, `isPromotion()`, `promoIndex()`. Promotions emit 4 variants per target square.
 - `MoveResult` — packed `uint8_t flags` (MR_VALID..MR_CHECK) + `epCapturedSq`, `promotedTo`, `gameResult`, `winnerColor`. Constexpr accessors.
 - `MoveEntry` — history entry reusing MR_* flag bits (skipping MR_VALID). Factory: `MoveEntry::build()` copies flags via `result.flags & ME_FLAG_MASK`.
-- `MoveList` — `Move[218]` + `count`. Fixed-size (no `std::vector`).
+- `MoveListBase<N>` — template: `Move[N]` + `count`. Bounds-checked `add()` (silently drops when full). Fixed-size (no `std::vector`).
+- `MoveList = MoveListBase<MAX_MOVES>` (218) — standard move buffer for main search and movegen.
+- `QSMoveList = MoveListBase<QS_MAX_MOVES>` (128) — smaller buffer for quiescence search, saves ~540B/ply.
 - `ScoredMove` — `Move` + `int16_t score`.
 
 ## `piece.h` — Piece Operations (all constexpr)
@@ -58,6 +60,15 @@ Header-only foundations shared by all core modules.
 
 - `ILogger` — `info(msg)`, `error(msg)`, formatted helpers `infof`/`errorf`
 - `Log` — null-safe value-type proxy wrapping `ILogger*`. Eliminates manual null guards.
+
+## `hash_table.h` — Generic Hash Table Base
+
+- `HashTableBase<Entry>` template: `entries` pointer, `size`, `mask` (size-1 for fast index)
+- `resize(bytes)` — rounds down to power-of-two entry count via `utils::roundDownPow2`, allocates with `new(std::nothrow)`
+- `free()` — `delete[]` + null
+- `clear()` — `memset` zero
+- Inherited by `eval::PawnHashTable`, `eval::EvalHashTable` (core), and `search::TranspositionTable` (engine)
+- DRY: eliminates duplicate resize/free/clear across all hash table types
 
 ## Testing
 

@@ -35,7 +35,7 @@ When a code change affects architecture, public APIs, endpoints, configuration, 
 - Build or dependency changes → update [installation.md](installation.md)
 - Architecture or internal design changes → update [architecture.md](architecture.md)
 - New LED behaviors, menu changes, or physical interaction changes → update the relevant file in `docs/guides/`
-- Chess logic changes in `lib/core/`, `lib/game/`, or `lib/engine/` → update or add unit tests in `test/`, update the relevant per-file instruction file (e.g., `position.instructions.md`, `search.instructions.md`) and library-level instruction file (`core.instructions.md`, `game-library.instructions.md`, or `engine-library.instructions.md`) as needed (see Completion Checklist in each)
+- Chess logic changes in `lib/core/` or `lib/game/` → update or add unit tests in `test/`, update the relevant per-file instruction file (e.g., `position.instructions.md`, `search.instructions.md`) and library-level instruction file (`core.instructions.md` or `game-library.instructions.md`) as needed (see Completion Checklist in each)
 - Any behavior change documented in a `.github/instructions/` file → update the instruction file in the same change
 
 ## CLI Quick Reference
@@ -56,7 +56,7 @@ Common commands:
 | Serial monitor | `pio device monitor` |
 | Clean build | `pio run -t clean` |
 | Run all tests | `pio test -e native -e native_stats` |
-| Run lib tests | `pio test -e native -f test_core -f test_engine -f test_game` |
+| Run lib tests | `pio test -e native -f test_core -f test_game` |
 | Run one test suite | `pio test -e native -f test_core` |
 | Run statistics | `pio test -e native_stats -f test_statistics` |
 
@@ -85,9 +85,9 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 | LittleFS | ~5–10 KiB | Filesystem metadata |
 | NeoPixelBus (LED) | ~2–3 KiB | DMA buffer for 64 LEDs |
 | Transposition table | up to 128 KiB | Dynamic: `(freeHeap - 48KB) / 4`, capped, 16B/entry |
-| Pawn hash table | 8 KiB | 1024 entries × 8B, owned by Engine |
-| Eval hash table | 8 KiB | 1024 entries × 8B, owned by Engine |
-| SearchState | ~39 KiB | `std::unique_ptr` in `findBestMove()` |
+| Pawn hash table | 4 KiB | 512 entries × 8B, owned by Engine |
+| Eval hash table | 16 KiB | 2048 entries × 8B (HARDWARE_LIMITATION), owned by Engine |
+| SearchState | ~10 KiB | Pre-allocated in `Engine` constructor, reused across searches |
 | **Free after persistent allocs** | **~80–100 KiB** | Available for TT + hash tables + SearchState |
 
 ### FreeRTOS Task Stacks
@@ -106,11 +106,11 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 | Engine (Position w/ HashHistory 128) | ~1,330 B | **heap** (`std::unique_ptr`) |
 | MoveList rootMoves | 658 B | stack |
 | Per-ply negamax (MovePicker w/ int16_t scores + locals) | ~1,500 B × depth | stack |
-| Per-ply quiescence (MoveList + int16_t scores + locals) | ~1,200 B × QS depth | stack |
-| At depth 15 + 6 ext + 8 QS | ~41 KiB | stack |
-| SearchState (history + killers + countermoves + PV table) | ~11 KiB | **heap** (`std::unique_ptr`) |
+| Per-ply quiescence (QSMoveList + int16_t scores + locals) | ~650 B × QS depth | stack |
+| At depth 15 + 6 ext + 8 QS | ~37 KiB | stack |
+| SearchState (history + killers + countermoves + PV table) | ~11 KiB | **heap** (pre-allocated in `Engine`) |
 
-**Safety margin**: at depth 15 + 6 extensions + 8 QS plies, worst-case stack usage is ~41 KiB out of 64 KiB, leaving ~23 KiB headroom for FreeRTOS overhead and call-chain variability.
+**Safety margin**: at depth 15 + 6 extensions + 8 QS plies, worst-case stack usage is ~37 KiB out of 64 KiB, leaving ~27 KiB headroom for FreeRTOS overhead and call-chain variability.
 | Transposition table | varies | **heap** (`new[]`) |
 
 ### Per-Ply Recursion Breakdown
@@ -125,12 +125,12 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 | PackedMove quietsSearched[32] + capturesSearched[32] | 128 B |
 | UndoInfo + local variables | ~186 B |
 
-**quiescence** (≈1,200 B per ply):
+**quiescence** (≈650 B per ply):
 
 | Component | Size |
 |-----------|------|
-| MoveList (Move[218] + count) | 658 B |
-| capScores[218] (int16_t) | 436 B |
+| QSMoveList (Move[128] + count) | 390 B |
+| capScores[128] (int16_t) | 256 B |
 | UndoInfo + local variables | ~106 B |
 
 ### Position Size (on stack inside Engine)

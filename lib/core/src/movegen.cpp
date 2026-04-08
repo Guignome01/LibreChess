@@ -100,6 +100,12 @@ static void applyMoveBB(BitboardSet& bb, Square from, Square to,
 
 // ---------------------------------------------------------------------------
 // Copy-make legality check — copies BitboardSet, applies move, tests check.
+//
+// For non-castling king moves, an occupancy-based fast path avoids copying
+// the 120-byte BitboardSet: the king is removed from occupancy at its origin,
+// and slider queries use that modified occupancy to check if the destination
+// is attacked.  Castling and en passant still require the full copy-make
+// approach because multiple pieces change position.
 // ---------------------------------------------------------------------------
 
 static bool leavesInCheck(const BitboardSet& bb, const Piece mailbox[],
@@ -107,8 +113,17 @@ static bool leavesInCheck(const BitboardSet& bb, const Piece mailbox[],
                           const PositionState& state, Square kingSq) {
   Piece movingPiece = mailbox[from];
   Color movingColor = piece::pieceColor(movingPiece);
-  Piece targetPiece = mailbox[to];
 
+  // King non-castling fast path: check destination with king removed from
+  // occupancy.  Avoids BitboardSet copy (~120 bytes) on every king move.
+  // Castling needs rook repositioned in occupancy, so it falls through.
+  int delta = static_cast<int>(to) - static_cast<int>(from);
+  if (from == kingSq && delta != 2 && delta != -2) {
+    Bitboard occ = (bb.occupied ^ squareBB(from)) | squareBB(to);
+    return attacks::isSquareUnderAttackOcc(bb, to, movingColor, occ);
+  }
+
+  Piece targetPiece = mailbox[to];
   EnPassantInfo ep = utils::checkEnPassant(mailbox, from, to);
   CastlingInfo castle = utils::checkCastling(mailbox, from, to);
 
@@ -116,173 +131,6 @@ static bool leavesInCheck(const BitboardSet& bb, const Piece mailbox[],
   applyMoveBB(testBB, from, to, movingPiece, targetPiece, ep, castle);
 
   return attacks::isSquareUnderAttack(testBB, kingSq, movingColor);
-}
-
-// ---------------------------------------------------------------------------
-// Pseudo-legal move generation per piece type
-// ---------------------------------------------------------------------------
-
-static void addPawnMoves(const BitboardSet& bb, const Piece mailbox[],
-                         Square sq, Color pieceColor,
-                         const PositionState& state, MoveList& moves) {
-  int forward = piece::pawnForward(pieceColor);
-  int promoRank = piece::promotionRank(pieceColor);
-  Bitboard friendly = bb.byColor[piece::raw(pieceColor)];
-  uint8_t from8 = static_cast<uint8_t>(sq);
-
-  auto emitPawn = [&](Square to, uint8_t baseFlags) {
-    uint8_t to8 = static_cast<uint8_t>(to);
-    if (rankOf(to) == promoRank) {
-      for (uint8_t pi = 0; pi < 4; pi++)
-        moves.add(Move(from8, to8, baseFlags | Move::promoFlags(pi)));
-    } else {
-      moves.add(Move(from8, to8, baseFlags));
-    }
-  };
-
-  // Single push
-  Square fwdSq = sq + forward;
-  if (!(bb.occupied & squareBB(fwdSq))) {
-    emitPawn(fwdSq, 0);
-
-    // Double push from starting rank
-    if (rankOf(sq) == piece::pawnStartRank(pieceColor)) {
-      Square dblSq = sq + 2 * forward;
-      if (!(bb.occupied & squareBB(dblSq)))
-        moves.add(Move(from8, static_cast<uint8_t>(dblSq), 0));
-    }
-  }
-
-  // Captures via precomputed pawn attack table (consistent with knight/
-  // bishop/rook/queen which all use precomputed tables).
-  // Reference: https://www.chessprogramming.org/Pawn_Attacks_(Bitboards)
-  Bitboard enemy = bb.occupied & ~friendly;
-  Bitboard capTargets = attacks::PAWN[piece::raw(pieceColor)][sq] & enemy;
-  while (capTargets) {
-    Square capSq = popLsb(capTargets);
-    emitPawn(capSq, MOVE_CAPTURE);
-  }
-
-  // En passant: pawn must be on the rank adjacent to the EP target.
-  // forward is ±8 (one rank); forward / 8 converts to ±1 rank direction.
-  if (state.epSquare != SQ_NONE &&
-      rankOf(sq) == rankOf(state.epSquare) - forward / 8) {
-    if (attacks::PAWN[piece::raw(pieceColor)][sq] & squareBB(state.epSquare))
-      moves.add(Move(from8, static_cast<uint8_t>(state.epSquare),
-                      MOVE_CAPTURE | MOVE_EP));
-  }
-}
-
-// Shared body for rook/bishop/queen/knight move emission.
-// Caller provides the pre-computed attack bitboard.
-static void addPieceMoves(Bitboard attacks, Square sq,
-                          const BitboardSet& bb, Color pieceColor,
-                          MoveList& moves) {
-  attacks &= ~bb.byColor[piece::raw(pieceColor)];
-  Bitboard enemy = bb.byColor[piece::raw(~pieceColor)];
-  uint8_t from8 = static_cast<uint8_t>(sq);
-  while (attacks) {
-    Square to = popLsb(attacks);
-    uint8_t flags = (squareBB(to) & enemy) ? MOVE_CAPTURE : uint8_t(0);
-    moves.add(Move(from8, static_cast<uint8_t>(to), flags));
-  }
-}
-
-static void addRookMoves(const BitboardSet& bb, Square sq, Color pieceColor, MoveList& moves) {
-  addPieceMoves(attacks::rook(sq, bb.occupied), sq, bb, pieceColor, moves);
-}
-
-static void addBishopMoves(const BitboardSet& bb, Square sq, Color pieceColor, MoveList& moves) {
-  addPieceMoves(attacks::bishop(sq, bb.occupied), sq, bb, pieceColor, moves);
-}
-
-static void addQueenMoves(const BitboardSet& bb, Square sq, Color pieceColor, MoveList& moves) {
-  addPieceMoves(attacks::queen(sq, bb.occupied), sq, bb, pieceColor, moves);
-}
-
-static void addKnightMoves(const BitboardSet& bb, Square sq, Color pieceColor, MoveList& moves) {
-  addPieceMoves(attacks::KNIGHT[sq], sq, bb, pieceColor, moves);
-}
-
-static void addCastlingMoves(const BitboardSet& bb, const Piece mailbox[],
-                             Square sq, Color pieceColor,
-                             uint8_t castlingRights, MoveList& moves) {
-  int rank = piece::homeRank(pieceColor);
-  Piece kingPiece = piece::makePiece(pieceColor, PieceType::KING);
-  Piece rookPiece = piece::makePiece(pieceColor, PieceType::ROOK);
-
-  if (rankOf(sq) != rank || fileOf(sq) != 4) return;
-  if (mailbox[sq] != kingPiece) return;
-
-  if (attacks::isSquareUnderAttack(bb, sq, pieceColor)) return;
-
-  uint8_t from8 = static_cast<uint8_t>(sq);
-
-  // King-side castling (e -> g)
-  if (utils::hasCastlingRight(castlingRights, pieceColor, true)) {
-    Square f = makeSquare(rank, 5);
-    Square g = makeSquare(rank, 6);
-    Square h = makeSquare(rank, 7);
-    if (mailbox[f] == Piece::NONE && mailbox[g] == Piece::NONE && mailbox[h] == rookPiece)
-      if (!attacks::isSquareUnderAttack(bb, f, pieceColor) &&
-          !attacks::isSquareUnderAttack(bb, g, pieceColor))
-        moves.add(Move(from8, static_cast<uint8_t>(g), MOVE_CASTLING));
-  }
-
-  // Queen-side castling (e -> c)
-  if (utils::hasCastlingRight(castlingRights, pieceColor, false)) {
-    Square d = makeSquare(rank, 3);
-    Square c = makeSquare(rank, 2);
-    Square b = makeSquare(rank, 1);
-    Square a = makeSquare(rank, 0);
-    if (mailbox[d] == Piece::NONE && mailbox[c] == Piece::NONE &&
-        mailbox[b] == Piece::NONE && mailbox[a] == rookPiece)
-      if (!attacks::isSquareUnderAttack(bb, d, pieceColor) &&
-          !attacks::isSquareUnderAttack(bb, c, pieceColor))
-        moves.add(Move(from8, static_cast<uint8_t>(c), MOVE_CASTLING));
-  }
-}
-
-static void addKingMoves(const BitboardSet& bb, const Piece mailbox[],
-                         Square sq, Color pieceColor,
-                         const PositionState& state, MoveList& moves,
-                         bool includeCastling) {
-  Bitboard attacks = attacks::KING[sq];
-  attacks &= ~bb.byColor[piece::raw(pieceColor)];
-  Bitboard enemy = bb.byColor[piece::raw(~pieceColor)];
-  uint8_t from8 = static_cast<uint8_t>(sq);
-  while (attacks) {
-    Square to = popLsb(attacks);
-    uint8_t flags = (squareBB(to) & enemy) ? MOVE_CAPTURE : uint8_t(0);
-    moves.add(Move(from8, static_cast<uint8_t>(to), flags));
-  }
-
-  if (includeCastling)
-    addCastlingMoves(bb, mailbox, sq, pieceColor, state.castlingRights, moves);
-}
-
-// ---------------------------------------------------------------------------
-// Pseudo-legal move dispatcher
-// ---------------------------------------------------------------------------
-
-static void getPseudoLegalMoves(const BitboardSet& bb, const Piece mailbox[],
-                                Square sq, const PositionState& state,
-                                MoveList& moves, bool includeCastling = true) {
-  moves.clear();
-  Piece piece = mailbox[sq];
-  if (piece == Piece::NONE) return;
-
-  Color pieceColor = piece::pieceColor(piece);
-
-  switch (piece::pieceType(piece)) {
-    case PieceType::PAWN:   addPawnMoves(bb, mailbox, sq, pieceColor, state, moves); break;
-    case PieceType::ROOK:   addRookMoves(bb, sq, pieceColor, moves); break;
-    case PieceType::KNIGHT: addKnightMoves(bb, sq, pieceColor, moves); break;
-    case PieceType::BISHOP: addBishopMoves(bb, sq, pieceColor, moves); break;
-    case PieceType::QUEEN:  addQueenMoves(bb, sq, pieceColor, moves); break;
-    case PieceType::KING:   addKingMoves(bb, mailbox, sq, pieceColor, state, moves, includeCastling); break;
-    default: break;
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -301,11 +149,13 @@ static void getPseudoLegalMoves(const BitboardSet& bb, const Piece mailbox[],
 //
 // Reference: https://www.chessprogramming.org/Move_Generation
 // ---------------------------------------------------------------------------
-// filterPieceMoves — applies legality filtering for a single piece.
+// filterPieceMoves — direct-emit legality filtering for a single piece.
 //
-// Given a piece at `sq` with a pre-computed `LegalityContext`, generates its
-// pseudo-legal moves and filters them for legality using pin/check masks
-// (non-king) or full leavesInCheck validation (king / en-passant).
+// Generates and filters legal moves inline, applying pin/check masks at the
+// bitboard level (non-king, non-EP) or full leavesInCheck validation (king /
+// en-passant).  Eliminates the intermediate MoveList pseudo-legal buffer:
+// attack bitboards are masked with legalMask before move enumeration, so
+// illegal targets are never visited.
 //
 // Returns true if the handler signaled early termination; false otherwise.
 // Used by both enumerateLegalMoves (all-piece iteration) and
@@ -316,45 +166,157 @@ static bool filterPieceMoves(const BitboardSet& bb, const Piece mailbox[],
                              Square sq, const PositionState& state,
                              const LegalityContext& ctx, FilterMode filterMode,
                              Handler&& handler) {
-  bool isKing = (sq == ctx.kingSq);
+  Piece piece = mailbox[sq];
+  if (piece == Piece::NONE) return false;
 
-  MoveList pseudo;
-  getPseudoLegalMoves(bb, mailbox, sq, state, pseudo, isKing);
+  Color color  = piece::pieceColor(piece);
+  PieceType pt = piece::pieceType(piece);
+  uint8_t from8 = static_cast<uint8_t>(sq);
+  Bitboard enemy = bb.byColor[piece::raw(~color)];
 
-  if (isKing) {
-    for (int i = 0; i < pseudo.count; i++) {
-      Move m = pseudo.moves[i];
-      bool capture = m.isCapture();
+  // =======================================================================
+  // King — each move validated via leavesInCheck.
+  // =======================================================================
+  if (sq == ctx.kingSq) {
+    // Normal king moves from attack bitboard.
+    Bitboard attacks = attacks::KING[sq] & ~bb.byColor[piece::raw(color)];
+    while (attacks) {
+      Square to = popLsb(attacks);
+      bool capture = squareBB(to) & enemy;
       if (filterMode == FilterMode::CAPTURES_PROMOS && !capture) continue;
       if (filterMode == FilterMode::QUIETS && capture) continue;
-      if (!leavesInCheck(bb, mailbox, sq, static_cast<Square>(m.to),
-                         state, static_cast<Square>(m.to)))
-        if (handler(m)) return true;
+      if (!leavesInCheck(bb, mailbox, sq, to, state, to))
+        if (handler(Move(from8, static_cast<uint8_t>(to),
+                         capture ? MOVE_CAPTURE : uint8_t(0))))
+          return true;
+    }
+
+    // Castling — quiet moves, excluded in CAPTURES_PROMOS mode.
+    if (filterMode != FilterMode::CAPTURES_PROMOS) {
+      int rank = piece::homeRank(color);
+      Piece kingPiece = piece::makePiece(color, PieceType::KING);
+      Piece rookPiece = piece::makePiece(color, PieceType::ROOK);
+      if (rankOf(sq) == rank && fileOf(sq) == 4 &&
+          mailbox[sq] == kingPiece &&
+          !attacks::isSquareUnderAttack(bb, sq, color)) {
+        // King-side (e → g)
+        if (utils::hasCastlingRight(state.castlingRights, color, true)) {
+          Square f = makeSquare(rank, 5);
+          Square g = makeSquare(rank, 6);
+          Square h = makeSquare(rank, 7);
+          if (mailbox[f] == Piece::NONE && mailbox[g] == Piece::NONE &&
+              mailbox[h] == rookPiece)
+            if (!attacks::isSquareUnderAttack(bb, f, color) &&
+                !attacks::isSquareUnderAttack(bb, g, color))
+              if (!leavesInCheck(bb, mailbox, sq, g, state, g))
+                if (handler(Move(from8, static_cast<uint8_t>(g), MOVE_CASTLING)))
+                  return true;
+        }
+        // Queen-side (e → c)
+        if (utils::hasCastlingRight(state.castlingRights, color, false)) {
+          Square d = makeSquare(rank, 3);
+          Square c = makeSquare(rank, 2);
+          Square b = makeSquare(rank, 1);
+          Square a = makeSquare(rank, 0);
+          if (mailbox[d] == Piece::NONE && mailbox[c] == Piece::NONE &&
+              mailbox[b] == Piece::NONE && mailbox[a] == rookPiece)
+            if (!attacks::isSquareUnderAttack(bb, d, color) &&
+                !attacks::isSquareUnderAttack(bb, c, color))
+              if (!leavesInCheck(bb, mailbox, sq, c, state, c))
+                if (handler(Move(from8, static_cast<uint8_t>(c), MOVE_CASTLING)))
+                  return true;
+        }
+      }
     }
     return false;
   }
 
+  // =======================================================================
+  // Non-king pieces — pin/check mask applied at bitboard level.
+  // =======================================================================
   Bitboard legalMask = pinRayFor(ctx.pinData, sq) & ctx.checkMask;
 
-  for (int i = 0; i < pseudo.count; i++) {
-    Move m = pseudo.moves[i];
-    Square target = static_cast<Square>(m.to);
+  // --- Pawns ---
+  if (pt == PieceType::PAWN) {
+    int forward   = piece::pawnForward(color);
+    int promoRank = piece::promotionRank(color);
 
-    if (m.isEP()) {
-      // EP is always a capture — skip in quiet mode.
-      if (filterMode == FilterMode::QUIETS) continue;
-      if (!leavesInCheck(bb, mailbox, sq, target, state, ctx.kingSq))
-        if (handler(m)) return true;
-      continue;
+    // Helper: emit pawn move with promotion expansion.
+    auto emitPawn = [&](Square to, uint8_t baseFlags) -> bool {
+      uint8_t to8 = static_cast<uint8_t>(to);
+      if (rankOf(to) == promoRank) {
+        for (uint8_t pi = 0; pi < 4; pi++)
+          if (handler(Move(from8, to8, baseFlags | Move::promoFlags(pi))))
+            return true;
+      } else {
+        if (handler(Move(from8, to8, baseFlags))) return true;
+      }
+      return false;
+    };
+
+    // Pushes
+    Square fwdSq = sq + forward;
+    bool fwdEmpty = !(bb.occupied & squareBB(fwdSq));
+    if (fwdEmpty) {
+      // Single push (target must also be in legalMask).
+      if (squareBB(fwdSq) & legalMask) {
+        bool isPromo = rankOf(fwdSq) == promoRank;
+        if (filterMode == FilterMode::CAPTURES_PROMOS && !isPromo) { /* skip */ }
+        else if (filterMode == FilterMode::QUIETS && isPromo) { /* skip */ }
+        else if (emitPawn(fwdSq, 0)) return true;
+      }
+      // Double push from starting rank (never a promotion).
+      if (filterMode != FilterMode::CAPTURES_PROMOS &&
+          rankOf(sq) == piece::pawnStartRank(color)) {
+        Square dblSq = sq + 2 * forward;
+        if (!(bb.occupied & squareBB(dblSq)) && (squareBB(dblSq) & legalMask))
+          if (handler(Move(from8, static_cast<uint8_t>(dblSq), 0)))
+            return true;
+      }
     }
 
-    if (!(squareBB(target) & legalMask)) continue;
+    // Captures (via pawn attack table, masked with legal + enemy).
+    if (filterMode != FilterMode::QUIETS) {
+      Bitboard capTargets = attacks::PAWN[piece::raw(color)][sq] & enemy & legalMask;
+      while (capTargets) {
+        Square capSq = popLsb(capTargets);
+        if (emitPawn(capSq, MOVE_CAPTURE)) return true;
+      }
+    }
 
-    bool capture = m.isCapture();
-    bool promo   = m.isPromotion();
-    if (filterMode == FilterMode::CAPTURES_PROMOS && !capture && !promo) continue;
-    if (filterMode == FilterMode::QUIETS && (capture || promo)) continue;
-    if (handler(m)) return true;
+    // En passant (validated via leavesInCheck, NOT legalMask).
+    if (filterMode != FilterMode::QUIETS && state.epSquare != SQ_NONE) {
+      if (rankOf(sq) == rankOf(state.epSquare) - forward / 8) {
+        if (attacks::PAWN[piece::raw(color)][sq] & squareBB(state.epSquare))
+          if (!leavesInCheck(bb, mailbox, sq, state.epSquare, state, ctx.kingSq))
+            if (handler(Move(from8, static_cast<uint8_t>(state.epSquare),
+                             MOVE_CAPTURE | MOVE_EP)))
+              return true;
+      }
+    }
+    return false;
+  }
+
+  // --- Sliding / leaper pieces (rook, bishop, queen, knight) ---
+  Bitboard atk;
+  switch (pt) {
+    case PieceType::ROOK:   atk = attacks::rook(sq, bb.occupied); break;
+    case PieceType::BISHOP: atk = attacks::bishop(sq, bb.occupied); break;
+    case PieceType::QUEEN:  atk = attacks::queen(sq, bb.occupied); break;
+    case PieceType::KNIGHT: atk = attacks::KNIGHT[sq]; break;
+    default: return false;
+  }
+  atk &= ~bb.byColor[piece::raw(color)];  // Remove own pieces.
+  atk &= legalMask;                        // Pin/check filter.
+
+  while (atk) {
+    Square to = popLsb(atk);
+    bool capture = squareBB(to) & enemy;
+    if (filterMode == FilterMode::CAPTURES_PROMOS && !capture) continue;
+    if (filterMode == FilterMode::QUIETS && capture) continue;
+    if (handler(Move(from8, static_cast<uint8_t>(to),
+                     capture ? MOVE_CAPTURE : uint8_t(0))))
+      return true;
   }
   return false;
 }
@@ -388,11 +350,24 @@ static bool enumerateLegalMoves(const BitboardSet& bb, const Piece mailbox[],
 // Concrete wrappers over enumerateLegalMoves
 // ---------------------------------------------------------------------------
 
+template <int N>
 static void generateMovesImpl(const BitboardSet& bb, const Piece mailbox[],
                               Color color, const PositionState& state,
-                              const LegalityContext& ctx, MoveList& out,
+                              const LegalityContext& ctx, MoveListBase<N>& out,
                               FilterMode filterMode) {
   out.clear();
+  enumerateLegalMoves(bb, mailbox, color, state, ctx, filterMode,
+      [&](Move m) { out.add(m); return false; });
+}
+
+// Append variant — does NOT clear the output list before generating.
+// Used by the staged move picker to append quiet moves after captures
+// in a shared MoveList, avoiding a temporary buffer + copy loop.
+template <int N>
+static void appendMovesImpl(const BitboardSet& bb, const Piece mailbox[],
+                            Color color, const PositionState& state,
+                            const LegalityContext& ctx, MoveListBase<N>& out,
+                            FilterMode filterMode) {
   enumerateLegalMoves(bb, mailbox, color, state, ctx, filterMode,
       [&](Move m) { out.add(m); return false; });
 }
@@ -467,6 +442,34 @@ void generateQuiets(const BitboardSet& bb, const Piece mailbox[],
   generateMovesImpl(bb, mailbox, color, state, ctx, moves, FilterMode::QUIETS);
 }
 
+void generateQuietsAppend(const BitboardSet& bb, const Piece mailbox[],
+                          Color color, const PositionState& state,
+                          const LegalityContext& ctx, MoveList& moves) {
+  appendMovesImpl(bb, mailbox, color, state, ctx, moves, FilterMode::QUIETS);
+}
+
+// ---------------------------------------------------------------------------
+// Quiescence-search overloads (QSMoveList — cap 128)
+// ---------------------------------------------------------------------------
+
+void generateAllMoves(const BitboardSet& bb, const Piece mailbox[],
+                      Color color, const PositionState& state,
+                      QSMoveList& moves) {
+  Square kingSq;
+  if (!utils::resolveKingSquare(bb, color, kingSq)) { moves.clear(); return; }
+  LegalityContext ctx = buildLegalityContext(bb, color, kingSq);
+  generateMovesImpl(bb, mailbox, color, state, ctx, moves, FilterMode::ALL);
+}
+
+void generateCaptures(const BitboardSet& bb, const Piece mailbox[],
+                      Color color, const PositionState& state,
+                      QSMoveList& moves) {
+  Square kingSq;
+  if (!utils::resolveKingSquare(bb, color, kingSq)) { moves.clear(); return; }
+  LegalityContext ctx = buildLegalityContext(bb, color, kingSq);
+  generateMovesImpl(bb, mailbox, color, state, ctx, moves, FilterMode::CAPTURES_PROMOS);
+}
+
 bool isValidMove(const BitboardSet& bb, const Piece mailbox[],
                  Square from, Square to,
                  const PositionState& state) {
@@ -487,17 +490,22 @@ bool isValidMove(const BitboardSet& bb, const Piece mailbox[],
 bool isValidMove(const BitboardSet& bb, const Piece mailbox[],
                  Square from, Square to,
                  const PositionState& state, Square kingSq) {
-  MoveList pseudoMoves;
-  getPseudoLegalMoves(bb, mailbox, from, state, pseudoMoves, true);
+  Piece piece = mailbox[from];
+  if (piece == Piece::NONE) return false;
 
-  bool isKingMove = piece::pieceType(mailbox[from]) == PieceType::KING;
-  Square checkSq = isKingMove ? to : kingSq;
+  Color color = piece::pieceColor(piece);
+  LegalityContext ctx = buildLegalityContext(bb, color, kingSq);
 
-  for (int i = 0; i < pseudoMoves.count; i++)
-    if (static_cast<Square>(pseudoMoves.moves[i].to) == to)
-      return !leavesInCheck(bb, mailbox, from, to, state, checkSq);
+  // Double check: only king can move.
+  if (ctx.checkerCount >= 2 && from != kingSq) return false;
 
-  return false;
+  bool found = false;
+  filterPieceMoves(bb, mailbox, from, state, ctx, FilterMode::ALL,
+      [&](Move m) -> bool {
+        if (static_cast<Square>(m.to) == to) { found = true; return true; }
+        return false;
+      });
+  return found;
 }
 
 bool hasAnyLegalMove(const BitboardSet& bb, const Piece mailbox[],

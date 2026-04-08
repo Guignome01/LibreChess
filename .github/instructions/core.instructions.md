@@ -5,7 +5,7 @@ description: "Core chess library: shared conventions, dependency model, and cros
 
 # Core Library (`lib/core/`) — General
 
-Board representation, move generation, evaluation, notation, FEN, EPD parsing — the foundation layer with zero Arduino dependencies. Dependency model: `core ← game`, `core ← engine`. Core never imports game or engine.
+Chess engine library: board representation, move generation, evaluation, search algorithm, Engine facade, notation, FEN, EPD parsing — with zero Arduino dependencies. Dependency model: `core ← game`. Core never imports game.
 
 Pure C++ — uses `std::string` (not Arduino `String`); firmware bridges with `.c_str()` / `std::string()`.
 
@@ -23,8 +23,10 @@ Detailed API, design decisions, and patterns for each module live in dedicated f
 | `fen.instructions.md` | `fen` — parse/serialize/validate |
 | `zobrist.instructions.md` | `zobrist` — constexpr key gen, incremental hashing |
 | `epd.instructions.md` | `epd` — EPD parser |
-| `trace.instructions.md` | `trace` — tuning trace extraction |
-| `core-headers.instructions.md` | `piece.h`, `utils.h`, `bitboard.h`, `types.h`, `move.h`, `logger.h` |
+| `trace.instructions.md` | `trace` — tuning trace extraction (now in `tools/tune/`, not `lib/core/`) |
+| `core-headers.instructions.md` | `piece.h`, `utils.h`, `bitboard.h`, `types.h`, `move.h`, `logger.h`, `hash_table.h` |
+| `search.instructions.md` | `search.h/cpp`, `move_picker.h`, `stats.h` — search algorithm, TT, MovePicker |
+| `engine-facade.instructions.md` | `Engine` — facade owning Position + TT, calculateMove API |
 
 ## Cross-Cutting Design Rules
 
@@ -32,9 +34,15 @@ Detailed API, design decisions, and patterns for each module live in dedicated f
 
 - **Position has no lifecycle state** — `gameOver_`, `gameResult_`, `winnerColor_` live in `Game`, not `Position`. Position is a replayable position container.
 
-- **Stateless namespaces** — `movegen`, `notation`, `eval`, `attacks`, `zobrist`, `fen`, `epd`, `trace` are all stateless. All context passed as parameters. Safe to call from any context.
+- **Stateless namespaces** — `movegen`, `notation`, `eval`, `attacks`, `zobrist`, `fen`, `epd` are all stateless. All context passed as parameters. Safe to call from any context. (Trace extraction moved to `tools/tune/`.)
 
-- **Standalone hash tables** — `TranspositionTable`, `PawnHashTable`, and `EvalHashTable` are independent structs. No template base (different entry types/policies, only 3 instances).
+- **Standalone hash tables** — `TranspositionTable`, `PawnHashTable`, and `EvalHashTable` inherit `HashTableBase<Entry>` from `hash_table.h` for common `resize`/`free`/`clear`. Each adds its own `probe`/`store` and any extra state (e.g. TT adds `generation`). Three instances with shared base, specialized behavior.
+
+- **Search is a stateless namespace** — `search::findBestMove()` takes `Position&`, `SearchLimits`, `SearchState&` (required), optional `InfoCallback`. Infrastructure fields (`timeFunc`, `tt`, `pawnHash`, `evalHash`) are set on `SearchState` by the caller before calling. All per-search state in `SearchState`. Safe to run from any context.
+
+- **Engine facade owns infrastructure** — `Engine` owns Position + TT + SearchState (direct member) + stop control. Thin wrapper around `findBestMove()`.
+
+- **Platform time abstraction** — `TimeFunc` function pointer for `millis()` (ESP32) vs `nativeMillis()` (native tests).
 
 - **Fixed-size arrays** — `MoveEntry[300]`, `HashHistory(128)`, `MoveList(218)`, no `std::vector`. ESP32 heap fragmentation constraint.
 
@@ -50,12 +58,13 @@ Detailed API, design decisions, and patterns for each module live in dedicated f
 Every change to `lib/core/` MUST include:
 
 1. **Tests** — add/update in `test/test_core/`, register in `test_all.cpp`
-2. **Per-file instruction file** — update the relevant per-file `.instructions.md` if API, design decisions, or patterns change
-3. **This file** — update `core.instructions.md` if cross-cutting conventions or the component listing change
-4. **Architecture doc** — update `docs/development/architecture.md` if APIs/state/relationships change
-5. **Project structure doc** — update `docs/development/project-structure.md` if files added/removed
-6. **Testing instructions** — update `.github/instructions/testing.instructions.md` if test groups change
-7. **Top-level instructions** — update `.github/copilot-instructions.md` if new patterns/conventions
+2. **Regression tests** — run `test_benchmarks` to verify node count and eval regression baselines are not exceeded (applies to evaluation, movegen, position, and attacks changes)
+3. **Per-file instruction file** — update the relevant per-file `.instructions.md` if API, design decisions, or patterns change
+4. **This file** — update `core.instructions.md` if cross-cutting conventions or the component listing change
+5. **Architecture doc** — update `docs/development/architecture.md` if APIs/state/relationships change
+6. **Project structure doc** — update `docs/development/project-structure.md` if files added/removed
+7. **Testing instructions** — update `.github/instructions/testing.instructions.md` if test groups change
+8. **Top-level instructions** — update `.github/copilot-instructions.md` if new patterns/conventions
 
 ## Related Instruction Files
 
@@ -69,8 +78,9 @@ Every change to `lib/core/` MUST include:
 | `fen.instructions.md` | Per-file — FEN parse/serialize |
 | `zobrist.instructions.md` | Per-file — Zobrist hashing |
 | `epd.instructions.md` | Per-file — EPD parser |
-| `trace.instructions.md` | Per-file — tuning trace extraction |
-| `core-headers.instructions.md` | Per-file — piece, utils, bitboard, types, move, logger |
+| `trace.instructions.md` | Per-file — tuning trace extraction (moved to `tools/tune/`) |
+| `core-headers.instructions.md` | Per-file — piece, utils, bitboard, types, move, logger, hash_table |
+| `search.instructions.md` | Per-file — search algorithm, MovePicker, SearchState |
+| `engine-facade.instructions.md` | Per-file — Engine facade, calculateMove API |
 | `game-library.instructions.md` | Downstream consumer (`core ← game`) |
-| `engine-library.instructions.md` | Downstream consumer (`core ← engine`) |
 | `testing.instructions.md` | Test architecture and per-group details |

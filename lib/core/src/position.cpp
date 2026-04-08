@@ -62,7 +62,6 @@ Position::Position()
       egPST_(0),
       material_(0),
       phase_(0) {
-  attacks::init();
   initializeBoard();
 }
 

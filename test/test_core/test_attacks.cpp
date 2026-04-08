@@ -568,6 +568,60 @@ static void test_see_en_passant(void) {
   TEST_ASSERT_EQUAL_INT(eval::materialValue(PieceType::PAWN), score);
 }
 
+// ---------------------------------------------------------------------------
+// isSquareUnderAttackOcc — occupancy-aware variant
+// ---------------------------------------------------------------------------
+
+// Slider attack changes when custom occupancy removes a blocker, revealing
+// a hidden attacker behind it.
+static void test_isSquareUnderAttackOcc_slider_through_custom_occupancy() {
+  // White Ke1, Black Ke8 + Rh8 + white pawn on h4 blocking h-file.
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_ROOK, "h8");
+  placePiece(bb, mailbox, Piece::W_PAWN, "h4");   // blocker on h-file
+
+  // With normal occupancy, h1 is NOT attacked (pawn on h4 blocks Rh8→h1).
+  TEST_ASSERT_FALSE(attacks::isSquareUnderAttack(bb, SQ_H1, Color::WHITE));
+
+  // With custom occupancy that removes the pawn, the rook sees through.
+  Bitboard occ = bb.occupied ^ squareBB(squareOf(4, 7));  // remove h4
+  TEST_ASSERT_TRUE(attacks::isSquareUnderAttackOcc(bb, SQ_H1, Color::WHITE, occ));
+}
+
+// Leaper attacks (knight, pawn, king) are unaffected by occupancy changes.
+static void test_isSquareUnderAttackOcc_leaper_unaffected() {
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_KNIGHT, "f3");
+
+  // Knight attacks e1 regardless of occupancy.
+  Bitboard emptyOcc = 0;
+  TEST_ASSERT_TRUE(attacks::isSquareUnderAttackOcc(bb, SQ_E1, Color::WHITE, emptyOcc));
+  TEST_ASSERT_TRUE(attacks::isSquareUnderAttackOcc(bb, SQ_E1, Color::WHITE, bb.occupied));
+}
+
+// King-removal scenario: simulate king leaving its square — check if a
+// destination behind it is under attack with the king removed from occupancy.
+static void test_isSquareUnderAttackOcc_king_removal() {
+  clearBoard(bb, mailbox);
+  placePiece(bb, mailbox, Piece::W_KING, "e4");
+  placePiece(bb, mailbox, Piece::B_ROOK, "e8");
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+
+  Square e3 = squareOf(5, 4);  // LERF: 20
+  Square e4 = squareOf(4, 4);  // LERF: 28
+
+  // e3 is blocked by white king at e4 from rook at e8 in normal occupancy.
+  TEST_ASSERT_FALSE(attacks::isSquareUnderAttack(bb, e3, Color::WHITE));
+
+  // With king removed from occupancy, rook on e8 attacks through to e3.
+  Bitboard occ = (bb.occupied ^ squareBB(e4)) | squareBB(e3);
+  TEST_ASSERT_TRUE(attacks::isSquareUnderAttackOcc(bb, e3, Color::WHITE, occ));
+}
+
 void register_attacks_tests() {
   RUN_TEST(test_knight_attacks_e4);
   RUN_TEST(test_knight_attacks_a1_corner);
@@ -610,4 +664,8 @@ void register_attacks_tests() {
   RUN_TEST(test_see_queen_takes_defended_pawn);
   RUN_TEST(test_see_rook_takes_undefended_bishop);
   RUN_TEST(test_see_en_passant);
+
+  RUN_TEST(test_isSquareUnderAttackOcc_slider_through_custom_occupancy);
+  RUN_TEST(test_isSquareUnderAttackOcc_leaper_unaffected);
+  RUN_TEST(test_isSquareUnderAttackOcc_king_removal);
 }

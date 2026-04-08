@@ -10,10 +10,6 @@
 #include "bitboard.h"
 #include "types.h"
 
-#ifndef PROGMEM
-#define PROGMEM
-#endif
-
 namespace LibreChess {
 namespace zobrist {
 
@@ -54,7 +50,7 @@ struct Keys {
   }
 };
 
-static constexpr Keys KEYS PROGMEM = Keys();
+extern const Keys KEYS;
 
 // ---------------------------------------------------------------------------
 // Full-board hash computation (for initialization and debug verification).

@@ -7,18 +7,24 @@
 // Pure C++, no hardware dependencies.  Platform-agnostic timing via
 // TimeFunc function pointer (firmware passes millis(), tests pass a mock).
 //
-// Public entry point: search::findBestMove(pos, limits, timeFunc, info).
+// Public entry point: search::findBestMove(pos, limits, state, info).
+//
+// Also defines the Transposition Table (PackedMove, TTEntry, TTFlag,
+// TranspositionTable) — search-internal infrastructure used by SearchState,
+// MovePicker, and the Engine facade.
 //
 // References:
 //   https://www.chessprogramming.org/Alpha-Beta
 //   https://www.chessprogramming.org/Negamax
 //   https://www.chessprogramming.org/Quiescence_Search
 //   https://www.chessprogramming.org/Iterative_Deepening
+//   https://www.chessprogramming.org/Transposition_Table
 // ---------------------------------------------------------------------------
 
 #include <atomic>
 #include <cstdint>
 
+#include "hash_table.h"
 #include "move.h"
 #include "position.h"
 
@@ -33,17 +39,132 @@ struct EvalHashTable;
 namespace search {
 
 // ---------------------------------------------------------------------------
+// Packed move — 16-bit encoding for compact storage in TT, killers, and PV.
+//
+// Layout: from (6 bits) | to (6 bits) | flags (4 bits).
+// Reconstructed into a Move for use.
+// ---------------------------------------------------------------------------
+
+using PackedMove = uint16_t;
+
+inline PackedMove packMove(Move m) {
+  return static_cast<PackedMove>(m.from)
+       | (static_cast<PackedMove>(m.to) << 6)
+       | (static_cast<PackedMove>(m.flags) << 12);
+}
+
+inline Move unpackMove(PackedMove pm) {
+  Move m;
+  m.from  = pm & 0x3F;
+  m.to    = (pm >> 6) & 0x3F;
+  m.flags = (pm >> 12) & 0x0F;
+  return m;
+}
+
+// ---------------------------------------------------------------------------
+// TT node type — determines how the stored score relates to alpha/beta.
+// ---------------------------------------------------------------------------
+
+enum class TTFlag : uint8_t {
+  EXACT,         // PV node — score is exact
+  LOWER_BOUND,   // Beta cutoff — score is a lower bound (>= beta)
+  UPPER_BOUND,   // All-node — score is an upper bound (<= alpha)
+};
+
+// ---------------------------------------------------------------------------
+// TT entry — 12 bytes (4+2+2+1+1+1 = 11, padded to 12).
+//
+// Truncated key (upper 32 bits) avoids full 64-bit comparison.
+// Reference: https://www.chessprogramming.org/Transposition_Table#Entry
+// ---------------------------------------------------------------------------
+
+struct TTEntry {
+  uint32_t   key32;       // Upper 32 bits of Zobrist hash (collision guard)
+  int16_t    score;       // Stored score (mate-adjusted for ply distance)
+  PackedMove bestMove;    // Best move from this position
+  int8_t     depth;       // Search depth that produced this entry
+  TTFlag     flag;        // EXACT / LOWER_BOUND / UPPER_BOUND
+  uint8_t    generation;  // Search generation — stale entries replaced cheaply
+};
+
+static_assert(sizeof(TTEntry) <= 16, "TTEntry should fit in 16 bytes");
+
+// Default TT size.  On memory-constrained targets (ESP32) the flag
+// HARDWARE_LIMITATION selects a compact 8192-entry table (96 KiB).
+// Unconstrained builds use 131072 entries (~1.5 MiB) for stronger play.
+#ifdef HARDWARE_LIMITATION
+static constexpr int DEFAULT_TT_SIZE = 8192;
+#else
+static constexpr int DEFAULT_TT_SIZE = 131072;
+#endif
+
+// ---------------------------------------------------------------------------
+// Transposition Table — power-of-2 array with depth-preferred replacement.
+//
+// Inherits resize / free / clear from HashTableBase<TTEntry>.
+// Adds generation tracking and TT-specific probe / store.
+//
+// Reference: https://www.chessprogramming.org/Transposition_Table
+//            https://www.chessprogramming.org/Replacement_Strategy
+// ---------------------------------------------------------------------------
+
+struct TranspositionTable : HashTableBase<TTEntry> {
+  uint8_t generation = 0;  // Current search generation
+
+  // Advance the generation counter.  Called at the start of each search.
+  // Stale entries (from previous generations) are replaced cheaply.
+  void newGeneration() { generation = static_cast<uint8_t>(generation + 1); }
+
+  // Probe the table for a matching entry.  Returns nullptr on miss.
+  inline const TTEntry* probe(uint64_t hash) const {
+    if (!entries) return nullptr;
+    int index = static_cast<int>(hash & mask);
+    const TTEntry& e = entries[index];
+    if (e.key32 == static_cast<uint32_t>(hash >> 32))
+      return &e;
+    return nullptr;
+  }
+
+  // Store an entry with depth-preferred replacement.
+  // Replaces existing entries when: slot is empty, same position (update),
+  // entry is from a stale generation, new entry is exact, or new depth
+  // is >= existing depth.
+  // Reference: https://www.chessprogramming.org/Replacement_Strategy
+  inline void store(uint64_t hash, int score, Move bestMove,
+                    int depth, TTFlag flag) {
+    if (!entries) return;
+    int index = static_cast<int>(hash & mask);
+    uint32_t key32 = static_cast<uint32_t>(hash >> 32);
+    TTEntry& e = entries[index];
+
+    bool replace = (e.key32 == 0 && e.depth == 0)    // empty slot
+                || (e.key32 == key32)                 // same position (update)
+                || (e.generation != generation)       // stale entry from old search
+                || (flag == TTFlag::EXACT)            // exact scores always preferred
+                || (depth >= e.depth);                // deeper search preferred
+    if (!replace) return;
+
+    e.key32      = key32;
+    e.score      = static_cast<int16_t>(score);
+    e.bestMove   = packMove(bestMove);
+    e.depth      = static_cast<int8_t>(depth);
+    e.flag       = flag;
+    e.generation = generation;
+  }
+};
+
+// ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
 static constexpr int MATE_SCORE = 30000;
 static constexpr int INF_SCORE  = 31000;
 static constexpr int DRAW_SCORE = 0;
-static constexpr int MAX_PLY    = 64;
+static constexpr int MAX_PLY    = 48;
 
 // Maximum PV line length stored per ply.  Practical search depths rarely
 // exceed 25-30 plies including extensions; 24 provides headroom
-// while keeping the PV table at 3 KiB (64 × 24 × 2B).
+// while keeping the PV table at ~2.3 KiB (48 × 24 × 2B).
 static constexpr int MAX_PV_LEN = 24;
 
 // ---------------------------------------------------------------------------
@@ -99,96 +220,6 @@ struct SearchResult {
 // Owns the transposition table, killers, and history heuristic (added
 // incrementally).  Currently: node counter, stop control, TT.
 // ---------------------------------------------------------------------------
-
-// ---------------------------------------------------------------------------
-// Transposition Table types.
-//
-// Each TTEntry is 12 bytes.  Default 8192 entries = 96 KiB — fits ESP32
-// comfortably.  Depth-preferred replacement with generation counter:
-// stale entries from previous searches are cheaply replaced; within the
-// same search, deeper entries survive over shallower ones.
-//
-// Reference: https://www.chessprogramming.org/Transposition_Table
-//            https://www.chessprogramming.org/Replacement_Strategy
-// ---------------------------------------------------------------------------
-
-// TT node type — determines how the stored score relates to alpha/beta.
-enum class TTFlag : uint8_t {
-  EXACT,         // PV node — score is exact
-  LOWER_BOUND,   // Beta cutoff — score is a lower bound (>= beta)
-  UPPER_BOUND,   // All-node — score is an upper bound (<= alpha)
-};
-
-// Packed move for TT storage — from (6 bits) + to (6 bits) + flags (4 bits).
-// Fits in 16 bits; reconstructed into a Move for use.
-using PackedMove = uint16_t;
-
-inline PackedMove packMove(Move m) {
-  return static_cast<PackedMove>(m.from)
-       | (static_cast<PackedMove>(m.to) << 6)
-       | (static_cast<PackedMove>(m.flags) << 12);
-}
-
-inline Move unpackMove(PackedMove pm) {
-  Move m;
-  m.from  = pm & 0x3F;
-  m.to    = (pm >> 6) & 0x3F;
-  m.flags = (pm >> 12) & 0x0F;
-  return m;
-}
-
-// A single transposition table entry — 12 bytes (4+2+2+1+1+1 = 11, padded).
-// Truncated key (upper 32 bits) avoids full 64-bit comparison.
-struct TTEntry {
-  uint32_t   key32;       // Upper 32 bits of Zobrist hash (collision guard)
-  int16_t    score;       // Stored score (mate-adjusted for ply distance)
-  PackedMove bestMove;    // Best move from this position
-  int8_t     depth;       // Search depth that produced this entry
-  TTFlag     flag;        // EXACT / LOWER_BOUND / UPPER_BOUND
-  uint8_t    generation;  // Search generation — stale entries replaced cheaply
-};
-
-static_assert(sizeof(TTEntry) <= 16, "TTEntry should fit in 16 bytes");
-
-// Default TT size.  On memory-constrained targets (ESP32) the flag
-// HARDWARE_LIMITATION selects a compact 8192-entry table (96 KiB).
-// Unconstrained builds use 131072 entries (~1.5 MiB) for stronger play.
-#ifdef HARDWARE_LIMITATION
-static constexpr int DEFAULT_TT_SIZE = 8192;
-#else
-static constexpr int DEFAULT_TT_SIZE = 131072;
-#endif
-
-// The transposition table — a power-of-2 array with index = key & mask.
-struct TranspositionTable {
-  TTEntry* entries = nullptr;
-  int size  = 0;  // Number of entries (power of 2)
-  int mask  = 0;  // size - 1
-  uint8_t generation = 0;  // Current search generation
-
-  // Allocate entries.  `numEntries` is rounded down to the nearest power of 2.
-  void resize(int numEntries);
-
-  // Release memory.
-  void free();
-
-  // Clear all entries (zero-fill).
-  void clear();
-
-  // Advance the generation counter.  Called at the start of each search.
-  // Stale entries (from previous generations) are replaced cheaply.
-  void newGeneration() { generation = static_cast<uint8_t>(generation + 1); }
-
-  // Probe the table for a matching entry.  Returns nullptr on miss.
-  const TTEntry* probe(uint64_t hash) const;
-
-  // Store an entry with depth-preferred replacement.
-  // Replaces existing entries when: slot is empty, same position (update),
-  // entry is from a stale generation, new entry is exact, or new depth
-  // is >= existing depth.
-  // Reference: https://www.chessprogramming.org/Replacement_Strategy
-  void store(uint64_t hash, int score, Move bestMove, int depth, TTFlag flag);
-};
 
 struct SearchState {
   uint32_t nodes = 0;       // Node counter (incremented per negamax call)
@@ -247,7 +278,7 @@ struct SearchState {
   // the number of moves in that line.  Updated in negamax when alpha
   // improves; copied to SearchResult after each completed iteration.
   // Stored as PackedMove (2 bytes) to reduce heap footprint.
-  // Memory: MAX_PLY × MAX_PV_LEN × sizeof(PackedMove) ≈ 4 KiB (heap-allocated).
+  // Memory: MAX_PLY × MAX_PV_LEN × sizeof(PackedMove) ≈ 2.3 KiB (heap-allocated).
   // Reference: https://www.chessprogramming.org/Triangular_PV-Table
   PackedMove pv[MAX_PLY][MAX_PV_LEN];
   int8_t pvLength[MAX_PLY];
@@ -278,17 +309,18 @@ struct SearchState {
 // Iterative deepening: searches depth 1 → maxDepth, returning the best
 // result from the last completed iteration.
 // `pos` is modified during search (make/unmake) but restored before returning.
-// `timeFunc` may be nullptr if no time limit is needed.
+// `state` is the pre-allocated SearchState (owned by the caller).
+//   Caller must set infrastructure fields before calling:
+//     state.timeFunc  — platform time function (nullptr if no time limit)
+//     state.tt        — transposition table (nullptr to skip TT)
+//     state.pawnHash  — pawn hash table (nullptr to skip)
+//     state.evalHash  — eval hash table (nullptr to skip)
+//   findBestMove resets per-search fields (nodes, stopped, startTime,
+//   hardTimeMs, externalStop, heuristics) from `limits` each call.
 // `info` is called after each completed iteration (nullptr to skip).
-// `tt` is an optional transposition table (nullptr to skip TT).
-// `pawnHash` and `evalHash` are optional hash tables for caching evaluation
-// results (nullptr to skip).  Owned by the caller (typically Engine).
 SearchResult findBestMove(Position& pos, const SearchLimits& limits,
-                          TimeFunc timeFunc = nullptr,
-                          InfoCallback info = nullptr,
-                          TranspositionTable* tt = nullptr,
-                          eval::PawnHashTable* pawnHash = nullptr,
-                          eval::EvalHashTable* evalHash = nullptr);
+                          SearchState& state,
+                          InfoCallback info = nullptr);
 
 }  // namespace search
 }  // namespace LibreChess

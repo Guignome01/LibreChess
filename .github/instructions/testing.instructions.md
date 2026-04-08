@@ -9,7 +9,7 @@ applyTo: "test/**"
 
 Tests run natively on the host (no ESP32) using PlatformIO Unity framework with `[env:native]`.
 
-The chess libraries (`lib/core/`, `lib/game/`, `lib/engine/`) have zero Arduino dependencies — all chess logic compiles natively. Tests include library headers directly.
+The chess libraries (`lib/core/`, `lib/game/`) have zero Arduino dependencies — all chess logic compiles natively. Tests include library headers directly.
 
 ## Running Tests
 
@@ -18,11 +18,10 @@ Two build environments: `[env:native]` for all tests except statistics, `[env:na
 | Action | Command |
 |--------|---------||
 | Run all tests | `pio test -e native -e native_stats` |
-| Run lib tests (core+engine+game) | `pio test -e native -f test_core -f test_engine -f test_game` |
+| Run lib tests (core+game) | `pio test -e native -f test_core -f test_game` |
 | Run position tests | `pio test -e native -f test_positions_time -f test_positions_depth` |
 | Run benchmarks + statistics | `pio test -e native -f test_benchmarks` then `pio test -e native_stats` |
 | Run core suite | `pio test -e native -f test_core` |
-| Run engine suite | `pio test -e native -f test_engine` |
 | Run game suite | `pio test -e native -f test_game` |
 | Run perft suite | `pio test -e native -f test_perft` |
 | Run benchmarks | `pio test -e native -f test_benchmarks` |
@@ -30,7 +29,7 @@ Two build environments: `[env:native]` for all tests except statistics, `[env:na
 
 ## File Structure
 
-Tests are split into three suites mirroring the library structure (`lib/core/`, `lib/game/`, `lib/engine/`), plus independent position, benchmark, statistics, and perft suites. Each suite compiles into its own binary. Shared globals live in `test_shared.cpp` at the test root (compiled into every suite).
+Tests are split into two suites mirroring the library structure (`lib/core/`, `lib/game/`), plus independent position, benchmark, statistics, and perft suites. Each suite compiles into its own binary. Shared globals live in `test_shared.cpp` at the test root (compiled into every suite).
 
 ```
 test/
@@ -38,7 +37,7 @@ test/
 ├── test_shared.cpp                      Shared globals (bb, mailbox, needsDefaultKings)
 ├── test_core/                           Core library tests (lib/core/)
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
-│   ├── test_attacks.cpp                 attacks: leaper tables, slider rays, x-ray attacks, between geometry, computeAll, SEE
+│   ├── test_attacks.cpp                 attacks: leaper tables, slider rays, x-ray attacks, between geometry, computeAll, SEE, isSquareUnderAttackOcc
 │   ├── test_bitboard.cpp                LibreChess: square mapping, bit ops, square-color masks, BitboardSet mutations
 │   ├── test_epd.cpp                     EPD parser: parseEPDLine (bm/am/id/c0/c9, quoted/comma-separated), validateEPDLine, accessors
 │   ├── test_evaluation.cpp              eval: material scoring, pawn structure, tapered evaluation, pawn/eval hash tables, trapped pieces, bad bishop, rook behind passer, protected passer, OCB scaling
@@ -49,16 +48,14 @@ test/
 │   ├── test_piece.cpp                   piece: type extraction, construction, predicates, FEN chars, material values, Zobrist index, color helpers
 │   ├── test_position.cpp                Position: moves, special moves, draws, FEN, reverseMove, king cache, MoveList, HashHistory, check/checkmate/stalemate detection, pin-aware generation, castling, en passant, promotion, isDraw, isGameOver
 │   ├── test_utils.cpp                   utils: 50-move rule, castling rights strings, coordinate helpers, board transforms, special-move analysis (via Position), resolveKingSquare, forEachSquare, forEachPiece
-│   └── test_zobrist.cpp                 Zobrist hashing: key determinism, computeHash, computePawnHash, position sensitivity
+│   ├── test_zobrist.cpp                 Zobrist hashing: key determinism, computeHash, computePawnHash, position sensitivity
+│   ├── test_search.cpp                  search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, IID, time/stop, TT, move ordering, delta pruning, futility pruning, SEE ordering, lazy eval, PV table, MDP, capture history, staged MovePicker, TT replacement, soft time, easy move, instability time extension
+│   └── test_engine.cpp                  Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range
 ├── test_game/                           Game library tests (lib/game/)
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
 │   ├── test_game.cpp                    Game: lifecycle, draws, observer, history, undo/redo, getHistory
 │   ├── test_history.cpp                 History: move log with undo/redo, branch-on-undo, compact encode/decode
 │   └── test_history_persistence.cpp     Recording: persistence, header flush, replay, branch-truncation, encode/decode
-├── test_engine/                         Engine library tests (lib/engine/)
-│   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
-│   ├── test_search.cpp                  search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, IID, time/stop, TT, move ordering, delta pruning, futility pruning, SEE ordering, lazy eval, PV table, MDP, capture history, staged MovePicker, TT replacement, soft time, easy move, instability time extension
-│   └── test_engine.cpp                  Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range
 ├── suites/                              Shared EPD test files (no .cpp — not compiled)
 │   ├── wac.epd                          Win At Chess — 300 positions (Reinfeld/Wilson, CPW verbatim)
 │   ├── bk.epd                           Bratko-Kopec — 24 positions (Bratko/Kopec, CPW verbatim)
@@ -69,7 +66,7 @@ test/
 │   └── test_positions_depth.cpp         WAC 300 at fixed depth 10 — hard assert on solve count vs calibrated baseline
 ├── test_benchmarks/                     Performance benchmarks + regression tests
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
-│   ├── test_timing.cpp                  Micro-benchmarks: make/unmake timing, EP make/unmake, evaluatePosition (single + multi-position), bishop() attacks, perft(5) Mnps, search depth-8 (single + multi-position) knps
+│   ├── test_timing.cpp                  Micro-benchmarks: make/unmake timing, EP make/unmake, evaluatePosition (single + multi-position), bishop() attacks, perft(5) Mnps, search depth-8 (single + multi-position) knps, generateAllMoves throughput (calls/s)
 │   └── test_regression.cpp              Node count regression (10 positions × depth 10, 15% threshold) + eval regression (15 positions, exact match)
 ├── test_statistics/                     Search statistics diagnostic (standalone)
 │   └── test_statistics.cpp              Runs 5 positions at depth 10, prints TT hit rates, cutoff ratios, pruning/extension counts, QS/main node ratios. Requires -DSTATS.
@@ -95,11 +92,11 @@ Each library source file has a corresponding test file in the matching test suit
 | `lib/core/src/zobrist.h/cpp` | `test_core/` | `test_zobrist.cpp` |
 | `lib/game/src/game.cpp` | `test_game/` | `test_game.cpp` |
 | `lib/game/src/history.cpp` | `test_game/` | `test_history.cpp` + `test_history_persistence.cpp` |
-| `lib/engine/src/search.h/cpp` | `test_engine/` | `test_search.cpp` |
-| `lib/engine/src/engine.h/cpp` | `test_engine/` | `test_engine.cpp` |
+| `lib/core/src/search.h/cpp` | `test_core/` | `test_search.cpp` |
+| `lib/core/src/engine.h/cpp` | `test_core/` | `test_engine.cpp` |
 | `lib/core/src/epd.h/cpp` | `test_core/` | `test_epd.cpp` |
 
-Place tests in the suite that mirrors the owning library. When creating a new source file in any of the three libraries, create a matching test file in the corresponding `test_<lib>/` directory and register its test functions in that suite's main file.
+Place tests in the suite that mirrors the owning library. When creating a new source file in either library, create a matching test file in the corresponding `test_<lib>/` directory and register its test functions in that suite's main file.
 
 ## Test Helpers (`test_helpers.h`)
 
@@ -117,6 +114,7 @@ Shared utilities available to all test files:
   - Updating existing tests when signatures or patterns change
 - **Test group descriptions must stay current** — when adding new test sections, update the Test Group Details and file structure listing in this file.
 - **Always test changes** — every logic change must be validated by running the test suite before committing.
+- **Always run regression tests** — any change to search, evaluation, or move generation must be validated with the regression test suite (`test_benchmarks`) to verify node counts and eval scores remain within tolerance. This catches unintended behavioral changes that unit tests may miss.
 
 ## Test Group Details
 
@@ -166,7 +164,7 @@ Exhaustive move-tree enumeration for 6 positions from the Chess Programming Wiki
 Square mapping roundtrip (`squareOf(rowOf(sq), fileOf(sq)) == sq` for all 64, using test-only helpers from `test_helpers.h`). LERF anchor values (`squareOf(0,0) == SQ_A8`, `squareOf(7,0) == SQ_A1`). Bit manipulation (`popcount`, `lsb`, `popLsb`). Square-color masks (a1 dark, b1 light, popcount 32 each, no overlap). `BitboardSet` mutations (`setPiece`/`removePiece`/`movePiece` consistency, aggregate bitboard correctness).
 
 ### Attacks (`test_attacks.cpp`)
-Leaper attack tables (knight on e4, king on a1, pawn attacks per color). Slider attack functions (rook/bishop/queen on empty board and with blockers). Bulk slider correctness (all 64 squares × 5 occupancy patterns cross-checked against reference ray implementation for both rook and bishop). X-ray attack functions (`xrayRook`, `xrayBishop`). `between` geometry (file/rank/diagonal/anti-diagonal/adjacent/non-colinear). `computeAll` validation (initial knight attacks, pawn bulk attacks, color unions, kings-only board). SEE: pawn takes undefended knight, pawn takes defended rook, knight takes defended pawn (losing), queen takes defended pawn (losing), rook takes undefended bishop, en passant.
+Leaper attack tables (knight on e4, king on a1, pawn attacks per color). Slider attack functions (rook/bishop/queen on empty board and with blockers). Bulk slider correctness (all 64 squares × 5 occupancy patterns cross-checked against reference ray implementation for both rook and bishop). X-ray attack functions (`xrayRook`, `xrayBishop`). `between` geometry (file/rank/diagonal/anti-diagonal/adjacent/non-colinear). `computeAll` validation (initial knight attacks, pawn bulk attacks, color unions, kings-only board). SEE: pawn takes undefended knight, pawn takes defended rook, knight takes defended pawn (losing), queen takes defended pawn (losing), rook takes undefended bishop, en passant. Occupancy-aware attack detection (`isSquareUnderAttackOcc`): slider through custom occupancy (blocker removal reveals attack), leaper unaffected by occupancy, king removal from occupancy reveals slider attack.
 
 ### EPD Parser (`test_epd.cpp`)
 `parseEPDLine`: basic FEN + bm opcode, multiple opcodes (bm + am + id + c0), quoted id strings, avoid move variations, comma-separated operands, c9 game result parsing (white win/draw/black win). `validateEPDLine`: valid/invalid FEN, missing fields. Accessors: `findOperation()` lookup, `id()` convenience, non-existent opcode returns nullptr yet `id()` returns empty.
@@ -178,7 +176,7 @@ Engine accuracy benchmarks using standard `.epd` files loaded from `../suites/` 
 Deterministic, machine-independent strength gate. Runs all 300 WAC positions at fixed depth 10 (no time limit), counts how many the engine solves, and asserts the count is ≥ a calibrated baseline (`WAC_DEPTH_BASELINE`). Used to detect search quality regressions before and after optimization changes.
 
 ### Performance Benchmarks (`test_benchmarks/test_timing.cpp`)
-Micro-benchmark suite for hot-path timing baselines. Eight tests measure `std::chrono::steady_clock` timing: make/unmake round-trip (no EP), make/unmake round-trip (EP position), `evaluatePosition` call (single position), multi-position `evaluatePosition` (5 positions, averaged), `bishop()` attack generation (500K calls with varied sq+occupancy), perft(5) throughput in Mnps, single-position search at depth 8, and multi-position search (3 positions, averaged) reporting knps/nodes/score. Tests are informational (always PASS) — they print ns/op or throughput metrics for regression tracking. No assertions on timing values.
+Micro-benchmark suite for hot-path timing baselines. Nine tests measure `std::chrono::steady_clock` timing: make/unmake round-trip (no EP), make/unmake round-trip (EP position), `evaluatePosition` call (single position), multi-position `evaluatePosition` (5 positions, averaged), `bishop()` attack generation (500K calls with varied sq+occupancy), perft(5) throughput in Mnps, single-position search at depth 8, multi-position search (3 positions, averaged) reporting knps/nodes/score, and `generateAllMoves` throughput (5 diverse positions × 100K iterations, calls/s). Tests are informational (always PASS) — they print ns/op or throughput metrics for regression tracking. No assertions on timing values.
 
 ### Regression Tests (`test_benchmarks/test_regression.cpp`)
 Node count and evaluation regression tests. Node count: 10 diverse positions searched at depth 10, total nodes compared against a calibrated baseline with 15% tolerance. Eval: 15 positions, static evaluation compared for exact match against calibrated values. Used to detect unintended changes to search behavior or evaluation.
@@ -190,7 +188,8 @@ Diagnostic search statistics suite. Runs 5 positions at depth 10 with `search::r
 
 | File | Relationship |
 |------|--------------|
-| `core.instructions.md` | Core library whose modules are tested in `test_core/` |
+| `core.instructions.md` | Core library (incl. search/engine) tested in `test_core/` |
 | `game-library.instructions.md` | Game library tested in `test_game/` |
-| `engine-library.instructions.md` | Engine library tested in `test_engine/` |
+| `search.instructions.md` | Search algorithm tested in `test_core/test_search.cpp` |
+| `engine-facade.instructions.md` | Engine facade tested in `test_core/test_engine.cpp` |
 | `epd.instructions.md` | EPD parser used by positional test suites (`test_positions_*`) |

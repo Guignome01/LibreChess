@@ -9,8 +9,8 @@ Constexpr Zobrist key generation (xorshift64) and hash computation. Header-only 
 
 ## Public API
 
-- `Keys` struct — `pieces[12][64]`, `castling[16]`, `enPassant[8]`, `sideToMove` (all compile-time)
-- `static constexpr Keys KEYS` — deterministic compile-time initialization
+- `Keys` struct — `pieces[12][64]`, `castling[16]`, `enPassant[8]`, `sideToMove` (all compile-time via constexpr constructor)
+- `extern const Keys KEYS` — single definition in `zobrist.cpp`; the constexpr constructor enables compile-time evaluation. Uses `extern const` (not `static constexpr`) to guarantee exactly one copy across all translation units. Previous `static constexpr` in the header caused per-TU duplication (~6.3 KiB each).
 - `computeHash(bb, mailbox, turn, state, epLegal) → uint64_t` — full position hash (EP legality passed by caller)
 - `computePawnHash(bb) → uint64_t` — XORs all pawn piece keys, used as pawn hash table lookup key
 

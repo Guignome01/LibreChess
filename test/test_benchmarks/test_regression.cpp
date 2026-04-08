@@ -73,9 +73,13 @@ static void test_node_count_regression(void) {
 
     search::SearchLimits limits;
     limits.maxDepth = NODE_DEPTH;
+    search::SearchState state;
+    state.timeFunc = chronoMillis;
+    state.tt = &tables.tt;
+    state.pawnHash = &tables.pawn;
+    state.evalHash = &tables.eval;
     search::SearchResult result =
-        search::findBestMove(pos, limits, chronoMillis, nullptr,
-                             &tables.tt, &tables.pawn, &tables.eval);
+        search::findBestMove(pos, limits, state);
     totalNodes += result.nodes;
     printf("  pos %2d: %8u nodes\n", i, result.nodes);
   }

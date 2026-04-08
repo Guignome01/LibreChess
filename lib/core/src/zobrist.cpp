@@ -4,6 +4,10 @@
 namespace LibreChess {
 namespace zobrist {
 
+// Single definition of the Zobrist key table.  The constexpr constructor
+// enables compile-time evaluation; the linker emits exactly one copy.
+const Keys KEYS = Keys();
+
 uint64_t computeHash(const BitboardSet& bb, const Piece mailbox[],
                      Color turn, const PositionState& state, bool epLegal) {
   uint64_t hash = 0;

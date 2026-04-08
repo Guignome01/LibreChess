@@ -15,7 +15,8 @@ static search::SearchResult searchFEN(const char* fen, int depth) {
   pos.loadFEN(fen);
   search::SearchLimits limits;
   limits.maxDepth = depth;
-  return search::findBestMove(pos, limits);
+  search::SearchState state;
+  return search::findBestMove(pos, limits, state);
 }
 
 // ===========================================================================
@@ -188,7 +189,8 @@ static void test_search_id_reports_depth(void) {
   static InfoData data = {0, 0};
   data = {0, 0};
 
-  auto result = search::findBestMove(pos, limits, nullptr,
+  search::SearchState state;
+  auto result = search::findBestMove(pos, limits, state,
     [](const search::SearchResult& r) {
       data.lastDepth = r.depth;
       data.callCount++;
@@ -245,7 +247,9 @@ static void test_search_time_limit(void) {
     return timerCallCount++ > 0 ? 1000 : 0;
   };
 
-  auto result = search::findBestMove(pos, limits, countingTimer);
+  search::SearchState state;
+  state.timeFunc = countingTimer;
+  auto result = search::findBestMove(pos, limits, state);
   // Should have completed at least depth 1 before stopping
   TEST_ASSERT_TRUE(result.depth >= 1);
   // Should NOT have reached deep depths
@@ -265,7 +269,8 @@ static void test_search_stop_flag(void) {
   limits.maxDepth = 100;
   limits.stop = &stop;
 
-  auto result = search::findBestMove(pos, limits);
+  search::SearchState state;
+  auto result = search::findBestMove(pos, limits, state);
   // Stopped before completing any deep iteration, but depth 1 may complete
   // before the first 1024-node check.  Key assertion: returns a valid move.
   TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
@@ -368,13 +373,15 @@ static void test_tt_reduces_nodes(void) {
   // Search without TT
   search::SearchLimits limits;
   limits.maxDepth = 6;
-  auto noTT = search::findBestMove(pos, limits);
+  search::SearchState state;
+  auto noTT = search::findBestMove(pos, limits, state);
 
   // Search with TT
   pos.loadFEN(fen);  // Reset position state
   search::TranspositionTable tt;
   tt.resize(search::DEFAULT_TT_SIZE);
-  auto withTT = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  state.tt = &tt;
+  auto withTT = search::findBestMove(pos, limits, state);
 
   // TT should reduce node count.  Depth 6 ensures TT savings from
   // cross-iteration hits and hash move ordering clearly dominate any
@@ -398,7 +405,9 @@ static void test_tt_mate_score_roundtrip(void) {
   search::SearchLimits limits;
   limits.maxDepth = 3;
 
-  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  search::SearchState state;
+  state.tt = &tt;
+  auto result = search::findBestMove(pos, limits, state);
   TEST_ASSERT_TRUE(result.score >= search::MATE_SCORE - 10);
   std::string move = moveToStr(result.bestMove);
   TEST_ASSERT_EQUAL_STRING("h1h8", move.c_str());
@@ -457,7 +466,9 @@ static void test_pvs_lmr_middlegame_efficiency(void) {
   search::SearchLimits limits;
   limits.maxDepth = 5;
 
-  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  search::SearchState state;
+  state.tt = &tt;
+  auto result = search::findBestMove(pos, limits, state);
   TEST_ASSERT_EQUAL_INT(5, result.depth);
   TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
   TEST_ASSERT_TRUE(result.nodes < 500000);
@@ -499,7 +510,8 @@ static void test_aspiration_depth_continuity(void) {
   maxReportedDepth = 0;
   infoCallCount    = 0;
 
-  auto result = search::findBestMove(pos, limits, nullptr,
+  search::SearchState state;
+  auto result = search::findBestMove(pos, limits, state,
     [](const search::SearchResult& r) {
       maxReportedDepth = r.depth;
       infoCallCount++;
@@ -538,13 +550,15 @@ static void test_ordering_reduces_nodes(void) {
   // Without TT (no TT move ordering)
   search::SearchLimits limits;
   limits.maxDepth = 6;
-  auto noTT = search::findBestMove(pos, limits);
+  search::SearchState state;
+  auto noTT = search::findBestMove(pos, limits, state);
 
   // With TT (TT move gets highest ordering priority)
   pos.loadFEN(fen);
   search::TranspositionTable tt;
   tt.resize(search::DEFAULT_TT_SIZE);
-  auto withTT = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  state.tt = &tt;
+  auto withTT = search::findBestMove(pos, limits, state);
 
   // TT + move ordering should search fewer nodes (depth 6 ensures
   // TT savings dominate IID/SE overhead that only applies with TT)
@@ -565,7 +579,9 @@ static void test_ordering_finds_tactics(void) {
   search::SearchLimits limits;
   limits.maxDepth = 3;
 
-  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  search::SearchState state;
+  state.tt = &tt;
+  auto result = search::findBestMove(pos, limits, state);
   std::string move = moveToStr(result.bestMove);
   TEST_ASSERT_EQUAL_STRING("d5c7", move.c_str());
 
@@ -733,7 +749,9 @@ static void test_countermove_with_tt(void) {
   search::SearchLimits limits;
   limits.maxDepth = 5;
 
-  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  search::SearchState state;
+  state.tt = &tt;
+  auto result = search::findBestMove(pos, limits, state);
   TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
   TEST_ASSERT_EQUAL_INT(5, result.depth);
 
@@ -757,7 +775,9 @@ static void test_iid_preserves_tactics(void) {
   search::SearchLimits limits;
   limits.maxDepth = 5;  // depth >= IID_DEPTH_THRESHOLD triggers IID
 
-  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  search::SearchState state;
+  state.tt = &tt;
+  auto result = search::findBestMove(pos, limits, state);
   std::string move = moveToStr(result.bestMove);
   TEST_ASSERT_EQUAL_STRING("d5c7", move.c_str());
 
@@ -777,7 +797,9 @@ static void test_iid_completes_with_tt(void) {
   search::SearchLimits limits;
   limits.maxDepth = 5;
 
-  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  search::SearchState state;
+  state.tt = &tt;
+  auto result = search::findBestMove(pos, limits, state);
   TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
   TEST_ASSERT_EQUAL_INT(5, result.depth);
 
@@ -804,7 +826,9 @@ static void test_lazy_eval_preserves_tactics(void) {
   search::SearchLimits limits;
   limits.maxDepth = 5;
 
-  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  search::SearchState state;
+  state.tt = &tt;
+  auto result = search::findBestMove(pos, limits, state);
   // Should return a legal, sensible move.
   TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
   TEST_ASSERT_TRUE(result.depth >= 3);
@@ -822,7 +846,8 @@ static void test_lazy_eval_balanced_position(void) {
   search::SearchLimits limits;
   limits.maxDepth = 4;
 
-  auto result = search::findBestMove(pos, limits);
+  search::SearchState state;
+  auto result = search::findBestMove(pos, limits, state);
   // Should complete normally and return a legal move.
   TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
   TEST_ASSERT_EQUAL_INT(4, result.depth);
@@ -841,7 +866,9 @@ static void test_lazy_eval_imbalanced_position(void) {
   search::SearchLimits limits;
   limits.maxDepth = 5;
 
-  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  search::SearchState state;
+  state.tt = &tt;
+  auto result = search::findBestMove(pos, limits, state);
   // Should find a move and complete the search.
   TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
   TEST_ASSERT_EQUAL_INT(5, result.depth);
@@ -872,7 +899,9 @@ static void test_history_gravity_produces_negatives(void) {
   // Use findBestMove — we can't directly inspect SearchState, but we can
   // verify the search completes and produces correct results (history
   // gravity must not break the search).
-  auto result = search::findBestMove(pos, limits, nullptr, nullptr, &tt);
+  search::SearchState state;
+  state.tt = &tt;
+  auto result = search::findBestMove(pos, limits, state);
   TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
   TEST_ASSERT_EQUAL_INT(5, result.depth);
   // The search should not degrade from history gravity — still finds a move
@@ -1102,7 +1131,9 @@ static void test_instability_extends_time(void) {
   limits.maxDepth = 20;
   limits.softTimeMs = 60;
   limits.hardTimeMs = 5000;
-  auto result = search::findBestMove(pos, limits, timer);
+  search::SearchState state;
+  state.timeFunc = timer;
+  auto result = search::findBestMove(pos, limits, state);
 
   // Must complete multiple iterations.
   TEST_ASSERT_TRUE(result.depth >= 2);
@@ -1131,7 +1162,9 @@ static void test_soft_time_stops_search(void) {
   limits.maxDepth = 30;       // Very high — should never reach this.
   limits.softTimeMs = 1;      // 1 ms soft limit — stop after first iteration.
   limits.hardTimeMs = 100000; // 100s hard limit — not the bottleneck.
-  auto result = search::findBestMove(pos, limits, timer);
+  search::SearchState state;
+  state.timeFunc = timer;
+  auto result = search::findBestMove(pos, limits, state);
   // Should complete at least depth 1.
   TEST_ASSERT_TRUE(result.depth >= 1);
   // Should stop well before maxDepth due to soft time.
@@ -1162,7 +1195,9 @@ static void test_easy_move_early_exit(void) {
   limits.maxDepth = 30;
   limits.softTimeMs = 5000;   // 5s — generous.
   limits.hardTimeMs = 30000;  // 30s — very generous.
-  auto result = search::findBestMove(pos, limits, timer);
+  search::SearchState state;
+  state.timeFunc = timer;
+  auto result = search::findBestMove(pos, limits, state);
   // Must find mate.
   TEST_ASSERT_TRUE(result.score >= search::MATE_SCORE - 10);
   // Should stop early due to mate found (iterative deepening stops on mate).

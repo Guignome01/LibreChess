@@ -112,6 +112,28 @@ void generateQuiets(const BitboardSet& bb, const Piece mailbox[],
                     Color color, const PositionState& state,
                     const LegalityContext& ctx, MoveList& moves);
 
+// Append-mode quiet generation — same as generateQuiets() but does NOT
+// clear the output list.  Used by MovePicker to append quiet moves after
+// captures in a shared MoveList, avoiding a temporary buffer + copy.
+void generateQuietsAppend(const BitboardSet& bb, const Piece mailbox[],
+                          Color color, const PositionState& state,
+                          const LegalityContext& ctx, MoveList& moves);
+
+// ---------------------------------------------------------------------------
+// Quiescence-search overloads (QSMoveList — cap 128)
+//
+// Identical semantics to the MoveList versions above but generate into a
+// smaller buffer, reducing per-ply stack usage by ~450 bytes.
+// ---------------------------------------------------------------------------
+
+void generateAllMoves(const BitboardSet& bb, const Piece mailbox[],
+                      Color color, const PositionState& state,
+                      QSMoveList& moves);
+
+void generateCaptures(const BitboardSet& bb, const Piece mailbox[],
+                      Color color, const PositionState& state,
+                      QSMoveList& moves);
+
 // ---------------------------------------------------------------------------
 // Single-move validation
 // ---------------------------------------------------------------------------
