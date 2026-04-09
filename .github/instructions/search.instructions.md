@@ -130,6 +130,7 @@ Mirror test file: `test/test_core/test_search.cpp` (suite: `test_core`). Also va
 | `evaluation.instructions.md` | `evaluatePosition()` is the leaf node scorer |
 | `attacks.instructions.md` | `see()` for capture ordering and pruning decisions |
 | `notation.instructions.md` | PV display uses coordinate notation |
-| `engine-facade.instructions.md` | `Engine` facade wraps `findBestMove()` |
+| `uci.instructions.md` | UCI protocol dispatcher calls `findBestMove()` |
+| `time-management.instructions.md` | `computeTimeLimits()` converts UCI clock to `SearchLimits` |
 | `core-headers.instructions.md` | `Move`, `MoveList`, fundamental types |
 | `testing.instructions.md` | Test architecture and `test_search.cpp` group description |

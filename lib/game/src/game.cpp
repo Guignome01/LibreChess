@@ -11,8 +11,53 @@ Game::Game(IGameStorage* storage, IGameObserver* observer, ILogger* logger)
       batchDirty_(false), gameOver_(false), gameResult_(GameResult::IN_PROGRESS), winnerColor_(' '),
       cachedEval_(0), fenDirty_(true), evalDirty_(true) {}
 
+Game::~Game() {
+  delete searchState_;
+  if (tt_) { tt_->free(); delete tt_; }
+  if (pawnHash_) { pawnHash_->free(); delete pawnHash_; }
+  if (evalHash_) { evalHash_->free(); delete evalHash_; }
+}
+
 static const char* STANDARD_START_FEN =
     "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+// ---------------------------------------------------------------------------
+// Search
+// ---------------------------------------------------------------------------
+
+void Game::initSearch(int ttSize) {
+  if (searchInitialized_) return;
+
+  tt_ = new search::TranspositionTable();
+  tt_->resize(ttSize);
+  pawnHash_ = new eval::PawnHashTable();
+  pawnHash_->resize(eval::DEFAULT_PAWN_HASH_SIZE);
+  evalHash_ = new eval::EvalHashTable();
+  evalHash_->resize(eval::DEFAULT_EVAL_HASH_SIZE);
+  searchState_ = new search::SearchState(nullptr, tt_, pawnHash_, evalHash_);
+  searchInitialized_ = true;
+}
+
+search::SearchResult Game::calculateMove(const search::SearchLimits& limits) {
+  // Build internal limits with our stop flag wired in
+  search::SearchLimits internalLimits;
+  internalLimits.maxDepth = limits.maxDepth;
+  internalLimits.softTimeMs = limits.softTimeMs;
+  internalLimits.hardTimeMs = limits.hardTimeMs;
+
+  searchStop_.store(false, std::memory_order_relaxed);
+  internalLimits.stop = externalStop_ ? externalStop_ : &searchStop_;
+
+  return search::findBestMove(board_, internalLimits, *searchState_);
+}
+
+void Game::setTimeFunc(search::TimeFunc fn) {
+  if (searchState_) searchState_->timeFunc = fn;
+}
+
+void Game::setExternalStop(std::atomic<bool>* flag) {
+  externalStop_ = flag;
+}
 
 // ---------------------------------------------------------------------------
 // Lifecycle
@@ -25,6 +70,15 @@ void Game::newGame() {
   gameOver_ = false;
   gameResult_ = GameResult::IN_PROGRESS;
   winnerColor_ = ' ';
+
+  // Clear search state if initialized (TT, hash tables, heuristics)
+  if (searchInitialized_) {
+    tt_->clear();
+    pawnHash_->clear();
+    evalHash_->clear();
+    searchState_->clearHeuristics();
+  }
+
   invalidateCache();
   notifyObserver();
 }

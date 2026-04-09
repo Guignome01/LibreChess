@@ -10,7 +10,6 @@ static Game game;
 
 // Reset Game before every test
 static void setUpGame(void) {
-  game = Game();
   game.newGame();
 }
 

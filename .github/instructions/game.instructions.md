@@ -9,7 +9,13 @@ Central game orchestrator — the ONLY entry point for firmware to access chess 
 
 ## Public API
 
-**Lifecycle**: `Game(storage, observer, logger)`, `newGame()`, `startNewGame(playerColor, meta)`, `endGame(result, winner)`, `discardRecording()`
+**Lifecycle**: `Game(storage, observer, logger)`, `~Game()`, `newGame()`, `startNewGame(playerColor, meta)`, `endGame(result, winner)`, `discardRecording()`
+
+**Search** (optional — initialized for bot mode via `initSearch`, skipped for player-only games):
+- `initSearch(ttSize)` — allocates TT, PawnHash, EvalHash, SearchState on heap (idempotent)
+- `calculateMove(limits) → SearchResult` — runs `findBestMove()` on the internal Position
+- `setTimeFunc(fn)` — platform time abstraction: firmware passes `millis()`, CLI passes `nativeMillis()`
+- `setExternalStop(flag)` — wire an external `std::atomic<bool>*` for cooperative cancellation
 
 **Moves** (dual overloads — Square-native primary, row/col for firmware):
 - `makeMove(from, to, promo) → MoveResult` (Square-native)
@@ -46,6 +52,7 @@ Steps 2–7 are atomic from the caller's perspective.
 - **Firmware abstraction boundary** — `Game` re-exports everything firmware needs. Display-coordinate helpers (`rankChar`, `squareName(row,col)`) live in `game/types.h`.
 - **Dirty-flag caching** — FEN/eval cached, recomputed only when `fenDirty_`/`evalDirty_` set.
 - **Composition over inheritance** — `Game` composes `Position` + `History`, no inheritance.
+- **Optional search resources** — `initSearch()` allocates TT, hash tables, SearchState on heap. `newGame()` clears them when initialized. Destructor frees them. `calculateMove()` calls `findBestMove()` on the internal Position with an internal or external stop flag.
 - **Nullable DI** — storage, observer, logger all pointer-injected. Logger uses `Log` proxy.
 - **Undo clears game-over** — `undoMove()` re-opens finished games for web UI navigation.
 

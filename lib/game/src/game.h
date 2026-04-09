@@ -1,6 +1,7 @@
 #ifndef LIBRECHESS_GAME_H
 #define LIBRECHESS_GAME_H
 
+#include <atomic>
 #include <string>
 
 #include "observer.h"
@@ -8,6 +9,7 @@
 #include "notation.h"
 #include "position.h"
 #include "evaluation.h"
+#include "search.h"
 #include "types.h"
 
 // ---------------------------------------------------------------------------
@@ -39,6 +41,7 @@ class Game {
   Game(IGameStorage* storage = nullptr,
        IGameObserver* observer = nullptr,
        ILogger* logger = nullptr);
+  ~Game();
 
   // --- Lifecycle ---
 
@@ -46,6 +49,26 @@ class Game {
   void startNewGame(uint8_t playerColor = '?', const uint8_t* meta = nullptr);
   void endGame(GameResult result, char winnerColor);
   void discardRecording();
+
+  // --- Search ---
+
+  // Initialize optional search resources (TT, hash tables, SearchState).
+  // Must be called before calculateMove().  Only needed for bot mode —
+  // player-only games skip this entirely.  idempotent.
+  void initSearch(int ttSize = search::DEFAULT_TT_SIZE);
+
+  // Run the search engine on the current position.
+  // Requires initSearch() to have been called first.
+  // Returns the best move, score, depth, and PV.
+  search::SearchResult calculateMove(const search::SearchLimits& limits);
+
+  // Set the platform time function (firmware passes millis()).
+  // Must be called after initSearch().
+  void setTimeFunc(search::TimeFunc fn);
+
+  // Wire an external stop flag for search cancellation.
+  // Must be called after initSearch().
+  void setExternalStop(std::atomic<bool>* flag);
 
   // --- Mutations ---
 
@@ -181,6 +204,15 @@ class Game {
   bool gameOver_;
   GameResult gameResult_;
   char winnerColor_;
+
+  // --- Optional search resources (allocated by initSearch) ---
+  search::TranspositionTable* tt_ = nullptr;
+  eval::PawnHashTable* pawnHash_ = nullptr;
+  eval::EvalHashTable* evalHash_ = nullptr;
+  search::SearchState* searchState_ = nullptr;
+  std::atomic<bool> searchStop_{false};
+  std::atomic<bool>* externalStop_ = nullptr;
+  bool searchInitialized_ = false;
 
   // Lazy caches — invalidated on game-layer mutations only.
   // Avoids recomputation when observers query the same state multiple times.

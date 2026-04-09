@@ -1,3 +1,9 @@
+// Tuner files are always compiled with -DTUNING (see Makefile).
+// Self-define here so IntelliSense also sees the tuning-guarded externs.
+#ifndef TUNING
+#define TUNING
+#endif
+
 #include "trace.h"
 #include "attacks.h"
 #include "evaluation.h"

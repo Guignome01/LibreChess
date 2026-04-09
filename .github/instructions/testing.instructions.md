@@ -50,7 +50,7 @@ test/
 │   ├── test_utils.cpp                   utils: 50-move rule, castling rights strings, coordinate helpers, board transforms, special-move analysis (via Position), resolveKingSquare, forEachSquare, forEachPiece
 │   ├── test_zobrist.cpp                 Zobrist hashing: key determinism, computeHash, computePawnHash, position sensitivity
 │   ├── test_search.cpp                  search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, IID, time/stop, TT, move ordering, delta pruning, futility pruning, SEE ordering, lazy eval, PV table, MDP, capture history, staged MovePicker, TT replacement, soft time, easy move, instability time extension
-│   └── test_engine.cpp                  Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range
+│   └── test_uci.cpp                     UCI protocol: uci command, isready, go depth, position/fen, newgame, info output, quit, mate score, setoption Hash, go movetime
 ├── test_game/                           Game library tests (lib/game/)
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
 │   ├── test_game.cpp                    Game: lifecycle, draws, observer, history, undo/redo, getHistory
@@ -93,7 +93,7 @@ Each library source file has a corresponding test file in the matching test suit
 | `lib/game/src/game.cpp` | `test_game/` | `test_game.cpp` |
 | `lib/game/src/history.cpp` | `test_game/` | `test_history.cpp` + `test_history_persistence.cpp` |
 | `lib/core/src/search.h/cpp` | `test_core/` | `test_search.cpp` |
-| `lib/core/src/engine.h/cpp` | `test_core/` | `test_engine.cpp` |
+| `lib/core/src/uci.h/cpp` | `test_core/` | `test_uci.cpp` |
 | `lib/core/src/epd.h/cpp` | `test_core/` | `test_epd.cpp` |
 
 Place tests in the suite that mirrors the owning library. When creating a new source file in either library, create a matching test file in the corresponding `test_<lib>/` directory and register its test functions in that suite's main file.
@@ -142,8 +142,8 @@ Material evaluation scoring. Pawn structure evaluation (symmetry, passed pawn bo
 ### Search (`test_search.cpp`)
 Mate-in-1 (white, black). Captures hanging piece. Quiescence avoids blunder. Stalemate avoidance. Symmetric position. Knight fork tactics. Legal move from random position. Checkmate no legal moves. Iterative deepening (deeper depth finds mate, info callback reports iterations). IID preserves tactics, completes with TT. Lazy evaluation preserves tactics, balanced position correctness, imbalanced position scoring. Time limit control. Stop flag. Mate stops early. TT store/probe exact, probe miss, clear, pack/unpack move, reduces nodes, mate score round-trip. Check extension finds mate. NMP quiet position, K+P endgame no blunder. PVS+LMR middlegame efficiency. Pruning preserves tactics. Aspiration windows correctness, depth continuity. Root move reordering consistency. Move ordering reduces nodes and finds tactics. Delta pruning quiet position. Futility pruning preserves winning capture and discovered attack. SEE ordering preserves tactics. SEE qsearch skips losing capture. LMP preserves winning capture, completes without blunder. Razoring preserves winning capture, completes correctly. Countermove heuristic preserves tactics, integrates with TT. History gravity produces negative scores for non-cutoff quiets. Recapture extension finds exchange sequence. Adaptive NMP correctness (deeper search doesn't blunder). Singular extension preserves tactics, completes with captures. PV table accuracy (mate-in-2 PV length and consistency). Mate distance pruning (mate score > winning material). Capture history ordering (tactical position node efficiency). Staged MovePicker (mate via capture found without quiet generation). TT depth-preferred replacement (deep entry survives shallow collision). Soft time stops search (between iterations with timer). Easy move early exit (mate-in-1 terminates quickly). Instability time extension (complex middlegame extends search time when best move changes frequently).
 
-### Engine (`test_engine.cpp`)
-Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range.
+### UCI (`test_uci.cpp`)
+UCI protocol: uci command, isready, go depth, position with moves, position fen, ucinewgame, info output, quit, mate score, setoption Hash, go movetime. Tests via `processLine()` — pure string-in/string-out, no I/O.
 
 ### FEN (`test_fen.cpp`)
 Round-trip: board → FEN → board. `boardToFEN()` output correctness. `fenToBoard()` parsing. `validateFEN()`: valid positions, invalid rank structure, bad piece chars, wrong turn field, invalid castling, bad en passant, bad clocks.
@@ -188,8 +188,8 @@ Diagnostic search statistics suite. Runs 5 positions at depth 10 with `search::r
 
 | File | Relationship |
 |------|--------------|
-| `core.instructions.md` | Core library (incl. search/engine) tested in `test_core/` |
+| `core.instructions.md` | Core library (incl. search/UCI) tested in `test_core/` |
 | `game-library.instructions.md` | Game library tested in `test_game/` |
 | `search.instructions.md` | Search algorithm tested in `test_core/test_search.cpp` |
-| `engine-facade.instructions.md` | Engine facade tested in `test_core/test_engine.cpp` |
+| `uci.instructions.md` | UCI protocol tested in `test_core/test_uci.cpp` |
 | `epd.instructions.md` | EPD parser used by positional test suites (`test_positions_*`) |

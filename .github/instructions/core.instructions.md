@@ -5,7 +5,7 @@ description: "Core chess library: shared conventions, dependency model, and cros
 
 # Core Library (`lib/core/`) — General
 
-Chess engine library: board representation, move generation, evaluation, search algorithm, Engine facade, notation, FEN, EPD parsing — with zero Arduino dependencies. Dependency model: `core ← game`. Core never imports game.
+Chess engine library: board representation, move generation, evaluation, search algorithm, UCI protocol, time management, notation, FEN, EPD parsing — with zero Arduino dependencies. Dependency model: `core ← game`. Core never imports game.
 
 Pure C++ — uses `std::string` (not Arduino `String`); firmware bridges with `.c_str()` / `std::string()`.
 
@@ -26,7 +26,8 @@ Detailed API, design decisions, and patterns for each module live in dedicated f
 | `trace.instructions.md` | `trace` — tuning trace extraction (now in `tools/tune/`, not `lib/core/`) |
 | `core-headers.instructions.md` | `piece.h`, `utils.h`, `bitboard.h`, `types.h`, `move.h`, `logger.h`, `hash_table.h` |
 | `search.instructions.md` | `search.h/cpp`, `move_picker.h`, `stats.h` — search algorithm, TT, MovePicker |
-| `engine-facade.instructions.md` | `Engine` — facade owning Position + TT, calculateMove API |
+| `uci.instructions.md` | `uci.h/cpp` — UCI protocol handler, UCIState resource bundle |
+| `time-management.instructions.md` | `time_management.h` — time control computation |
 
 ## Cross-Cutting Design Rules
 
@@ -40,7 +41,9 @@ Detailed API, design decisions, and patterns for each module live in dedicated f
 
 - **Search is a stateless namespace** — `search::findBestMove()` takes `Position&`, `SearchLimits`, `SearchState&` (required), optional `InfoCallback`. Infrastructure pointers (`timeFunc`, `tt`, `pawnHash`, `evalHash`) are set via `SearchState` constructor. All per-search state in `SearchState`. Safe to run from any context.
 
-- **Engine facade owns infrastructure** — `Engine` owns Position + TT + SearchState (direct member) + stop control. Thin wrapper around `findBestMove()`.
+- **Game optionally owns search infrastructure** — `Game::initSearch()` allocates TT, PawnHash, EvalHash, SearchState on heap. `Game::calculateMove()` calls `findBestMove()` on its own Position. Only initialized for bot mode; player-only games skip it entirely.
+
+- **UCI is a stateless dispatcher** — `uci::UCIState` owns Position + TT + hash tables + SearchState for the CLI path. `uci::loop()` / `uci::processLine()` are free functions. No classes, no inheritance.
 
 - **Platform time abstraction** — `TimeFunc` function pointer for `millis()` (ESP32) vs `nativeMillis()` (native tests).
 
@@ -81,6 +84,7 @@ Every change to `lib/core/` MUST include:
 | `trace.instructions.md` | Per-file — tuning trace extraction (moved to `tools/tune/`) |
 | `core-headers.instructions.md` | Per-file — piece, utils, bitboard, types, move, logger, hash_table |
 | `search.instructions.md` | Per-file — search algorithm, MovePicker, SearchState |
-| `engine-facade.instructions.md` | Per-file — Engine facade, calculateMove API |
+| `uci.instructions.md` | Per-file — UCI protocol handler |
+| `time-management.instructions.md` | Per-file — time control computation |
 | `game-library.instructions.md` | Downstream consumer (`core ← game`) |
 | `testing.instructions.md` | Test architecture and per-group details |

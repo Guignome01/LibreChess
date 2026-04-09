@@ -3,27 +3,22 @@
 #include "game_mode/game_mode.h"
 #include <Arduino.h>
 #include <esp_heap_caps.h>
-#include <memory>
 #include <new>
 
-#include "movegen.h"
 #include "notation.h"
+#include "movegen.h"
 
 // ---------------------------------------------------------------------------
-// LibreChessProvider — on-board chess engine using the core search library.
+// LibreChessProvider — on-board chess engine using Game::calculateMove().
 //
-// The Engine (TT, pawn hash, eval hash, SearchState) is created once in
-// initialize() and persists for the game's lifetime, avoiding heap
-// fragmentation from per-move alloc/free cycles.  Each requestMove() spawns
-// a FreeRTOS task that:
-//   1. Wires the cancellation flag for this search.
-//   2. Calls calculateMove(fen, limits) on the persistent Engine.
-//   3. Converts the SearchResult to an EngineResult.
-//   4. Sets the result and marks ready.
-//
-// The TT and SearchState persist across moves, enabling cross-move
-// transposition reuse for stronger play and eliminating per-search
-// heap allocation entirely.
+// Game::initSearch() is called once in initialize(), allocating TT, hash
+// tables, and SearchState that persist for the game's lifetime.  Each
+// requestMove() spawns a FreeRTOS task that:
+//   1. Wires the cancellation flag.
+//   2. Loads the FEN into Game's position.
+//   3. Calls game->calculateMove(limits).
+//   4. Converts the SearchResult to an EngineResult.
+//   5. Sets the result and marks ready.
 //
 // The task is cooperative-cancellable via ctx->cancel → SearchLimits.stop.
 // ---------------------------------------------------------------------------
@@ -33,15 +28,16 @@ static constexpr size_t MIN_FREE_HEAP      = 32 * 1024;
 static constexpr size_t EVAL_HASH_OVERHEAD = 12 * 1024;   // pawn (6 KiB) + eval (4 KiB) hash
 static constexpr size_t SEARCH_OVERHEAD    = 16 * 1024;   // SearchState (~10 KiB + headroom)
 
-LibreChessProvider::LibreChessProvider(int level, char playerColor, ILogger* logger)
-    : EngineProvider(logger), playerColor_(playerColor) {
+LibreChessProvider::LibreChessProvider(LibreChess::Game* game, int level,
+                                       char playerColor, ILogger* logger)
+    : EngineProvider(logger), game_(game), playerColor_(playerColor) {
   // Clamp to valid range and resolve depth from the level table.
   level_ = (level < 1) ? DEFAULT_LEVEL : (level > LEVEL_COUNT) ? DEFAULT_LEVEL : level;
   depth_ = LEVELS[level_ - 1].depth;
 }
 
 LibreChessProvider::~LibreChessProvider() {
-  // Stop any running search task before destroying the engine it references.
+  // Stop any running search task before teardown.
   cancelRequest();
 }
 
@@ -49,13 +45,11 @@ bool LibreChessProvider::initialize(EngineInitResult& result) {
   logger_.info("LibreChessProvider: initializing on-board engine");
   logger_.infof("  level=%d, depth=%d", level_, depth_);
 
-  // --- Create persistent Engine with heap-sized TT ---
+  // --- Initialize search resources on the Game object ---
   //
   // The TT is sized once against available heap, capped at 64 KiB.
-  // Hash tables (pawn 6 KiB + eval 4 KiB) are allocated inside the Engine
-  // constructor.  All three persist across moves — no per-move fragmentation.
-  // Reserve headroom for the per-search SearchState (~10 KiB) and a safety
-  // margin for other tasks (32 KiB).
+  // Hash tables (pawn 6 KiB + eval 4 KiB) are allocated inside
+  // Game::initSearch().  All persist across moves.
   static constexpr size_t MAX_TT_BYTES  = 64 * 1024;
   static constexpr size_t TOTAL_OVERHEAD = MIN_FREE_HEAP + EVAL_HASH_OVERHEAD + SEARCH_OVERHEAD;
   static constexpr size_t ENTRY_SIZE = sizeof(LibreChess::search::TTEntry);
@@ -78,13 +72,8 @@ bool LibreChessProvider::initialize(EngineInitResult& result) {
   logger_.infof("LibreChess: TT %d entries (%u bytes)",
                  ttEntries, static_cast<unsigned>(ttEntries * ENTRY_SIZE));
 
-  auto* raw = new (std::nothrow) LibreChess::Engine(ttEntries);
-  if (!raw) {
-    logger_.error("LibreChess: failed to allocate Engine");
-    return false;
-  }
-  engine_.reset(raw);
-  engine_->setTimeFunc([]() -> uint32_t { return millis(); });
+  game_->initSearch(ttEntries);
+  game_->setTimeFunc([]() -> uint32_t { return millis(); });
 
   result.playerColor = playerColor_;
   result.fen = "";  // Starting position
@@ -99,7 +88,7 @@ void LibreChessProvider::requestMove(const std::string& fen) {
   auto* ctx = new TaskContext();
   ctx->fen = fen;
   ctx->depth = depth_;
-  ctx->engine = engine_.get();
+  ctx->game = game_;
   // Stack budget for lcTask (64 KiB = 65536 bytes):
   //   findBestMove frame (MoveList + SearchResult) .... ~1,200 B
   //   Per negamax ply (MovePicker with int16_t arrays) . ~2,200 B × depth
@@ -164,30 +153,19 @@ void LibreChessProvider::taskFunction(void* param) {
   auto* ctx = static_cast<TaskContext*>(param);
 
   // Wire the cancellation flag for this search.
-  ctx->engine->setExternalStop(&ctx->cancel);
+  ctx->game->setExternalStop(&ctx->cancel);
 
-  // Verify the heap can still satisfy the per-search SearchState (~10 KiB).
-  // The persistent Engine's TT and hash tables are already allocated, so
-  // only SearchState + a free margin for other tasks need to be available.
+  // No need to load position — Game already has the current board state.
+  // BotMode always calls requestMove(chess_->getFen()) after making moves
+  // through Game, so the position is already correct.  Calling loadFEN()
+  // from a FreeRTOS task would be unsafe (clears history, notifies observer).
 
-  size_t freeHeap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
-  size_t largestBlock = heap_caps_get_largest_free_block(MALLOC_CAP_8BIT);
-  ctx->logger.infof("LibreChess: free heap %u, largest block %u", freeHeap, largestBlock);
-
-  size_t usable = (largestBlock < freeHeap) ? largestBlock : freeHeap;
-  if (usable < MIN_FREE_HEAP + SEARCH_OVERHEAD) {
-    ctx->logger.errorf("LibreChess: insufficient heap for search (%u)", usable);
-    fallbackMove(ctx->fen, ctx->result, ctx->logger);
-    ctx->ready.store(true);
-    vTaskDelete(nullptr);
-    return;
-  }
-
-  // Search — SearchState (~10 KiB) is heap-allocated internally per search.
+  // Search — TT, hash tables, and SearchState are already allocated
+  // inside Game by initSearch().
   LibreChess::search::SearchLimits limits;
   limits.maxDepth = (ctx->depth > 0) ? ctx->depth : 6;
 
-  auto result = ctx->engine->calculateMove(ctx->fen, limits);
+  auto result = ctx->game->calculateMove(limits);
 
   // Convert SearchResult → EngineResult
   if (!moveToResult(result.bestMove, ctx->result, result.score)) {

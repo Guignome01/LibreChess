@@ -6,7 +6,7 @@ A comprehensive map of the codebase, covering firmware, web frontend, build tool
 
 ```
 ├── src/                    Firmware source code and web frontend sources
-├── lib/core/               Chess engine — board representation, rules, movegen, evaluation, search, Engine facade
+├── lib/core/               Chess engine — board representation, rules, movegen, evaluation, search, UCI protocol, time management
 ├── lib/game/               Game orchestrator — Game, History, recording, DI interfaces
 ├── test/                   Native unit tests (PlatformIO Unity framework)
 ├── data/                   Pre-built web assets (gzip-compressed) for LittleFS
@@ -52,7 +52,7 @@ A comprehensive map of the codebase, covering firmware, web frontend, build tool
 | `engine/lichess/lichess_provider.h/.cpp` | `LichessProvider`: extends `EngineProvider`, blocking `initialize()` discovers active games (token verification + event polling). `requestMove()` spawns a FreeRTOS task that opens a persistent NDJSON stream and reads events; reconnects with exponential backoff on connection loss. `onPlayerMoveApplied()` sends moves to Lichess with retries. `onResignConfirmed()` resigns on the server. |
 | `engine/lichess/lichess_api.h/.cpp` | Lichess API client. Token management, game event polling, persistent game stream (`connectGameStream()` / `readStreamEvent()`), move submission, and resignation. Connects to `lichess.org` over HTTPS. |
 | `engine/lichess/lichess_config.h` | `LichessConfig` struct: holds the Lichess API token. |
-| `engine/librechess/librechess_provider.h/.cpp` | `LibreChessProvider`: extends `EngineProvider`, runs the on-board search engine in-process via the `Engine` facade. Each `requestMove()` spawns a FreeRTOS task (16 KiB stack) that creates an `Engine` with heap-sized TT, sets time/stop, calls `calculateMove()`, and converts the `SearchResult` to `EngineResult`. No network, no string serialization. |
+| `engine/librechess/librechess_provider.h/.cpp` | `LibreChessProvider`: extends `EngineProvider`, runs the on-board search engine in-process via `Game::calculateMove()`. Takes a `Game*` at construction. `initialize()` calls `game->initSearch()` with heap-sized TT + `game->setTimeFunc(millis)`. Each `requestMove()` spawns a FreeRTOS task (64 KiB stack) that wires cancellation, calls `game->calculateMove(limits)`, and converts the `SearchResult` to `EngineResult`. No network, no string serialization. |
 
 ### Infrastructure
 
@@ -104,7 +104,7 @@ Two PlatformIO libraries with clean dependency boundaries: `core ← game`. Game
 
 ### Foundation (`lib/core/`)
 
-Board representation, rules, movegen, evaluation, search, Engine facade, notation, FEN, and utilities. Zero Arduino dependencies — natively compilable for host-based unit testing.
+Board representation, rules, movegen, evaluation, search, UCI protocol, time management, notation, FEN, and utilities. Zero Arduino dependencies — natively compilable for host-based unit testing.
 
 | File | Purpose |
 |------|---------|
@@ -127,15 +127,16 @@ Board representation, rules, movegen, evaluation, search, Engine facade, notatio
 | `src/eval_params.h` | `eval` namespace: extracted evaluation constants — `EVAL_CONST`/`EVAL_FIXED`/`PST_ELEM`/`MAT_ELEM` macros, material values, PST tables (12 arrays × 64), pawn structure bonuses, bishop pair/bad bishop, rook bonuses, mobility weights, king safety/danger tables, outpost/space/trapped/threat parameters. Separated from `evaluation.cpp` for clarity and tuning workflow. |
 | `src/search.h/.cpp` | `search` namespace: on-board chess engine — negamax with alpha-beta pruning + quiescence search (MVV-LVA ordered) + iterative deepening + check extensions + recapture extensions (cached SEE) + PVS + null move pruning (NMP, adaptive R) + late move reductions (logarithmic table + history + improving) + late move pruning (improving-aware) + reverse futility pruning (margin/depth, improving-aware) + aspiration windows (gradual doubling) + root move reordering + delta pruning (quiescence) + futility pruning (shallow negamax) + SEE-based capture ordering (losing captures demoted, SEE computed lazily when yielded) + improving flag (ply-2/ply-4 eval tracking). `findBestMove(pos, limits, state, info)` is the single public entry point. `SearchLimits` (depth/time/stop), `SearchResult` (bestMove/score/depth/nodes), `SearchState` (per-search heuristics + staticEvals). Constants: `MATE_SCORE`, `MAX_PLY`, `DEFAULT_TT_SIZE`. Also contains `TranspositionTable` (inherits `HashTableBase<TTEntry>`), `TTFlag` enum, `PackedMove` typedef + pack/unpack, `TTEntry` struct (12 bytes), generation tracking, inline `probe`/`store`. |
 | `src/search_params.h` | `search` namespace: extracted search constants — pruning margins (futility, razor, RFP, LMP, history), reduction thresholds (NMP, LMR depth/moves), LMR reduction table (`LMR_TABLE` + `initLMR()`), aspiration window delta, singular extension parameters, lazy eval margin, tempo bonus, and quiescence depth limit. Separated from `search.cpp` for clarity. |
+| `src/uci.h/.cpp` | `uci` namespace: UCI protocol handler. `UCIState` resource bundle (owns Position, TT, hash tables, SearchState, stop flag). `loop(state, in, out)` — blocking stdin/stdout loop for the native CLI. `processLine(state, line, output)` — pure string-in/string-out for unit tests. Supports `uci`, `isready`, `setoption`, `ucinewgame`, `position`, `go`, `quit`. Reference: CPW UCI. |
+| `src/time_management.h` | `time_management` namespace (header-only): `computeTimeLimits(wtime, btime, winc, binc, movestogo, sideToMove) → SearchLimits`. Formula: `softTime = remaining/30 + increment/2`, `hardTime = min(remaining/4, softTime*4)`. Safety margin: `remaining − 50ms`. With movestogo: `softTime = remaining/movestogo + increment`. Reference: CPW Time Management. |
 | `src/move_picker.h` | `MovePicker` (header-only): staged move generation for search — 9 stages (TT → captures → killers → countermove → quiets → bad captures → done). MVV-LVA scoring (`scoreMVVLVA`), lazy SEE evaluation, `isMoveValid` (flag reconstruction), `pickBest` template, heuristic update helpers (`updateKillers`, `updateHistory` with gravity formula, `updateCaptureCutoffHistory`, `updateQuietCutoffHeuristics`), safe accessor helpers (`safeCaptureHistScore`, `safeCountermove`). |
-| `src/engine.h/.cpp` | `Engine` class: direct-call facade over `search::findBestMove()`. Owns `Position`, `TranspositionTable`, and stop control. API: `calculateMove(fen, limits) → SearchResult`, `newGame()`, `setTimeFunc()`, `stop()`, `setExternalStop()`. No string serialization. |
 | `src/stats.h` | Search statistics (`#ifdef STATS` only): `SearchStats` counters for node types, pruning, extensions, reductions. Compiled only in `native_stats` env. |
 
 Game lifecycle, history, recording, and DI interfaces. Depends on `lib/core/`.
 
 | File | Purpose |
 |------|---------|
-| `src/game.h/.cpp` | `Game` class: central game orchestrator. Composes `Position`, `History`, and optionally `IGameObserver`. Constructor: `(IGameStorage*, IGameObserver*, ILogger*)`. All chess-state mutations flow through this class. Handles threefold repetition detection (via Zobrist hashing), move history recording, persistent game recording (delegated to `History`), observer notification, and batching. Provides dual overloads (Square-native and row/col) for `makeMove`, `getSquare`, `getPossibleMoves`, `checkEnPassant`, `checkCastling`; Square-native is the primary implementation, row/col thin-wraps it for firmware convenience. Exposes `bitboards()` and `mailbox()` accessors, board iteration helpers (`forEachSquare` via `utils::`), and notation convenience methods (`makeMove(string)`, `toCoordinate()`, `parseCoordinate()`, `getHistory(format)`) so firmware never needs to include core headers directly. |
+| `src/game.h/.cpp` | `Game` class: central game orchestrator. Composes `Position`, `History`, and optionally `IGameObserver`. Constructor: `(IGameStorage*, IGameObserver*, ILogger*)`. All chess-state mutations flow through this class. Handles threefold repetition detection (via Zobrist hashing), move history recording, persistent game recording (delegated to `History`), observer notification, and batching. Optionally owns search resources (TT, PawnHash, EvalHash, SearchState) allocated via `initSearch()` for bot mode. Provides `calculateMove(limits) → SearchResult` that calls `findBestMove()` on the internal Position. Provides dual overloads (Square-native and row/col) for `makeMove`, `getSquare`, `getPossibleMoves`, `checkEnPassant`, `checkCastling`; Square-native is the primary implementation, row/col thin-wraps it for firmware convenience. Exposes `bitboards()` and `mailbox()` accessors, board iteration helpers (`forEachSquare` via `utils::`), and notation convenience methods (`makeMove(string)`, `toCoordinate()`, `parseCoordinate()`, `getHistory(format)`) so firmware never needs to include core headers directly. |
 | `src/types.h` | Game-management types: `GameHeader` packed struct (16 bytes, `#pragma pack(push, 1)`, on-disk recording format with opaque `meta[GAME_META_SIZE]` byte array for firmware-specific data), recording constants (`FEN_MARKER`, `MAX_GAMES`, `MAX_USAGE_PERCENT`, `GAME_META_SIZE`). Display-coordinate bridge: `rowColToSquare`, `squareToRow`, `squareToCol`, `rankChar(row)`, `squareName(row,col)`. Includes `piece.h` to re-export core types — shared name with `lib/core/src/types.h` (see note in file header). |
 | `src/history.h/.cpp` | `History` class: in-memory game history and persistent game recording. Ordered move log (`MoveEntry` structs with full move metadata including previous position state), Zobrist hash tracking for threefold repetition detection, and game recording lifecycle (compact 2-byte move encoding via static `encodeMove()`/`decodeMove()`, manages `GameHeader`, delegates persistence to `IGameStorage`, flushes header every full turn to reduce flash wear, validates moves during replay, replays games directly into a `Position`). Fixed-size arrays (ESP32-friendly). Composed by `Game`. |
 | `src/observer.h` | `IGameObserver` abstract interface: `onBoardStateChanged(fen, evaluation)`. |
@@ -164,7 +165,7 @@ test/
 │   ├── test_utils.cpp                  utils: 50-move rule, castling rights, coordinate helpers, board transforms, resolveKingSquare, forEachSquare/forEachPiece
 │   ├── test_zobrist.cpp                Zobrist hashing: key determinism, computeHash, computePawnHash, position sensitivity
 │   ├── test_search.cpp                 search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, time/stop control, TT store/probe/clear/pack/mate-score, move ordering, delta pruning, futility pruning, SEE ordering
-│   └── test_engine.cpp                 Engine facade: calculateMove, depth control, stop/external stop, mate-in-1, TT persistence, score range
+│   └── test_uci.cpp                     UCI protocol: uci command, isready, go depth, position/fen, newgame, info output, quit, mate score, setoption Hash, go movetime
 ├── test_game/
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls for game tests
 │   ├── test_game.cpp                   Game: threefold repetition, draw detection, observer notification/batching, history
@@ -189,6 +190,17 @@ test/
 ```
 
 Run all: `pio test -e native`. Run one suite: `pio test -e native -f test_core`. See [PlatformIO Unit Testing docs](https://docs.platformio.org/en/latest/advanced/unit-testing/index.html).
+
+## Engine CLI (`tools/engine/`)
+
+Native UCI engine executable for SPRT testing with cutechess-cli / fastchess. Compiles the core library into a standalone command-line binary.
+
+| File | Purpose |
+|------|---------|
+| `main.cpp` | Entry point: sets up `nativeMillis()` via `std::chrono`, creates `UCIState`, calls `uci::loop(state, stdin, stdout)`. ~30 lines. |
+| `Makefile` | Compiles `main.cpp` + all `lib/core/src/*.cpp`. Output: `librechess.exe` (Windows) / `librechess` (Linux). Flags: `-std=gnu++17 -O2 -DNDEBUG`. |
+
+Build: `cd tools/engine && mingw32-make` (Windows) or `make` (Linux).
 
 ## Tuning Tools (`tools/tune/`)
 

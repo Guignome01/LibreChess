@@ -398,7 +398,7 @@ void initializeSelectedMode(AppMode mode) {
       Serial.printf("Starting 'Chess Bot' (Engine: %s, Level: %d, Player is %s)...\n", botEngine.c_str(), botDifficultyLevel, playerColor == 'w' ? "White" : "Black");
       EngineProvider* provider;
       if (botEngine == "librechess") {
-        provider = new LibreChessProvider(botDifficultyLevel, playerColor, &logger);
+        provider = new LibreChessProvider(&chess, botDifficultyLevel, playerColor, &logger);
       } else {
         provider = new StockfishProvider(botDifficultyLevel, playerColor, &logger);
       }
