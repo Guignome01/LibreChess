@@ -182,6 +182,7 @@ Features from the [Chess Programming Wiki](https://www.chessprogramming.org/Main
 | Node/Eval Regression | Implemented | Node count regression (10 positions × depth 10, 15% threshold) + eval regression (15 positions, exact match). `test/test_benchmarks/test_regression.cpp`. | — |
 | Search Statistics | Implemented | Diagnostic stats: TT hit rates, cutoff quality, pruning/extension counts, QS/main node ratios. `test/test_statistics/test_statistics.cpp`. Requires `-DSTATS`. | [CPW — Search Statistics](https://www.chessprogramming.org/Search_Statistics) |
 | Evaluation Regression Tests | Implemented | 12 fixed-position score assertions covering symmetry, material advantage, pawn structure, bishop pair, king safety, threats, phase tapering. `test/test_core/test_eval_regression.cpp`. | — |
+| SPRT Testing | Implemented | Sequential Probability Ratio Test via [fastchess](https://github.com/Disservin/fastchess). Builds baseline + dev engines, runs thousands of games with SPRT bounds. `tools/sprt/Makefile`, opening book `tools/sprt/8moves_v3.pgn`. | [CPW — Match Statistics](https://www.chessprogramming.org/Match_Statistics) |
 
 ## References
 

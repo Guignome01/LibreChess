@@ -1,0 +1,7 @@
+# Build artifacts & binaries
+fastchess*
+*.exe
+*.pgn
+
+# Temporary worktree (created during baseline build)
+worktree/

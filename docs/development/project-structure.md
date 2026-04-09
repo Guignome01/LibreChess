@@ -193,14 +193,25 @@ Run all: `pio test -e native`. Run one suite: `pio test -e native -f test_core`.
 
 ## Engine CLI (`tools/engine/`)
 
-Native UCI engine executable for SPRT testing with cutechess-cli / fastchess. Compiles the core library into a standalone command-line binary.
+Native UCI engine executable for SPRT testing with fastchess. Compiles the core library into a standalone command-line binary.
 
 | File | Purpose |
-|------|---------|
+|------|---------|  
 | `main.cpp` | Entry point: sets up `nativeMillis()` via `std::chrono`, creates `UCIState`, calls `uci::loop(state, stdin, stdout)`. ~30 lines. |
 | `Makefile` | Compiles `main.cpp` + all `lib/core/src/*.cpp`. Output: `librechess.exe` (Windows) / `librechess` (Linux). Flags: `-std=gnu++17 -O2 -DNDEBUG`. |
 
 Build: `cd tools/engine && mingw32-make` (Windows) or `make` (Linux).
+
+## SPRT Testing (`tools/sprt/`)
+
+Sequential Probability Ratio Test infrastructure for validating engine changes. Uses [fastchess](https://github.com/Disservin/fastchess) to run many games between a baseline engine and a patched engine, accepting or rejecting the change with statistical confidence.
+
+| File | Purpose |
+|------|---------|  
+| `Makefile` | SPRT runner: builds baseline (from git ref via worktree) and dev (current tree) engines, invokes fastchess with SPRT bounds and adjudication rules. |
+| `8moves_v3.pgn` | Opening book (~34,700 openings, 8 moves deep, Stockfish self-play). Sourced from [CPW](https://www.chessprogramming.org/). Suited for weaker engines. |
+
+Usage: `cd tools/sprt && make` (defaults: BASELINE=HEAD, TC=8+0.08, ELO0=0, ELO1=10). See `tools/sprt/README.md` for full parameter reference.
 
 ## Tuning Tools (`tools/tune/`)
 

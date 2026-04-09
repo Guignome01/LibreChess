@@ -57,6 +57,10 @@ Unit tests run natively on the host machine (no ESP32 required) using the Platfo
 
 For test architecture, file mirroring conventions, and per-file test group details, see `.github/instructions/testing.instructions.md` (auto-loaded when editing `test/` files).
 
+### SPRT Testing
+
+Engine-vs-engine strength testing via [fastchess](https://github.com/Disservin/fastchess). Validates that a code change does not regress (or confirms it gains Elo). Separate from unit tests — runs the native UCI engine (`tools/engine/librechess.exe`). See `tools/sprt/README.md` for usage.
+
 ## Code Style
 
 C++ formatting: `.clang-format` (Google style base, no column limit). Run clang-format before committing.
