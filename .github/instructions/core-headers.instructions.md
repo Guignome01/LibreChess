@@ -19,7 +19,7 @@ Header-only foundations shared by all core modules.
 
 ## `move.h` — Move Representation
 
-- `Move` — 3 bytes: `from`, `to`, `flags` (MOVE_CAPTURE, MOVE_EP, MOVE_CASTLING, MOVE_PROMOTION + 2-bit promo index). Constexpr accessors: `isCapture()`, `isEP()`, `isCastling()`, `isPromotion()`, `promoIndex()`. Promotions emit 4 variants per target square.
+- `Move` — 3 bytes: `from`, `to`, `flags` (MOVE_CAPTURE, MOVE_EP, MOVE_CASTLING, MOVE_PROMOTION + 2-bit promo index). Constexpr accessors: `isCapture()`, `isEP()`, `isCastling()`, `isPromotion()`, `promoIndex()`, `isTactical()` (capture or promotion), `isNull()` (from==0 && to==0). Promotions emit 4 variants per target square.
 - `MoveResult` — packed `uint8_t flags` (MR_VALID..MR_CHECK) + `epCapturedSq`, `promotedTo`, `gameResult`, `winnerColor`. Constexpr accessors.
 - `MoveEntry` — history entry reusing MR_* flag bits (skipping MR_VALID). Factory: `MoveEntry::build()` copies flags via `result.flags & ME_FLAG_MASK`.
 - `MoveListBase<N>` — template: `Move[N]` + `count`. Bounds-checked `add()` (silently drops when full). Fixed-size (no `std::vector`).

@@ -39,6 +39,7 @@ Precomputed leaper tables and O(1) slider functions. Stateless namespace (~3 KiB
 - **First-rank table** — 512-byte `FIRST_RANK_ATTACKS[8][64]` indexed by file + 6-bit inner occupancy for rank attacks. `static constexpr` in attacks.cpp (placed in .rodata).
 - **Diagonal masks** — `DIAG[15]`, `ANTI_DIAG[15]` indexed by `rank-file+7` and `rank+file`. `static constexpr` in attacks.cpp (~240 bytes, placed in .rodata).
 - **Compile-time tables** — All leaper and slider tables are built by constexpr functions and placed in .rodata (flash), not BSS (RAM). The `extern const` + constexpr builder pattern is used because MinGW GCC rejects `inline constexpr` variables.
+- **`pieceIndex(Color, PieceType)` indexing** — all functions accessing `bb.byPiece[]` use `pieceIndex(color, PieceType::X)` for type-safe, self-documenting access. This is the codebase-wide standard; never use raw `base + N` offsets or `pieceIndex(makePiece(...))`.
 
 ## Testing
 

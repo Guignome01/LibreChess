@@ -9,11 +9,11 @@
 //
 // Three generation modes:
 //   • Per-piece: getPossibleMoves() — legal moves for one piece (LED hints).
-//   • Bulk: generateAllMoves() / generateCaptures() — full position
-//     enumeration for search and game-end detection.
-//   • Staged: buildLegalityContext() once, then generateCaptures() and
-//     generateQuiets() reusing the same context (avoids double pin/check
-//     computation in staged move pickers).
+//   • Bulk: generateMoves(filter) — full position enumeration for search
+//     and game-end detection.  Template on MoveList/QSMoveList capacity.
+//   • Staged: buildLegalityContext() once, then generateMoves(ctx, filter)
+//     reusing the same context (avoids double pin/check computation in
+//     staged move pickers).
 //
 // Also provides single-move validation (isValidMove) and the EP legality
 // query used by Zobrist hashing (hasLegalEnPassantCapture).
@@ -81,58 +81,34 @@ void getPossibleMoves(const BitboardSet& bb, const Piece mailbox[],
                       MoveList& moves);
 
 // ---------------------------------------------------------------------------
-// Bulk legal move generation
+// Bulk legal move generation (template: MoveList or QSMoveList)
+//
+// Self-contained: resolves king, builds legality context, collects moves.
+// Template on MoveListBase<N> capacity (218 for MoveList, 128 for QSMoveList).
 // ---------------------------------------------------------------------------
 
-// All legal moves for `color`.  Computes pin+check masks once, then iterates
-// all friendly pieces via bitboard serialization.
-void generateAllMoves(const BitboardSet& bb, const Piece mailbox[],
-                      Color color, const PositionState& state,
-                      MoveList& moves);
-
-// Captures and capture-promotions only (for quiescence search).
-// Self-contained: builds its own LegalityContext internally.
-void generateCaptures(const BitboardSet& bb, const Piece mailbox[],
-                      Color color, const PositionState& state,
-                      MoveList& moves);
+template <int N>
+void generateMoves(const BitboardSet& bb, const Piece mailbox[],
+                   Color color, const PositionState& state,
+                   MoveListBase<N>& moves, FilterMode filter);
 
 // ---------------------------------------------------------------------------
 // Staged move generation (reuses pre-built LegalityContext)
 // ---------------------------------------------------------------------------
 
-// Captures and capture-promotions only, using a pre-built context.
-void generateCaptures(const BitboardSet& bb, const Piece mailbox[],
-                      Color color, const PositionState& state,
-                      const LegalityContext& ctx, MoveList& moves);
+// Legal moves matching `filter`, using a pre-built context (clears output).
+void generateMoves(const BitboardSet& bb, const Piece mailbox[],
+                   Color color, const PositionState& state,
+                   const LegalityContext& ctx, MoveList& moves,
+                   FilterMode filter);
 
-// Quiet (non-capture) moves only, using a pre-built context.
-// Excludes captures and capture-promotions — only quiet moves and
-// underpromotions.
-void generateQuiets(const BitboardSet& bb, const Piece mailbox[],
-                    Color color, const PositionState& state,
-                    const LegalityContext& ctx, MoveList& moves);
-
-// Append-mode quiet generation — same as generateQuiets() but does NOT
-// clear the output list.  Used by MovePicker to append quiet moves after
-// captures in a shared MoveList, avoiding a temporary buffer + copy.
-void generateQuietsAppend(const BitboardSet& bb, const Piece mailbox[],
-                          Color color, const PositionState& state,
-                          const LegalityContext& ctx, MoveList& moves);
-
-// ---------------------------------------------------------------------------
-// Quiescence-search overloads (QSMoveList — cap 128)
-//
-// Identical semantics to the MoveList versions above but generate into a
-// smaller buffer, reducing per-ply stack usage by ~450 bytes.
-// ---------------------------------------------------------------------------
-
-void generateAllMoves(const BitboardSet& bb, const Piece mailbox[],
-                      Color color, const PositionState& state,
-                      QSMoveList& moves);
-
-void generateCaptures(const BitboardSet& bb, const Piece mailbox[],
-                      Color color, const PositionState& state,
-                      QSMoveList& moves);
+// Append-mode staged generation — same as above but does NOT clear the
+// output list.  Used by MovePicker to append quiet moves after captures in
+// a shared MoveList, avoiding a temporary buffer + copy.
+void generateMovesAppend(const BitboardSet& bb, const Piece mailbox[],
+                         Color color, const PositionState& state,
+                         const LegalityContext& ctx, MoveList& moves,
+                         FilterMode filter);
 
 // ---------------------------------------------------------------------------
 // Single-move validation

@@ -589,9 +589,6 @@ int main(int argc, char* argv[]) {
   if (argc >= 3) maxEpochs = std::atoi(argv[2]);
   if (maxEpochs < 1) maxEpochs = 500;
 
-  // Initialize eval infrastructure.
-  eval::initPawnMasks();
-
   // Build name→index map for trace extraction.
   eval::buildParamMap();
 

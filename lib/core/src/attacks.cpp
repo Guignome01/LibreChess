@@ -112,14 +112,6 @@ static constexpr auto& FIRST_RANK_ATTACKS = FIRST_RANK_TABLE.data;
 
 // ---------------------------------------------------------------------------
 // Byte swap for Hyperbola Quintessence
-// ---------------------------------------------------------------------------
-// Reverses byte order of a 64-bit value, which mirrors rank order on the
-// board. Used to compute negative-direction slider attacks by applying the
-// positive-direction subtraction trick on the reversed occupancy.
-
-static inline uint64_t byteSwap64(uint64_t v) {
-  return __builtin_bswap64(v);
-}
 
 // ---------------------------------------------------------------------------
 // Hyperbola Quintessence — O(1) line attacks (file/diagonal/anti-diagonal)
@@ -204,7 +196,7 @@ AttackInfo computeAll(const BitboardSet& bb) {
     Color color = static_cast<Color>(c);
 
     // --- Pawns (bulk shift, no per-square loop) ---
-    Bitboard pawns = bb.byPiece[pieceIndex(makePiece(color, PieceType::PAWN))];
+    Bitboard pawns = bb.byPiece[pieceIndex(color, PieceType::PAWN)];
     if (c == 0) {
       info.byPiece[c][raw(PieceType::PAWN)] = shiftNE(pawns) | shiftNW(pawns);
     } else {
@@ -212,35 +204,31 @@ AttackInfo computeAll(const BitboardSet& bb) {
     }
 
     // --- Knights (table lookup per square) ---
-    Bitboard knights = bb.byPiece[pieceIndex(makePiece(color, PieceType::KNIGHT))];
     Bitboard knightAtk = 0;
-    Bitboard tmp = knights;
+    Bitboard tmp = bb.byPiece[pieceIndex(color, PieceType::KNIGHT)];
     while (tmp) { knightAtk |= KNIGHT[popLsb(tmp)]; }
     info.byPiece[c][raw(PieceType::KNIGHT)] = knightAtk;
 
     // --- Bishops ---
-    Bitboard bishops = bb.byPiece[pieceIndex(makePiece(color, PieceType::BISHOP))];
     Bitboard bishopAtk = 0;
-    tmp = bishops;
+    tmp = bb.byPiece[pieceIndex(color, PieceType::BISHOP)];
     while (tmp) { bishopAtk |= bishop(popLsb(tmp), bb.occupied); }
     info.byPiece[c][raw(PieceType::BISHOP)] = bishopAtk;
 
     // --- Rooks ---
-    Bitboard rooks = bb.byPiece[pieceIndex(makePiece(color, PieceType::ROOK))];
     Bitboard rookAtk = 0;
-    tmp = rooks;
+    tmp = bb.byPiece[pieceIndex(color, PieceType::ROOK)];
     while (tmp) { rookAtk |= rook(popLsb(tmp), bb.occupied); }
     info.byPiece[c][raw(PieceType::ROOK)] = rookAtk;
 
     // --- Queens ---
-    Bitboard queens = bb.byPiece[pieceIndex(makePiece(color, PieceType::QUEEN))];
     Bitboard queenAtk = 0;
-    tmp = queens;
+    tmp = bb.byPiece[pieceIndex(color, PieceType::QUEEN)];
     while (tmp) { queenAtk |= queen(popLsb(tmp), bb.occupied); }
     info.byPiece[c][raw(PieceType::QUEEN)] = queenAtk;
 
     // --- King ---
-    Bitboard king = bb.byPiece[pieceIndex(makePiece(color, PieceType::KING))];
+    Bitboard king = bb.byPiece[pieceIndex(color, PieceType::KING)];
     info.byPiece[c][raw(PieceType::KING)] = king ? KING[lsb(king)] : 0;
 
     // --- Color union ---
@@ -265,16 +253,17 @@ Bitboard attackersOfSquare(const BitboardSet& bb, Square sq,
   Color defending = ~attackingColor;
   Bitboard attackers = 0;
 
-  // Zobrist indices are contiguous per color: white 0-5, black 6-11.
-  // base + offset replaces 6× makePiece + pieceIndex calls.
-  int base = piece::raw(attackingColor) * 6;
+  attackers |= PAWN[piece::raw(defending)][sq]
+             & bb.byPiece[piece::pieceIndex(attackingColor, PieceType::PAWN)];
+  attackers |= KNIGHT[sq]
+             & bb.byPiece[piece::pieceIndex(attackingColor, PieceType::KNIGHT)];
+  attackers |= KING[sq]
+             & bb.byPiece[piece::pieceIndex(attackingColor, PieceType::KING)];
 
-  attackers |= PAWN[piece::raw(defending)][sq] & bb.byPiece[base + 0];
-  attackers |= KNIGHT[sq] & bb.byPiece[base + 1];
-  attackers |= KING[sq] & bb.byPiece[base + 5];
-
-  Bitboard rookQueens   = bb.byPiece[base + 3] | bb.byPiece[base + 4];
-  Bitboard bishopQueens = bb.byPiece[base + 2] | bb.byPiece[base + 4];
+  Bitboard rookQueens   = bb.byPiece[piece::pieceIndex(attackingColor, PieceType::ROOK)]
+                        | bb.byPiece[piece::pieceIndex(attackingColor, PieceType::QUEEN)];
+  Bitboard bishopQueens = bb.byPiece[piece::pieceIndex(attackingColor, PieceType::BISHOP)]
+                        | bb.byPiece[piece::pieceIndex(attackingColor, PieceType::QUEEN)];
   attackers |= rook(sq, bb.occupied)   & rookQueens;
   attackers |= bishop(sq, bb.occupied) & bishopQueens;
 
@@ -288,17 +277,19 @@ bool isSquareUnderAttack(const BitboardSet& bb, Square sq, Color defendingColor)
 bool isSquareUnderAttackOcc(const BitboardSet& bb, Square sq,
                             Color defendingColor, Bitboard occupancy) {
   Color attacking = ~defendingColor;
-  int base = piece::raw(attacking) * 6;
 
   // Early exits: check leapers first (cheap table lookups), then sliders
   // (expensive ray computation).  Returns as soon as any attacker is found.
-  if (PAWN[piece::raw(defendingColor)][sq] & bb.byPiece[base + 0]) return true;
-  if (KNIGHT[sq] & bb.byPiece[base + 1]) return true;
-  if (KING[sq]   & bb.byPiece[base + 5]) return true;
+  if (PAWN[piece::raw(defendingColor)][sq]
+      & bb.byPiece[piece::pieceIndex(attacking, PieceType::PAWN)]) return true;
+  if (KNIGHT[sq] & bb.byPiece[piece::pieceIndex(attacking, PieceType::KNIGHT)]) return true;
+  if (KING[sq]   & bb.byPiece[piece::pieceIndex(attacking, PieceType::KING)])   return true;
 
-  Bitboard rookQueens = bb.byPiece[base + 3] | bb.byPiece[base + 4];
+  Bitboard rookQueens = bb.byPiece[piece::pieceIndex(attacking, PieceType::ROOK)]
+                      | bb.byPiece[piece::pieceIndex(attacking, PieceType::QUEEN)];
   if (rookQueens   && (rook(sq, occupancy)   & rookQueens))   return true;
-  Bitboard bishopQueens = bb.byPiece[base + 2] | bb.byPiece[base + 4];
+  Bitboard bishopQueens = bb.byPiece[piece::pieceIndex(attacking, PieceType::BISHOP)]
+                        | bb.byPiece[piece::pieceIndex(attacking, PieceType::QUEEN)];
   if (bishopQueens && (bishop(sq, occupancy) & bishopQueens)) return true;
 
   return false;
@@ -338,35 +329,24 @@ static PieceType leastValuableAttacker(const BitboardSet& bb,
                                        Bitboard occupied,
                                        Square sq, Color color,
                                        Bitboard& attackerBB) {
-  // Pawns
-  int idx = piece::pieceIndex(piece::makePiece(color, PieceType::PAWN));
   // PAWN[~color] gives squares from which a pawn of `color` attacks `sq`.
-  Bitboard attackers = PAWN[piece::raw(~color)][sq] & bb.byPiece[idx] & occupied;
+  Bitboard attackers = PAWN[piece::raw(~color)][sq]
+                     & bb.byPiece[piece::pieceIndex(color, PieceType::PAWN)] & occupied;
   if (attackers) { attackerBB = attackers & -attackers; return PieceType::PAWN; }
 
-  // Knights
-  idx = piece::pieceIndex(piece::makePiece(color, PieceType::KNIGHT));
-  attackers = KNIGHT[sq] & bb.byPiece[idx] & occupied;
+  attackers = KNIGHT[sq] & bb.byPiece[piece::pieceIndex(color, PieceType::KNIGHT)] & occupied;
   if (attackers) { attackerBB = attackers & -attackers; return PieceType::KNIGHT; }
 
-  // Bishops
-  idx = piece::pieceIndex(piece::makePiece(color, PieceType::BISHOP));
-  attackers = bishop(sq, occupied) & bb.byPiece[idx] & occupied;
+  attackers = bishop(sq, occupied) & bb.byPiece[piece::pieceIndex(color, PieceType::BISHOP)] & occupied;
   if (attackers) { attackerBB = attackers & -attackers; return PieceType::BISHOP; }
 
-  // Rooks
-  idx = piece::pieceIndex(piece::makePiece(color, PieceType::ROOK));
-  attackers = rook(sq, occupied) & bb.byPiece[idx] & occupied;
+  attackers = rook(sq, occupied) & bb.byPiece[piece::pieceIndex(color, PieceType::ROOK)] & occupied;
   if (attackers) { attackerBB = attackers & -attackers; return PieceType::ROOK; }
 
-  // Queens
-  idx = piece::pieceIndex(piece::makePiece(color, PieceType::QUEEN));
-  attackers = queen(sq, occupied) & bb.byPiece[idx] & occupied;
+  attackers = queen(sq, occupied) & bb.byPiece[piece::pieceIndex(color, PieceType::QUEEN)] & occupied;
   if (attackers) { attackerBB = attackers & -attackers; return PieceType::QUEEN; }
 
-  // King
-  idx = piece::pieceIndex(piece::makePiece(color, PieceType::KING));
-  attackers = KING[sq] & bb.byPiece[idx] & occupied;
+  attackers = KING[sq] & bb.byPiece[piece::pieceIndex(color, PieceType::KING)] & occupied;
   if (attackers) { attackerBB = attackers & -attackers; return PieceType::KING; }
 
   return PieceType::NONE;

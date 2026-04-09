@@ -247,8 +247,7 @@ static void test_search_time_limit(void) {
     return timerCallCount++ > 0 ? 1000 : 0;
   };
 
-  search::SearchState state;
-  state.timeFunc = countingTimer;
+  search::SearchState state(countingTimer);
   auto result = search::findBestMove(pos, limits, state);
   // Should have completed at least depth 1 before stopping
   TEST_ASSERT_TRUE(result.depth >= 1);
@@ -405,8 +404,7 @@ static void test_tt_mate_score_roundtrip(void) {
   search::SearchLimits limits;
   limits.maxDepth = 3;
 
-  search::SearchState state;
-  state.tt = &tt;
+  search::SearchState state(nullptr, &tt);
   auto result = search::findBestMove(pos, limits, state);
   TEST_ASSERT_TRUE(result.score >= search::MATE_SCORE - 10);
   std::string move = moveToStr(result.bestMove);
@@ -466,8 +464,7 @@ static void test_pvs_lmr_middlegame_efficiency(void) {
   search::SearchLimits limits;
   limits.maxDepth = 5;
 
-  search::SearchState state;
-  state.tt = &tt;
+  search::SearchState state(nullptr, &tt);
   auto result = search::findBestMove(pos, limits, state);
   TEST_ASSERT_EQUAL_INT(5, result.depth);
   TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
@@ -579,8 +576,7 @@ static void test_ordering_finds_tactics(void) {
   search::SearchLimits limits;
   limits.maxDepth = 3;
 
-  search::SearchState state;
-  state.tt = &tt;
+  search::SearchState state(nullptr, &tt);
   auto result = search::findBestMove(pos, limits, state);
   std::string move = moveToStr(result.bestMove);
   TEST_ASSERT_EQUAL_STRING("d5c7", move.c_str());
@@ -749,8 +745,7 @@ static void test_countermove_with_tt(void) {
   search::SearchLimits limits;
   limits.maxDepth = 5;
 
-  search::SearchState state;
-  state.tt = &tt;
+  search::SearchState state(nullptr, &tt);
   auto result = search::findBestMove(pos, limits, state);
   TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
   TEST_ASSERT_EQUAL_INT(5, result.depth);
@@ -775,8 +770,7 @@ static void test_iid_preserves_tactics(void) {
   search::SearchLimits limits;
   limits.maxDepth = 5;  // depth >= IID_DEPTH_THRESHOLD triggers IID
 
-  search::SearchState state;
-  state.tt = &tt;
+  search::SearchState state(nullptr, &tt);
   auto result = search::findBestMove(pos, limits, state);
   std::string move = moveToStr(result.bestMove);
   TEST_ASSERT_EQUAL_STRING("d5c7", move.c_str());
@@ -797,8 +791,7 @@ static void test_iid_completes_with_tt(void) {
   search::SearchLimits limits;
   limits.maxDepth = 5;
 
-  search::SearchState state;
-  state.tt = &tt;
+  search::SearchState state(nullptr, &tt);
   auto result = search::findBestMove(pos, limits, state);
   TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
   TEST_ASSERT_EQUAL_INT(5, result.depth);
@@ -826,8 +819,7 @@ static void test_lazy_eval_preserves_tactics(void) {
   search::SearchLimits limits;
   limits.maxDepth = 5;
 
-  search::SearchState state;
-  state.tt = &tt;
+  search::SearchState state(nullptr, &tt);
   auto result = search::findBestMove(pos, limits, state);
   // Should return a legal, sensible move.
   TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
@@ -866,8 +858,7 @@ static void test_lazy_eval_imbalanced_position(void) {
   search::SearchLimits limits;
   limits.maxDepth = 5;
 
-  search::SearchState state;
-  state.tt = &tt;
+  search::SearchState state(nullptr, &tt);
   auto result = search::findBestMove(pos, limits, state);
   // Should find a move and complete the search.
   TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
@@ -899,8 +890,7 @@ static void test_history_gravity_produces_negatives(void) {
   // Use findBestMove — we can't directly inspect SearchState, but we can
   // verify the search completes and produces correct results (history
   // gravity must not break the search).
-  search::SearchState state;
-  state.tt = &tt;
+  search::SearchState state(nullptr, &tt);
   auto result = search::findBestMove(pos, limits, state);
   TEST_ASSERT_TRUE(result.bestMove.from != result.bestMove.to);
   TEST_ASSERT_EQUAL_INT(5, result.depth);
@@ -1131,8 +1121,7 @@ static void test_instability_extends_time(void) {
   limits.maxDepth = 20;
   limits.softTimeMs = 60;
   limits.hardTimeMs = 5000;
-  search::SearchState state;
-  state.timeFunc = timer;
+  search::SearchState state(timer);
   auto result = search::findBestMove(pos, limits, state);
 
   // Must complete multiple iterations.
@@ -1162,8 +1151,7 @@ static void test_soft_time_stops_search(void) {
   limits.maxDepth = 30;       // Very high — should never reach this.
   limits.softTimeMs = 1;      // 1 ms soft limit — stop after first iteration.
   limits.hardTimeMs = 100000; // 100s hard limit — not the bottleneck.
-  search::SearchState state;
-  state.timeFunc = timer;
+  search::SearchState state(timer);
   auto result = search::findBestMove(pos, limits, state);
   // Should complete at least depth 1.
   TEST_ASSERT_TRUE(result.depth >= 1);
@@ -1195,8 +1183,7 @@ static void test_easy_move_early_exit(void) {
   limits.maxDepth = 30;
   limits.softTimeMs = 5000;   // 5s — generous.
   limits.hardTimeMs = 30000;  // 30s — very generous.
-  search::SearchState state;
-  state.timeFunc = timer;
+  search::SearchState state(timer);
   auto result = search::findBestMove(pos, limits, state);
   // Must find mate.
   TEST_ASSERT_TRUE(result.score >= search::MATE_SCORE - 10);

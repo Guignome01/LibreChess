@@ -134,6 +134,18 @@ inline Square popLsb(Bitboard& bb) {
   return sq;
 }
 
+// Vertical mirror — reverses byte order, swapping ranks (rank 1↔8, 2↔7, etc.).
+// Used by Hyperbola Quintessence (attacks) and pawn mask mirroring (evaluation).
+inline uint64_t byteSwap64(uint64_t v) {
+#if defined(__GNUC__) || defined(__clang__)
+  return __builtin_bswap64(v);
+#else
+  v = ((v >> 8) & 0x00FF00FF00FF00FFULL) | ((v & 0x00FF00FF00FF00FFULL) << 8);
+  v = ((v >> 16) & 0x0000FFFF0000FFFFULL) | ((v & 0x0000FFFF0000FFFFULL) << 16);
+  return (v >> 32) | (v << 32);
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // File and rank masks
 // ---------------------------------------------------------------------------

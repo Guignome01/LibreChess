@@ -89,14 +89,9 @@ struct TTEntry {
 
 static_assert(sizeof(TTEntry) <= 16, "TTEntry should fit in 16 bytes");
 
-// Default TT size.  On memory-constrained targets (ESP32) the flag
-// HARDWARE_LIMITATION selects a compact 8192-entry table (96 KiB).
-// Unconstrained builds use 131072 entries (~1.5 MiB) for stronger play.
-#ifdef HARDWARE_LIMITATION
-static constexpr int DEFAULT_TT_SIZE = 8192;
-#else
-static constexpr int DEFAULT_TT_SIZE = 131072;
-#endif
+// Default TT size: 4096 entries (64 KiB).  LibreChessProvider may further
+// cap TT size dynamically based on available heap.
+static constexpr int DEFAULT_TT_SIZE = 4096;
 
 // ---------------------------------------------------------------------------
 // Transposition Table — power-of-2 array with depth-preferred replacement.
@@ -158,8 +153,6 @@ struct TranspositionTable : HashTableBase<TTEntry> {
 // ---------------------------------------------------------------------------
 
 static constexpr int MATE_SCORE = 30000;
-static constexpr int INF_SCORE  = 31000;
-static constexpr int DRAW_SCORE = 0;
 static constexpr int MAX_PLY    = 48;
 
 // Maximum PV line length stored per ply.  Practical search depths rarely
@@ -222,6 +215,13 @@ struct SearchResult {
 // ---------------------------------------------------------------------------
 
 struct SearchState {
+  // Construct with infrastructure pointers (set once, persist across calls).
+  // All parameters optional; omitted pointers default to nullptr.
+  explicit SearchState(TimeFunc tf = nullptr,
+                       TranspositionTable* ttPtr = nullptr,
+                       eval::PawnHashTable* ph = nullptr,
+                       eval::EvalHashTable* eh = nullptr);
+
   uint32_t nodes = 0;       // Node counter (incremented per negamax call)
   bool stopped   = false;   // Internal stop flag (set when time/depth exceeded)
 
@@ -283,22 +283,12 @@ struct SearchState {
   PackedMove pv[MAX_PLY][MAX_PV_LEN];
   int8_t pvLength[MAX_PLY];
 
-  // Initialize killer and history tables to zero.
+  // Reset heuristic tables to zero.  Called by findBestMove() at start.
   void clearHeuristics();
 
-  // Check time every 1024 nodes.  Sets `stopped` if limit exceeded or
-  // external cancellation requested.
-  void checkTime() {
-    if (stopped) return;
-    if (externalStop && externalStop->load(std::memory_order_relaxed)) {
-      stopped = true;
-      return;
-    }
-    if (hardTimeMs > 0 && timeFunc) {
-      uint32_t elapsed = timeFunc() - startTime;
-      if (elapsed >= hardTimeMs) stopped = true;
-    }
-  }
+  // Check time periodically (every 512 nodes).  Sets `stopped` if limit
+  // exceeded or external cancellation requested.
+  void checkTime();
 };
 
 // ---------------------------------------------------------------------------
@@ -309,13 +299,9 @@ struct SearchState {
 // Iterative deepening: searches depth 1 → maxDepth, returning the best
 // result from the last completed iteration.
 // `pos` is modified during search (make/unmake) but restored before returning.
-// `state` is the pre-allocated SearchState (owned by the caller).
-//   Caller must set infrastructure fields before calling:
-//     state.timeFunc  — platform time function (nullptr if no time limit)
-//     state.tt        — transposition table (nullptr to skip TT)
-//     state.pawnHash  — pawn hash table (nullptr to skip)
-//     state.evalHash  — eval hash table (nullptr to skip)
-//   findBestMove resets per-search fields (nodes, stopped, startTime,
+// `state` is the pre-allocated SearchState (owned by the caller), constructed
+//   with infrastructure pointers (timeFunc, TT, pawnHash, evalHash).
+//   findBestMove resets per-search transients (nodes, stopped, startTime,
 //   hardTimeMs, externalStop, heuristics) from `limits` each call.
 // `info` is called after each completed iteration (nullptr to skip).
 SearchResult findBestMove(Position& pos, const SearchLimits& limits,

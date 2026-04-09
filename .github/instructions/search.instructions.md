@@ -13,7 +13,7 @@ Fail-soft negamax + alpha-beta + quiescence with iterative deepening. Stateless 
 |------|---------|
 | `search.h` | Public API, constants, `SearchLimits`, `SearchResult`, `SearchState`, `TTFlag`, `PackedMove` (pack/unpack), `TTEntry`, `TranspositionTable` (inherits `HashTableBase<TTEntry>`) |
 | `search.cpp` | Search algorithm (negamax, quiescence, findBestMove), PV collection, root reordering |
-| `search_params.h` | Extracted search constants: pruning margins, reduction thresholds, LMR table + `initLMR()`, aspiration/futility/razor/LMP/RFP parameters, tempo bonus |
+| `search_params.h` | Extracted search constants: pruning margins, reduction thresholds, constexpr LMR table, aspiration/futility/razor/LMP/RFP parameters, tempo bonus |
 | `move_picker.h` | `MovePicker` struct (staged generation), MVV-LVA scoring, move validation, heuristic update functions (`updateKillers`, `updateHistory`, `updateCaptureCutoffHistory`, `updateQuietCutoffHeuristics`) |
 | `stats.h` | `SearchStats` struct, `STAT_INC` macro (active under `-DSTATS` only) |
 
@@ -33,14 +33,20 @@ Fail-soft negamax + alpha-beta + quiescence with iterative deepening. Stateless 
 - `TranspositionTable : HashTableBase<TTEntry>` — inherits `resize`/`free`/`clear` from `hash_table.h`, adds `newGeneration`, inline `probe`/`store`
 - `PackedMove` (uint16_t) — `packMove(m)`, `unpackMove(pm)`
 - Mate scores adjusted per ply (`scoreToTT`/`scoreFromTT` in search.cpp). Size = power-of-two.
+- `DEFAULT_TT_SIZE` — 4096 entries (64 KiB). `LibreChessProvider` may further cap dynamically based on available heap
 
-**Constants**: `MATE_SCORE=30000`, `INF_SCORE=31000`, `DRAW_SCORE=0`, `MAX_PLY=48`, `MAX_PV_LEN=24`
+**Constants** (public): `MATE_SCORE=30000`, `MAX_PLY=48`, `MAX_PV_LEN=24`
+**Constants** (internal, in search.cpp): `INF_SCORE=31000`, `DRAW_SCORE=0`, `CHECK_INTERVAL=512`
+
+**`checkTime()`**: Defined in search.cpp (not inline in header). Interval-masked internally — callers invoke unconditionally, the method returns early unless `nodes` is a multiple of `CHECK_INTERVAL`.
 
 ## SearchState (~10 KiB, always required)
 
 Callers must own and pass a `SearchState&` to `findBestMove`. The `Engine` facade holds a direct `SearchState` member and passes it each call.
 
-**Infrastructure fields** (set by caller, persist across calls):
+**Constructor**: `explicit SearchState(TimeFunc tf = nullptr, TranspositionTable* tt = nullptr, PawnHashTable* ph = nullptr, EvalHashTable* eh = nullptr)` — wires infrastructure pointers once at construction. All parameters optional (default nullptr). Eliminates manual field-by-field wiring.
+
+**Infrastructure fields** (set via constructor, persist across calls):
 - `timeFunc` — `TimeFunc` for platform-agnostic time
 - `tt` — `TranspositionTable*`
 - `pawnHash` — pawn hash table pointer
@@ -50,7 +56,7 @@ Callers must own and pass a `SearchState&` to `findBestMove`. The `Engine` facad
 - `nodes`, `stopped` — reset at start
 - `startTime`, `hardTimeMs` — derived from limits + timeFunc
 - `externalStop` — set from `limits.stop`
-- `clearHeuristics()` — NOT called (heuristics persist across calls)
+- `clearHeuristics()` — called internally by findBestMove (not part of public API)
 
 **Heuristic tables** (persist across calls for same instance):
 
@@ -63,7 +69,7 @@ Callers must own and pass a `SearchState&` to `findBestMove`. The `Engine` facad
 
 ## MovePicker (in `move_picker.h`, staged move ordering)
 
-TT move → good captures (MVV-LVA + captureHistory, lazy SEE ≥ 0; cached SEE stored in scores[] for bad captures) → killer moves (2/ply) → countermove → history (append-mode quiet generation via `generateQuietsAppend()`) → bad captures (ordered by cached SEE, least-negative first). Score arrays use `int16_t` (~1.7 KiB saved per ply). `pickBestInRange()` — selection sort, O(N) per move.
+TT move → good captures (MVV-LVA + captureHistory, lazy SEE ≥ 0; cached SEE stored in scores[] for bad captures) → killer moves (2/ply) → countermove → history (append-mode quiet generation via `generateMovesAppend()`) → bad captures (ordered by cached SEE, least-negative first). Score arrays use `int16_t` (~1.7 KiB saved per ply). `pickBestInRange()` — selection sort, O(N) per move.
 
 Also contains heuristic update functions: `updateKillers`, `updateHistory` (gravity formula), `updateCaptureCutoffHistory`, `updateQuietCutoffHeuristics`.
 
@@ -72,7 +78,7 @@ Also contains heuristic update functions: `updateKillers`, `updateHistory` (grav
 | Technique | Details |
 |-----------|---------|
 | Null move pruning | R = NMP_REDUCTION + depth/4 + min(3, evalSurplus/200) |
-| LMR | `LMR_TABLE[depth][moveIndex]`, +1 hist<−500, −1 hist>1500, +1 non-improving, +1 non-PV |
+| LMR | `LMR_TABLE.data[depth][moveIndex]`, +1 hist<−500, −1 hist>1500, +1 non-improving, +1 non-PV |
 | LMP | Skip late quiets at shallow depths, threshold +2 when improving |
 | History pruning | Pre-make skip: hist < −HISTORY_PRUNE_THRESHOLD × depth |
 | Reverse futility | staticEval − RFP_MARGIN × depth / (1+improving) ≥ beta, depth ≤ 6 |
@@ -90,12 +96,19 @@ Also contains heuristic update functions: `updateKillers`, `updateHistory` (grav
 
 ## Key File-Local Helpers (search.cpp)
 
-- `LMR_TABLE[MAX_PLY][LMR_MAX_MOVES]` — `static int8_t` (BSS segment, ~3 KiB). Initialized by `initLMR()`. Not `constexpr` — lives in RAM, not flash. Size scales with `MAX_PLY`.
+- `LMR_TABLE` — constexpr `LMRTable` struct (rodata segment, ~3 KiB). `.data[d][m]` holds the base LMR reduction. Uses atanh-based constexpr natural-log approximation. No runtime initialization needed.
 - `collectPV()` — triangular PV memcpy
-- `computeLMRReduction()` — base table + history/improving/PV adjustments
-- `reorderRootMoves()` — promote best move to index 0
+- `computeLMRReduction()` — base table + history/improving/PV adjustments, clamped to `[1, max(1, depth-3)]`
+- `reorderRootMoves()` — promote best move to index 0 (uses `Move::operator==` and `std::swap`)
 - `scoreToTT()` / `scoreFromTT()` — mate score adjustments for TT storage
 - `lazyEval()` / `evaluate()` — search-side evaluation wrappers
+
+## Readability Patterns (search.cpp)
+
+- `canPrune` — `!pvNode && !inCheck`, extracted once at negamax entry. Used by lazy eval, razoring, RFP, NMP, futility.
+- `lateQuiet` — `movesSearched > 0 && !m.isTactical()`, extracted per move. Used by futility pruning, LMP, history pruning.
+- `Move::isTactical()` — replaces `isCapture() || isPromotion()` compound checks throughout search.
+- `Move::isNull()` — replaces manual `from==0 && to==0` null-move detection.
 
 ## `stats.h` — Search Statistics (`-DSTATS` only)
 
@@ -113,7 +126,7 @@ Mirror test file: `test/test_core/test_search.cpp` (suite: `test_core`). Also va
 |------|--------------|
 | `core.instructions.md` | Parent library — shared conventions |
 | `position.instructions.md` | `make()`/`unmake()`/`makeNullMove()`, all position queries |
-| `movegen.instructions.md` | `LegalityContext`, staged generation (`generateCaptures`/`generateQuiets`) |
+| `movegen.instructions.md` | `LegalityContext`, staged generation (`generateMoves` with `FilterMode`) |
 | `evaluation.instructions.md` | `evaluatePosition()` is the leaf node scorer |
 | `attacks.instructions.md` | `see()` for capture ordering and pruning decisions |
 | `notation.instructions.md` | PV display uses coordinate notation |

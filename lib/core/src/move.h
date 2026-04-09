@@ -42,6 +42,12 @@ struct Move {
   constexpr bool isCastling()  const { return flags & MOVE_CASTLING; }
   constexpr bool isPromotion() const { return flags & MOVE_PROMOTION; }
 
+  // True for captures or promotions — moves with immediate tactical impact.
+  constexpr bool isTactical()  const { return flags & (MOVE_CAPTURE | MOVE_PROMOTION); }
+
+  // True when no squares are set (default-constructed or sentinel move).
+  constexpr bool isNull()      const { return from == 0 && to == 0; }
+
   // Promotion piece encoding: 0=Knight, 1=Bishop, 2=Rook, 3=Queen.
   constexpr uint8_t promoIndex() const { return (flags >> MOVE_PROMO_SHIFT) & 0x03; }
 

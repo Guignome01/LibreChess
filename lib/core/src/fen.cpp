@@ -141,12 +141,12 @@ void fenToBoard(const std::string& fen, BitboardSet& bb, Piece mailbox[],
 
   // Halfmove clock
   std::string halfmoveStr = nextToken(remaining);
-  if (!halfmoveStr.empty() && state != nullptr)
+  if (!halfmoveStr.empty() && halfmoveStr.size() <= 9 && state != nullptr)
     state->halfmoveClock = std::stoi(halfmoveStr);
 
   // Fullmove number
   std::string fullmoveStr = nextToken(remaining);
-  if (!fullmoveStr.empty() && state != nullptr) {
+  if (!fullmoveStr.empty() && fullmoveStr.size() <= 9 && state != nullptr) {
     int fullmove = std::stoi(fullmoveStr);
     state->fullmoveClock = fullmove > 0 ? fullmove : 1;
   }
@@ -216,12 +216,14 @@ static bool validateEPField(const std::string& field) {
 }
 
 // Validate a clock field (halfmove clock or fullmove number).
-// Must be a non-empty string of digits.
+// Must be a non-empty string of digits that fits in an int.
 static bool validateClockField(const std::string& field) {
   if (field.empty()) return false;
   for (char c : field) {
     if (!std::isdigit(static_cast<unsigned char>(c))) return false;
   }
+  // Reject absurdly long numeric strings that would overflow std::stoi.
+  if (field.size() > 9) return false;
   return true;
 }
 

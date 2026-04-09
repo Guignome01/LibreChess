@@ -154,8 +154,6 @@ static void test_eval_tapered_phase_affects_king(void) {
 // ===========================================================================
 
 static void test_passed_pawn_e4(void) {
-  eval::initPawnMasks();
-
   // e4 pawn with no enemy pawns — should be passed.
   Square e4 = squareOf(4, 4);
   Bitboard noPawns = 0;
@@ -167,8 +165,6 @@ static void test_passed_pawn_e4(void) {
 }
 
 static void test_passed_pawn_e2_blocked(void) {
-  eval::initPawnMasks();
-
   Square e2 = squareOf(6, 4);
   Square e4 = squareOf(4, 4);
   Bitboard enemyPawns = squareBB(e4);
@@ -177,8 +173,6 @@ static void test_passed_pawn_e2_blocked(void) {
 }
 
 static void test_isolated_pawn_a_file(void) {
-  eval::initPawnMasks();
-
   // Pawn on a2 with no friendly pawn on b-file → isolated.
   Square a2 = squareOf(6, 0);
   Bitboard friendlyOnA = squareBB(a2);
@@ -190,8 +184,6 @@ static void test_isolated_pawn_a_file(void) {
 }
 
 static void test_isolated_pawn_d_file(void) {
-  eval::initPawnMasks();
-
   // Pawn on d4 with no friendly pawns on c or e files → isolated.
   Square d4 = squareOf(4, 3);
   Bitboard friendlyOnD = squareBB(d4);
@@ -203,8 +195,6 @@ static void test_isolated_pawn_d_file(void) {
 }
 
 static void test_doubled_pawn_detection(void) {
-  eval::initPawnMasks();
-
   Square e2 = squareOf(6, 4);
   Square e3 = squareOf(5, 4);
   Bitboard friendly = squareBB(e2) | squareBB(e3);
@@ -213,8 +203,6 @@ static void test_doubled_pawn_detection(void) {
 }
 
 static void test_backward_pawn_detection(void) {
-  eval::initPawnMasks();
-
   // White pawn on d4. Adjacent pawn on c2 exists but does not support d5.
   // Enemy pawn on e6 controls d5, making d4 backward by this heuristic.
   Square d4 = squareOf(4, 3);
@@ -229,8 +217,6 @@ static void test_backward_pawn_detection(void) {
 }
 
 static void test_forward_file_mask_doubled(void) {
-  eval::initPawnMasks();
-
   // a8 (rank 8) has no squares ahead for white → not doubled.
   Square a8 = squareOf(0, 0);
   Bitboard friendlyOnA = squareBB(a8);
@@ -244,8 +230,6 @@ static void test_forward_file_mask_doubled(void) {
 }
 
 static void test_forward_file_mask_not_doubled(void) {
-  eval::initPawnMasks();
-
   // Single pawn on a2, no other friendly ahead → not doubled.
   Square a2 = squareOf(6, 0);
   Bitboard single = squareBB(a2);

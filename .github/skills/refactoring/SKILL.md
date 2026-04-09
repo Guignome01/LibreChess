@@ -1,12 +1,12 @@
 ---
 name: refactoring
-description: "**WORKFLOW SKILL** — Structured multi-phase refactoring, redesign, or large-scale code improvement. USE FOR: architecture changes; extracting/merging classes or modules; eliminating redundancy; fixing systemic bugs across multiple files; reorganizing code structure; any non-trivial code transformation spanning multiple files. DO NOT USE FOR: single-file bug fixes; adding a simple feature; quick renames or formatting; performance tuning without architecture changes (use optimization skill). INVOKES: file system tools, terminal (build/test), subagents for codebase exploration."
-argument-hint: "Describe the refactoring goal (e.g., 'merge base classes', 'extract shared logic', 'redesign engine hierarchy')"
+description: "**WORKFLOW SKILL** — Structured multi-phase refactoring for cross-module structural transformations. USE FOR: moving code between modules; extracting/merging classes; splitting/merging files; class hierarchy changes (flattening inheritance, extracting base classes); dependency restructuring (breaking cycles, inverting dependencies); fixing systemic bugs across multiple files; codebase-wide convention standardization. DO NOT USE FOR: single-module API surface redesign (use redesign skill); single-file bug fixes; performance tuning without structural changes (use optimization skill); read-only quality review (use audit skill). INVOKES: file system tools, terminal (build/test), subagents for codebase exploration."
+argument-hint: "Describe the structural transformation (e.g., 'merge base classes', 'extract shared logic into new module', 'flatten engine provider hierarchy')"
 ---
 
 # Structured Refactoring Workflow
 
-A disciplined, phased approach to non-trivial code transformations. Follow each step in order. Never skip the analysis or planning phases — rushing to implementation causes regressions and scope creep.
+A disciplined, phased approach to cross-module structural transformations. Follow each step in order. Never skip the analysis or planning phases — rushing to implementation causes regressions and scope creep.
 
 ## Step 1 — Deep Analysis
 
@@ -124,5 +124,6 @@ These principles govern every step:
 
 ## Related Skills
 
+- **redesign** — use when the problem is a single module's API surface (too many functions, near-duplicate overloads, parameter proliferation). Redesign stays within one module's boundary and uses blank-slate thinking to find the ideal API. If a redesign reveals that the module boundary itself is wrong (code belongs elsewhere, dependency should be inverted), hand off to this refactoring skill.
 - **optimization** — use when the goal is performance tuning, complexity reduction, or dead-code elimination *without* structural changes. If profiling reveals an architectural bottleneck, switch back to this refactoring skill.
 - **audit** — use when you want to explore the codebase for quality issues before deciding what to refactor. An audit report may identify architectural violations or cross-cutting inconsistencies that become refactoring targets.

@@ -13,6 +13,17 @@ using namespace LibreChess;
 
 namespace {
 
+// Shared functor for move-collection call sites (collectLegalMoves,
+// generateMovesAppend, getPossibleMoves).  Using one concrete type instead
+// of per-site lambdas collapses three identical filterPieceMoves/
+// enumerateLegalMoves template instantiations into one (~2.8 KiB flash
+// savings on ESP32).
+struct MoveAdder {
+  Move* buf;
+  int& count;
+  bool operator()(Move m) { buf[count++] = m; return false; }
+};
+
 // Returns the pin-ray mask for a piece on `sq`.
 // If pinned, only targets on the ray are legal. If not pinned, returns ~0ULL
 // (all targets valid from a pin perspective — checkMask still applies).
@@ -31,9 +42,9 @@ static PinData computePinData(const BitboardSet& bb, Square kingSq, Color sideTo
   Bitboard friendly = bb.byColor[piece::raw(sideToMove)];
   Color enemy = ~sideToMove;
 
-  int rookIdx   = piece::pieceIndex(piece::makePiece(enemy, PieceType::ROOK));
-  int queenIdx  = piece::pieceIndex(piece::makePiece(enemy, PieceType::QUEEN));
-  int bishopIdx = piece::pieceIndex(piece::makePiece(enemy, PieceType::BISHOP));
+  int rookIdx   = piece::pieceIndex(enemy, PieceType::ROOK);
+  int queenIdx  = piece::pieceIndex(enemy, PieceType::QUEEN);
+  int bishopIdx = piece::pieceIndex(enemy, PieceType::BISHOP);
   Bitboard enemyRookQueens   = bb.byPiece[rookIdx]   | bb.byPiece[queenIdx];
   Bitboard enemyBishopQueens = bb.byPiece[bishopIdx] | bb.byPiece[queenIdx];
 
@@ -347,36 +358,34 @@ static bool enumerateLegalMoves(const BitboardSet& bb, const Piece mailbox[],
 }
 
 // ---------------------------------------------------------------------------
-// Concrete wrappers over enumerateLegalMoves
+// Collect legal moves into a MoveList, clearing it first.
+// Requires a pre-built LegalityContext.  Used by staged API and
+// generateForColor.
 // ---------------------------------------------------------------------------
 
 template <int N>
-static void generateMovesImpl(const BitboardSet& bb, const Piece mailbox[],
+static void collectLegalMoves(const BitboardSet& bb, const Piece mailbox[],
                               Color color, const PositionState& state,
                               const LegalityContext& ctx, MoveListBase<N>& out,
                               FilterMode filterMode) {
   out.clear();
-  enumerateLegalMoves(bb, mailbox, color, state, ctx, filterMode,
-      [&](Move m) { out.add(m); return false; });
+  MoveAdder adder{out.moves, out.count};
+  enumerateLegalMoves(bb, mailbox, color, state, ctx, filterMode, adder);
 }
 
-// Append variant — does NOT clear the output list before generating.
-// Used by the staged move picker to append quiet moves after captures
-// in a shared MoveList, avoiding a temporary buffer + copy loop.
+// ---------------------------------------------------------------------------
+// Self-contained bulk generation: resolves king, builds context, collects.
+// Shared entry point for the four public bulk/QS generators.
+// ---------------------------------------------------------------------------
+
 template <int N>
-static void appendMovesImpl(const BitboardSet& bb, const Piece mailbox[],
-                            Color color, const PositionState& state,
-                            const LegalityContext& ctx, MoveListBase<N>& out,
-                            FilterMode filterMode) {
-  enumerateLegalMoves(bb, mailbox, color, state, ctx, filterMode,
-      [&](Move m) { out.add(m); return false; });
-}
-
-static bool hasAnyLegalMoveImpl(const BitboardSet& bb, const Piece mailbox[],
-                                Color color, const PositionState& state, Square kingSq) {
+static void generateForColor(const BitboardSet& bb, const Piece mailbox[],
+                              Color color, const PositionState& state,
+                              MoveListBase<N>& moves, FilterMode filterMode) {
+  Square kingSq;
+  if (!utils::resolveKingSquare(bb, color, kingSq)) { moves.clear(); return; }
   LegalityContext ctx = buildLegalityContext(bb, color, kingSq);
-  return enumerateLegalMoves(bb, mailbox, color, state, ctx, FilterMode::ALL,
-      [](Move) { return true; });
+  collectLegalMoves(bb, mailbox, color, state, ctx, moves, filterMode);
 }
 
 // ---------------------------------------------------------------------------
@@ -404,70 +413,40 @@ void getPossibleMoves(const BitboardSet& bb, const Piece mailbox[],
 
   if (ctx.checkerCount >= 2 && !isKing) return;
 
-  filterPieceMoves(bb, mailbox, sq, state, ctx, FilterMode::ALL,
-                   [&](Move m) { moves.add(m); return false; });
+  MoveAdder adder{moves.moves, moves.count};
+  filterPieceMoves(bb, mailbox, sq, state, ctx, FilterMode::ALL, adder);
 }
 
-void generateAllMoves(const BitboardSet& bb, const Piece mailbox[],
-                      Color color, const PositionState& state,
-                      MoveList& moves) {
-  Square kingSq;
-  if (!utils::resolveKingSquare(bb, color, kingSq)) { moves.clear(); return; }
-  LegalityContext ctx = buildLegalityContext(bb, color, kingSq);
-  generateMovesImpl(bb, mailbox, color, state, ctx, moves, FilterMode::ALL);
+template <int N>
+void generateMoves(const BitboardSet& bb, const Piece mailbox[],
+                   Color color, const PositionState& state,
+                   MoveListBase<N>& moves, FilterMode filter) {
+  generateForColor(bb, mailbox, color, state, moves, filter);
 }
 
-void generateCaptures(const BitboardSet& bb, const Piece mailbox[],
-                      Color color, const PositionState& state,
-                      MoveList& moves) {
-  Square kingSq;
-  if (!utils::resolveKingSquare(bb, color, kingSq)) { moves.clear(); return; }
-  LegalityContext ctx = buildLegalityContext(bb, color, kingSq);
-  generateMovesImpl(bb, mailbox, color, state, ctx, moves, FilterMode::CAPTURES_PROMOS);
-}
+// Explicit instantiations for MoveList (218) and QSMoveList (128).
+template void generateMoves<MAX_MOVES>(const BitboardSet&, const Piece[],
+    Color, const PositionState&, MoveList&, FilterMode);
+template void generateMoves<QS_MAX_MOVES>(const BitboardSet&, const Piece[],
+    Color, const PositionState&, QSMoveList&, FilterMode);
 
 // ---------------------------------------------------------------------------
 // Staged API: reuse pre-built LegalityContext
 // ---------------------------------------------------------------------------
 
-void generateCaptures(const BitboardSet& bb, const Piece mailbox[],
-                      Color color, const PositionState& state,
-                      const LegalityContext& ctx, MoveList& moves) {
-  generateMovesImpl(bb, mailbox, color, state, ctx, moves, FilterMode::CAPTURES_PROMOS);
+void generateMoves(const BitboardSet& bb, const Piece mailbox[],
+                   Color color, const PositionState& state,
+                   const LegalityContext& ctx, MoveList& moves,
+                   FilterMode filter) {
+  collectLegalMoves(bb, mailbox, color, state, ctx, moves, filter);
 }
 
-void generateQuiets(const BitboardSet& bb, const Piece mailbox[],
-                    Color color, const PositionState& state,
-                    const LegalityContext& ctx, MoveList& moves) {
-  generateMovesImpl(bb, mailbox, color, state, ctx, moves, FilterMode::QUIETS);
-}
-
-void generateQuietsAppend(const BitboardSet& bb, const Piece mailbox[],
-                          Color color, const PositionState& state,
-                          const LegalityContext& ctx, MoveList& moves) {
-  appendMovesImpl(bb, mailbox, color, state, ctx, moves, FilterMode::QUIETS);
-}
-
-// ---------------------------------------------------------------------------
-// Quiescence-search overloads (QSMoveList — cap 128)
-// ---------------------------------------------------------------------------
-
-void generateAllMoves(const BitboardSet& bb, const Piece mailbox[],
-                      Color color, const PositionState& state,
-                      QSMoveList& moves) {
-  Square kingSq;
-  if (!utils::resolveKingSquare(bb, color, kingSq)) { moves.clear(); return; }
-  LegalityContext ctx = buildLegalityContext(bb, color, kingSq);
-  generateMovesImpl(bb, mailbox, color, state, ctx, moves, FilterMode::ALL);
-}
-
-void generateCaptures(const BitboardSet& bb, const Piece mailbox[],
-                      Color color, const PositionState& state,
-                      QSMoveList& moves) {
-  Square kingSq;
-  if (!utils::resolveKingSquare(bb, color, kingSq)) { moves.clear(); return; }
-  LegalityContext ctx = buildLegalityContext(bb, color, kingSq);
-  generateMovesImpl(bb, mailbox, color, state, ctx, moves, FilterMode::CAPTURES_PROMOS);
+void generateMovesAppend(const BitboardSet& bb, const Piece mailbox[],
+                         Color color, const PositionState& state,
+                         const LegalityContext& ctx, MoveList& moves,
+                         FilterMode filter) {
+  MoveAdder adder{moves.moves, moves.count};
+  enumerateLegalMoves(bb, mailbox, color, state, ctx, filter, adder);
 }
 
 bool isValidMove(const BitboardSet& bb, const Piece mailbox[],
@@ -512,7 +491,9 @@ bool hasAnyLegalMove(const BitboardSet& bb, const Piece mailbox[],
                      Color color, const PositionState& state) {
   Square kingSq;
   if (!utils::resolveKingSquare(bb, color, kingSq)) return false;
-  return hasAnyLegalMoveImpl(bb, mailbox, color, state, kingSq);
+  LegalityContext ctx = buildLegalityContext(bb, color, kingSq);
+  return enumerateLegalMoves(bb, mailbox, color, state, ctx, FilterMode::ALL,
+      [](Move) { return true; });
 }
 
 bool hasLegalEnPassantCapture(const BitboardSet& bb, const Piece mailbox[],
@@ -520,7 +501,6 @@ bool hasLegalEnPassantCapture(const BitboardSet& bb, const Piece mailbox[],
   if (state.epSquare == SQ_NONE) return false;
 
   Square epSq = state.epSquare;
-  Piece capturerPawn = piece::makePiece(sideToMove, PieceType::PAWN);
 
   Square kingSq;
   if (!utils::resolveKingSquare(bb, sideToMove, kingSq)) return false;
@@ -528,7 +508,7 @@ bool hasLegalEnPassantCapture(const BitboardSet& bb, const Piece mailbox[],
   // Use the opponent's pawn attack table to find which friendly pawns can
   // capture on the EP square (reverse lookup: squares attacking epSq).
   // Reference: https://www.chessprogramming.org/Pawn_Attacks_(Bitboards)
-  int pawnIdx = piece::pieceIndex(capturerPawn);
+  int pawnIdx = piece::pieceIndex(sideToMove, PieceType::PAWN);
   Bitboard capturers = attacks::PAWN[piece::raw(~sideToMove)][epSq] & bb.byPiece[pawnIdx];
   while (capturers) {
     Square from = popLsb(capturers);

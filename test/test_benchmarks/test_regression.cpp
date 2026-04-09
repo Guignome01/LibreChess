@@ -28,7 +28,7 @@ static constexpr int NODE_DEPTH = 10;
 
 /// Maximum allowed total node count (calibrated baseline × 1.15).
 /// Set to 0 to disable assertion (calibration mode).
-static constexpr uint64_t NODE_BASELINE = 3750217;
+static constexpr uint64_t NODE_BASELINE = 3054593;
 
 // ---------------------------------------------------------------------------
 // Node count regression — 10 diverse positions at fixed depth
@@ -73,11 +73,7 @@ static void test_node_count_regression(void) {
 
     search::SearchLimits limits;
     limits.maxDepth = NODE_DEPTH;
-    search::SearchState state;
-    state.timeFunc = chronoMillis;
-    state.tt = &tables.tt;
-    state.pawnHash = &tables.pawn;
-    state.evalHash = &tables.eval;
+    search::SearchState state(chronoMillis, &tables.tt, &tables.pawn, &tables.eval);
     search::SearchResult result =
         search::findBestMove(pos, limits, state);
     totalNodes += result.nodes;
@@ -162,7 +158,7 @@ static void test_eval_regression(void) {
     pawnHash.clear();
 
     int score = eval::evaluatePosition(pos.bitboards(), pos.mgPST(),
-                                       pos.egPST(), &pawnHash);
+                                       pos.egPST(), pos.phase(), &pawnHash);
     // Adjust for side to move (eval returns side-to-move relative)
     if (pos.sideToMove() == Color::BLACK) score = -score;
 

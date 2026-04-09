@@ -50,16 +50,20 @@ struct PawnMasks {
 
 static constexpr PawnMasks PAWN_MASKS{};
 
-// Vertical mirror — swaps ranks (rank 1↔8, 2↔7, etc.).
-static inline uint64_t byteSwap64(uint64_t v) {
-#if defined(__GNUC__) || defined(__clang__)
-  return __builtin_bswap64(v);
-#else
-  v = ((v >> 8) & 0x00FF00FF00FF00FFULL) | ((v & 0x00FF00FF00FF00FFULL) << 8);
-  v = ((v >> 16) & 0x0000FFFF0000FFFFULL) | ((v & 0x0000FFFF0000FFFFULL) << 16);
-  return (v >> 32) | (v << 32);
-#endif
-}
+// ---------------------------------------------------------------------------
+// Color-loop helpers — constexpr lookup tables for bilateral evaluation.
+//
+// SIDE_SIGN: maps color index (0=WHITE, 1=BLACK) to the sign applied to
+// white-relative scores (+1 for white, −1 for black).
+// COLORS: maps color index to the Color enum, eliminating verbose
+// static_casts in every loop iteration.
+//
+// Reference: "Lookup Tables over Branching" (project principle).
+// ---------------------------------------------------------------------------
+
+static constexpr int SIDE_SIGN[] = {1, -1};
+static constexpr Color COLORS[] = {Color::WHITE, Color::BLACK};
+
 
 Bitboard adjacentFilesMask(int file) {
   Bitboard mask = 0;
@@ -90,8 +94,10 @@ inline Bitboard forwardMask(Color c, Square sq) {
 namespace LibreChess {
 namespace eval {
 
+#ifdef TUNING
 // Indexed by piece type offset (PAWN=0 .. KING=5).
-// File-local PST pointer lookup tables.
+// File-local PST pointer lookup tables — used only in TUNING builds
+// where buildPSQT() runtime-initializes the mutable flattened tables.
 static const PST_ELEM* const PST_MG[6] = {
     PST_PAWN_MG, PST_KNIGHT_MG, PST_BISHOP_MG,
     PST_ROOK_MG, PST_QUEEN_MG,  PST_KING_MG};
@@ -99,6 +105,7 @@ static const PST_ELEM* const PST_MG[6] = {
 static const PST_ELEM* const PST_EG[6] = {
     PST_PAWN_EG, PST_KNIGHT_EG, PST_BISHOP_EG,
     PST_ROOK_EG, PST_QUEEN_EG,  PST_KING_EG};
+#endif
 
 // ---------------------------------------------------------------------------
 // Flat PSQT lookup tables — pre-combined material + PST + color sign.
@@ -107,11 +114,17 @@ static const PST_ELEM* const PST_EG[6] = {
 // Black pieces (indices 6–11): PSQT[idx][sq] = -(MATERIAL[idx-6] + PST[idx-6][sq ^ 56])
 //
 // Eliminates 3 conditional branches and pointer indirection per
-// pieceSquareMG/EG call.  Production builds use const + lazy init;
-// TUNING builds invalidate via invalidatePSQT() after parameter changes.
+// pieceSquareMG/EG call.
+//
+// Production builds: constexpr struct placed in .rodata (Flash on ESP32),
+// freeing 3 KiB BSS (RAM).
+// TUNING builds: mutable arrays with buildPSQT()/invalidatePSQT() for
+// runtime parameter modification.
 //
 // Reference: https://www.chessprogramming.org/Piece-Square_Tables
 // ---------------------------------------------------------------------------
+
+#ifdef TUNING
 
 static int16_t PSQT_MG[12][64];
 static int16_t PSQT_EG[12][64];
@@ -134,6 +147,58 @@ static void buildPSQT() {
 static inline void ensurePSQT() {
   if (!psqtReady_) buildPSQT();
 }
+
+#else  // Production: constexpr PSQT in .rodata
+
+// Macro-based aggregate initialization — each element is a simple constant
+// expression (MATERIAL[t] ± PST_XX[sq]), avoiding constexpr function
+// evaluation that hits GCC 5.x step limits with 12×64 loops.
+#define PSQT_E_(m,p,s)  static_cast<int16_t>((m) + (p)[(s)])
+#define PSQT_NE_(m,p,s) static_cast<int16_t>(-((m) + (p)[((s) ^ 56)]))
+#define PSQT_R8_(M,p,b) \
+  PSQT_E_(M,p,b+0),PSQT_E_(M,p,b+1),PSQT_E_(M,p,b+2),PSQT_E_(M,p,b+3), \
+  PSQT_E_(M,p,b+4),PSQT_E_(M,p,b+5),PSQT_E_(M,p,b+6),PSQT_E_(M,p,b+7)
+#define PSQT_R64_(M,p) \
+  PSQT_R8_(M,p,0), PSQT_R8_(M,p,8), PSQT_R8_(M,p,16),PSQT_R8_(M,p,24), \
+  PSQT_R8_(M,p,32),PSQT_R8_(M,p,40),PSQT_R8_(M,p,48),PSQT_R8_(M,p,56)
+#define PSQT_N8_(M,p,b) \
+  PSQT_NE_(M,p,b+0),PSQT_NE_(M,p,b+1),PSQT_NE_(M,p,b+2),PSQT_NE_(M,p,b+3), \
+  PSQT_NE_(M,p,b+4),PSQT_NE_(M,p,b+5),PSQT_NE_(M,p,b+6),PSQT_NE_(M,p,b+7)
+#define PSQT_N64_(M,p) \
+  PSQT_N8_(M,p,0), PSQT_N8_(M,p,8), PSQT_N8_(M,p,16),PSQT_N8_(M,p,24), \
+  PSQT_N8_(M,p,32),PSQT_N8_(M,p,40),PSQT_N8_(M,p,48),PSQT_N8_(M,p,56)
+
+// clang-format off
+static constexpr int16_t PSQT_MG[12][64] = {
+  {PSQT_R64_(MATERIAL[0], PST_PAWN_MG)},   {PSQT_R64_(MATERIAL[1], PST_KNIGHT_MG)},
+  {PSQT_R64_(MATERIAL[2], PST_BISHOP_MG)},  {PSQT_R64_(MATERIAL[3], PST_ROOK_MG)},
+  {PSQT_R64_(MATERIAL[4], PST_QUEEN_MG)},   {PSQT_R64_(MATERIAL[5], PST_KING_MG)},
+  {PSQT_N64_(MATERIAL[0], PST_PAWN_MG)},   {PSQT_N64_(MATERIAL[1], PST_KNIGHT_MG)},
+  {PSQT_N64_(MATERIAL[2], PST_BISHOP_MG)},  {PSQT_N64_(MATERIAL[3], PST_ROOK_MG)},
+  {PSQT_N64_(MATERIAL[4], PST_QUEEN_MG)},   {PSQT_N64_(MATERIAL[5], PST_KING_MG)},
+};
+
+static constexpr int16_t PSQT_EG[12][64] = {
+  {PSQT_R64_(MATERIAL_EG[0], PST_PAWN_EG)},   {PSQT_R64_(MATERIAL_EG[1], PST_KNIGHT_EG)},
+  {PSQT_R64_(MATERIAL_EG[2], PST_BISHOP_EG)},  {PSQT_R64_(MATERIAL_EG[3], PST_ROOK_EG)},
+  {PSQT_R64_(MATERIAL_EG[4], PST_QUEEN_EG)},   {PSQT_R64_(MATERIAL_EG[5], PST_KING_EG)},
+  {PSQT_N64_(MATERIAL_EG[0], PST_PAWN_EG)},   {PSQT_N64_(MATERIAL_EG[1], PST_KNIGHT_EG)},
+  {PSQT_N64_(MATERIAL_EG[2], PST_BISHOP_EG)},  {PSQT_N64_(MATERIAL_EG[3], PST_ROOK_EG)},
+  {PSQT_N64_(MATERIAL_EG[4], PST_QUEEN_EG)},   {PSQT_N64_(MATERIAL_EG[5], PST_KING_EG)},
+};
+// clang-format on
+
+// Clean up internal macros (not needed outside this section).
+#undef PSQT_E_
+#undef PSQT_NE_
+#undef PSQT_R8_
+#undef PSQT_R64_
+#undef PSQT_N8_
+#undef PSQT_N64_
+
+static inline void ensurePSQT() {}  // No-op: tables are constexpr.
+
+#endif  // TUNING
 
 // ---------------------------------------------------------------------------
 // Pawn-structure query functions (public for testing).
@@ -186,9 +251,6 @@ int computeMaterial(const BitboardSet& bb) {
 }
 
 // ---------------------------------------------------------------------------
-
-// No-op retained for backward compatibility (pawn masks are constexpr).
-void initPawnMasks() {}
 
 bool isPassed(Square sq, Color color, Bitboard enemyPawns) {
   return (enemyPawns & passedMask(color, sq)) == 0;
@@ -293,8 +355,8 @@ static void evalPawnStructure(const BitboardSet& bb,
   int mg = 0, eg = 0;
 
   for (int c = 0; c < 2; ++c) {
-    int sign       = (c == 0) ? 1 : -1;
-    Color color    = static_cast<Color>(c);
+    int sign       = SIDE_SIGN[c];
+    Color color    = COLORS[c];
     Bitboard friendly   = pawns[c];
     Bitboard enemy      = pawns[1 - c];
     Bitboard friendAtk  = pawnAtks[c];
@@ -331,7 +393,7 @@ static void evalPawnStructure(const BitboardSet& bb,
 
   // Connected passed pawns — bonus per adjacent-file pair of passed pawns.
   for (int c = 0; c < 2; ++c) {
-    int sign = (c == 0) ? 1 : -1;
+    int sign = SIDE_SIGN[c];
     // Derive file bitmask from the passed pawn bitboard.
     uint8_t pf = 0;
     Bitboard tmp = passedPawns[c];
@@ -360,9 +422,9 @@ static void evalPawnStructure(const BitboardSet& bb,
 static void evalBishopPair(const BitboardSet& bb,
                            int& mgScore, int& egScore) {
   for (int c = 0; c < 2; ++c) {
-    Color color = static_cast<Color>(c);
+    Color color = COLORS[c];
     if (popcount(bb.byPiece[pieceIndex(color, PieceType::BISHOP)]) >= 2) {
-      int sign = (c == 0) ? 1 : -1;
+      int sign = SIDE_SIGN[c];
       mgScore += sign * BISHOP_PAIR_MG;
       egScore += sign * BISHOP_PAIR_EG;
     }
@@ -379,12 +441,13 @@ static void evalRookFiles(const BitboardSet& bb,
   Bitboard whitePawns = bb.byPiece[pieceIndex('P')];
   Bitboard blackPawns = bb.byPiece[pieceIndex('p')];
   Bitboard allPawns   = whitePawns | blackPawns;
+  Bitboard pawns[2]   = {whitePawns, blackPawns};
 
   for (int c = 0; c < 2; ++c) {
-    int sign = (c == 0) ? 1 : -1;
-    Color color = static_cast<Color>(c);
+    int sign = SIDE_SIGN[c];
+    Color color = COLORS[c];
     Bitboard rooks        = bb.byPiece[pieceIndex(color, PieceType::ROOK)];
-    Bitboard friendlyPawns = (c == 0) ? whitePawns : blackPawns;
+    Bitboard friendlyPawns = pawns[c];
     while (rooks) {
       Square sq = popLsb(rooks);
       Bitboard file = fileBB(fileOf(sq));
@@ -414,9 +477,9 @@ static void evalRookOnSeventh(const BitboardSet& bb,
   static constexpr int EIGHTH_RANK[2]  = {7, 0};
 
   for (int c = 0; c < 2; ++c) {
-    int sign = (c == 0) ? 1 : -1;
-    Color color = static_cast<Color>(c);
-    Color enemy = static_cast<Color>(1 - c);
+    int sign = SIDE_SIGN[c];
+    Color color = COLORS[c];
+    Color enemy = COLORS[1 - c];
     Bitboard rooksOn7 = bb.byPiece[pieceIndex(color, PieceType::ROOK)] & rankBB(SEVENTH_RANK[c]);
     if (!rooksOn7) continue;
     Bitboard enemyKingBack = bb.byPiece[pieceIndex(enemy, PieceType::KING)] & rankBB(EIGHTH_RANK[c]);
@@ -438,7 +501,7 @@ static void evalMobility(const BitboardSet& bb,
                          const attacks::AttackInfo& info,
                          int& mgScore, int& egScore) {
   for (int c = 0; c < 2; ++c) {
-    int sign = (c == 0) ? 1 : -1;
+    int sign = SIDE_SIGN[c];
     Bitboard friendly = bb.byColor[c];
 
     int knightMob = popcount(info.byPiece[c][raw(PieceType::KNIGHT)] & ~friendly);
@@ -607,7 +670,7 @@ static void evalPassedPawnKingDist(const BitboardSet& bb,
   Square kingSq[2] = {lsb(wkBB), lsb(bkBB)};
 
   for (int c = 0; c < 2; ++c) {
-    int sign = (c == 0) ? 1 : -1;
+    int sign = SIDE_SIGN[c];
     Bitboard p = passedPawns[c];
     while (p) {
       Square sq = popLsb(p);
@@ -672,16 +735,14 @@ static bool isOutpostSquare(Square sq, int colorIdx,
   if (!(squareBB(sq) & friendlyPawnAtk)) return false;
 
   // Must not be attackable by enemy pawns on adjacent files.
-  int file = fileOf(sq);
-  Bitboard adjFiles = 0;
-  if (file > 0) adjFiles |= fileBB(file - 1);
-  if (file < 7) adjFiles |= fileBB(file + 1);
+  Bitboard adjFiles = adjacentFilesMask(fileOf(sq));
 
   int rank = rankOf(sq);
   // White: enemy (black) pawns above (rank+1..7) advance down to attack.
   // Black: enemy (white) pawns below (0..rank-1) advance up to attack.
   Bitboard dangerMask = (colorIdx == 0)
-      ? ~((static_cast<Bitboard>(1) << (8 * (rank + 1))) - 1)
+      ? (rank < 7) ? ~((static_cast<Bitboard>(1) << (8 * (rank + 1))) - 1)
+                   : static_cast<Bitboard>(0)
       : (rank > 0) ? (static_cast<Bitboard>(1) << (8 * rank)) - 1
                    : static_cast<Bitboard>(0);
   return !(enemyPawns & adjFiles & dangerMask);
@@ -694,15 +755,17 @@ static void evalKnightOutposts(const BitboardSet& bb,
   // Central square constants (LERF) — used by outpost evaluation.
   constexpr Square SQ_D4 = 27, SQ_D5 = 35, SQ_E4 = 28, SQ_E5 = 36;
 
+  Bitboard pawnAtks[2] = {whitePawnAtk, blackPawnAtk};
+
   // Unified loop — evaluate outposts for both colors with parameterized
   // pawn directions.  Enemy pawns that can advance to attack the knight
   // come from ranks "above" (for white) or "below" (for black) in LERF.
   for (int c = 0; c < 2; ++c) {
-    int sign = (c == 0) ? 1 : -1;
-    Color color            = static_cast<Color>(c);
-    Color enemy            = static_cast<Color>(1 - c);
+    int sign = SIDE_SIGN[c];
+    Color color            = COLORS[c];
+    Color enemy            = COLORS[1 - c];
     Bitboard knights       = bb.byPiece[pieceIndex(color, PieceType::KNIGHT)];
-    Bitboard friendlyPAtk  = (c == 0) ? whitePawnAtk : blackPawnAtk;
+    Bitboard friendlyPAtk  = pawnAtks[c];
     Bitboard enemyPawns    = bb.byPiece[pieceIndex(enemy, PieceType::PAWN)];
 
     while (knights) {
@@ -740,57 +803,43 @@ static void evalKnightOutposts(const BitboardSet& bb,
 
 static void evalTrappedPieces(const BitboardSet& bb,
                               int& mgScore, int& /* egScore */) {
-  Bitboard whiteBishops = bb.byPiece[pieceIndex('B')];
-  Bitboard blackBishops = bb.byPiece[pieceIndex('b')];
-  Bitboard whitePawns   = bb.byPiece[pieceIndex('P')];
-  Bitboard blackPawns   = bb.byPiece[pieceIndex('p')];
-  Bitboard whiteRooks   = bb.byPiece[pieceIndex('R')];
-  Bitboard blackRooks   = bb.byPiece[pieceIndex('r')];
-  Bitboard whiteKing    = bb.byPiece[pieceIndex('K')];
-  Bitboard blackKing    = bb.byPiece[pieceIndex('k')];
-
   // Trapped bishop lookup table — each entry maps a bishop square to the
-  // blocking pawn square.  White patterns use blackPawns; black patterns use
-  // whitePawns.  Replaces 8 individual if-statements.
+  // blocking pawn square.  Indexed by color: own bishops blocked by enemy pawns.
   // Reference: https://www.chessprogramming.org/Trapped_Pieces
   struct BishopTrap { Square bishop; Square blocker; };
-  static constexpr BishopTrap WHITE_TRAPS[] = {
-    {48, 41}, {57, 41},   // a7/b8 blocked by b6
-    {55, 46}, {62, 46},   // h7/g8 blocked by g6
+  static constexpr BishopTrap BISHOP_TRAPS[2][4] = {
+    {{48, 41}, {57, 41}, {55, 46}, {62, 46}},  // White: a7/b8 × b6, h7/g8 × g6
+    {{ 8, 17}, { 1, 17}, {15, 22}, { 6, 22}},  // Black: a2/b1 × b3, h2/g1 × g3
   };
-  static constexpr BishopTrap BLACK_TRAPS[] = {
-    { 8, 17}, { 1, 17},   // a2/b1 blocked by b3
-    {15, 22}, { 6, 22},   // h2/g1 blocked by g3
-  };
-
-  for (const auto& t : WHITE_TRAPS) {
-    if ((whiteBishops & squareBB(t.bishop)) && (blackPawns & squareBB(t.blocker)))
-      mgScore += TRAPPED_BISHOP_PENALTY;
-  }
-  for (const auto& t : BLACK_TRAPS) {
-    if ((blackBishops & squareBB(t.bishop)) && (whitePawns & squareBB(t.blocker)))
-      mgScore -= TRAPPED_BISHOP_PENALTY;
-  }
 
   // Trapped rook — rook hemmed in by own uncastled king.
   // Each entry maps a rook square to the king squares that trap it.
   struct RookTrap { Square rook; Bitboard kingMask; };
-  static constexpr RookTrap WHITE_ROOK_TRAPS[] = {
-    {7, squareBB(5) | squareBB(6)},    // h1 trapped by king on f1/g1
-    {0, squareBB(1) | squareBB(2)},    // a1 trapped by king on b1/c1
-  };
-  static constexpr RookTrap BLACK_ROOK_TRAPS[] = {
-    {63, squareBB(61) | squareBB(62)}, // h8 trapped by king on f8/g8
-    {56, squareBB(57) | squareBB(58)}, // a8 trapped by king on b8/c8
+  static constexpr RookTrap ROOK_TRAPS[2][2] = {
+    {{7, squareBB(5) | squareBB(6)},      // h1 by f1/g1
+     {0, squareBB(1) | squareBB(2)}},      // a1 by b1/c1
+    {{63, squareBB(61) | squareBB(62)},    // h8 by f8/g8
+     {56, squareBB(57) | squareBB(58)}},    // a8 by b8/c8
   };
 
-  for (const auto& t : WHITE_ROOK_TRAPS) {
-    if ((whiteRooks & squareBB(t.rook)) && (whiteKing & t.kingMask))
-      mgScore += TRAPPED_ROOK_PENALTY;
-  }
-  for (const auto& t : BLACK_ROOK_TRAPS) {
-    if ((blackRooks & squareBB(t.rook)) && (blackKing & t.kingMask))
-      mgScore -= TRAPPED_ROOK_PENALTY;
+  for (int c = 0; c < 2; ++c) {
+    int sign = SIDE_SIGN[c];
+    Color color = COLORS[c];
+    Color enemy = COLORS[1 - c];
+
+    Bitboard bishops    = bb.byPiece[pieceIndex(color, PieceType::BISHOP)];
+    Bitboard enemyPawns = bb.byPiece[pieceIndex(enemy, PieceType::PAWN)];
+    for (const auto& t : BISHOP_TRAPS[c]) {
+      if ((bishops & squareBB(t.bishop)) && (enemyPawns & squareBB(t.blocker)))
+        mgScore += sign * TRAPPED_BISHOP_PENALTY;
+    }
+
+    Bitboard rooks = bb.byPiece[pieceIndex(color, PieceType::ROOK)];
+    Bitboard king  = bb.byPiece[pieceIndex(color, PieceType::KING)];
+    for (const auto& t : ROOK_TRAPS[c]) {
+      if ((rooks & squareBB(t.rook)) && (king & t.kingMask))
+        mgScore += sign * TRAPPED_ROOK_PENALTY;
+    }
   }
 }
 
@@ -810,11 +859,11 @@ static void evalThreats(const BitboardSet& bb,
                         const attacks::AttackInfo& info,
                         int& mgScore, int& /* egScore */) {
   for (int c = 0; c < 2; ++c) {
-    int sign = (c == 0) ? 1 : -1;
+    int sign = SIDE_SIGN[c];
     int enemy = 1 - c;
 
     // Enemy piece bitboards.
-    Color enemyColor = static_cast<Color>(enemy);
+    Color enemyColor = COLORS[enemy];
     Bitboard enemyMinors = bb.byPiece[pieceIndex(enemyColor, PieceType::KNIGHT)]
                          | bb.byPiece[pieceIndex(enemyColor, PieceType::BISHOP)];
     Bitboard enemyRooks  = bb.byPiece[pieceIndex(enemyColor, PieceType::ROOK)];
@@ -881,7 +930,7 @@ static int computeKingDangerWeight(const BitboardSet& bb,
                                    Square kingSq) {
   // Sum attacker weights for enemy pieces attacking the king zone.
   int totalWeight = 0;
-  Color enemyColor = static_cast<Color>(enemy);
+  Color enemyColor = COLORS[enemy];
   for (int pt = 0; pt < 4; ++pt) {
     // PieceType: KNIGHT=2, BISHOP=3, ROOK=4, QUEEN=5
     int pieceType = pt + 2;
@@ -911,11 +960,11 @@ static void evalKingDanger(const BitboardSet& bb,
                            const attacks::AttackInfo& info,
                            int& mgScore) {
   for (int c = 0; c < 2; ++c) {
-    // Penalty applies to the defending side: attacks on white king hurt
-    // white (mgScore -=), attacks on black king hurt black (mgScore +=).
-    int sign = (c == 0) ? -1 : 1;
+    // Penalty to the defending side: attacks on white king decrease
+    // mgScore, attacks on black king increase it.
+    int sign = SIDE_SIGN[c];
     int enemy = 1 - c;
-    Color color = static_cast<Color>(c);
+    Color color = COLORS[c];
 
     // Locate king.
     int kingIdx = pieceIndex(color, PieceType::KING);
@@ -928,11 +977,12 @@ static void evalKingDanger(const BitboardSet& bb,
 
     int totalWeight = computeKingDangerWeight(bb, info, enemy, kingZone, kingSq);
 
-    // Look up nonlinear penalty.
+    // Look up nonlinear penalty — subtracted because danger hurts the
+    // defending side (sign is positive for white, negative for black).
     int idx = totalWeight < KING_DANGER_TABLE_SIZE
             ? totalWeight
             : KING_DANGER_TABLE_SIZE - 1;
-    mgScore += sign * KING_DANGER_TABLE[idx];
+    mgScore -= sign * KING_DANGER_TABLE[idx];
   }
 }
 
@@ -973,18 +1023,17 @@ void PawnHashTable::store(uint64_t hash, int16_t mg, int16_t eg,
 const EvalEntry* EvalHashTable::probe(uint64_t hash) const {
   if (!entries) return nullptr;
   int idx = static_cast<int>(hash) & mask;
-  uint32_t key32 = static_cast<uint32_t>(hash >> 32);
+  uint16_t key = static_cast<uint16_t>(hash >> 32);
   const EvalEntry& e = entries[idx];
-  return (e.key == key32) ? &e : nullptr;
+  return (e.key == key) ? &e : nullptr;
 }
 
 void EvalHashTable::store(uint64_t hash, int16_t s) {
   if (!entries) return;
   int idx = static_cast<int>(hash) & mask;
   EvalEntry& e = entries[idx];
-  e.key   = static_cast<uint32_t>(hash >> 32);
+  e.key   = static_cast<uint16_t>(hash >> 32);
   e.score = s;
-  e.pad   = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -999,8 +1048,8 @@ void EvalHashTable::store(uint64_t hash, int16_t s) {
 static void evalBadBishop(const BitboardSet& bb,
                           int& mgScore, int& egScore) {
   for (int c = 0; c < 2; ++c) {
-    int sign = (c == 0) ? 1 : -1;
-    Color color = static_cast<Color>(c);
+    int sign = SIDE_SIGN[c];
+    Color color = COLORS[c];
     Bitboard bishops = bb.byPiece[pieceIndex(color, PieceType::BISHOP)];
     Bitboard pawns   = bb.byPiece[pieceIndex(color, PieceType::PAWN)];
     while (bishops) {
@@ -1026,9 +1075,9 @@ static void evalRookBehindPasser(const BitboardSet& bb,
                                 const Bitboard passedPawns[2],
                                 int& egScore) {
   for (int c = 0; c < 2; ++c) {
-    int sign = (c == 0) ? 1 : -1;
-    Color color         = static_cast<Color>(c);
-    Color enemy         = static_cast<Color>(1 - c);
+    int sign = SIDE_SIGN[c];
+    Color color         = COLORS[c];
+    Color enemy         = COLORS[1 - c];
     Bitboard ownRooks   = bb.byPiece[pieceIndex(color, PieceType::ROOK)];
     Bitboard enemyRooks = bb.byPiece[pieceIndex(enemy, PieceType::ROOK)];
 
@@ -1097,6 +1146,11 @@ int computeGamePhase(const BitboardSet& bb) {
 //
 // Reference: https://www.chessprogramming.org/Bishops_of_Opposite_Colors
 // ---------------------------------------------------------------------------
+
+// Opposite-color bishop scaling constants (numerator/denominator form, 3/4).
+static constexpr int OCB_SCALE_NUM         = 3;
+static constexpr int OCB_SCALE_DENOM       = 4;
+static constexpr int OCB_PHASE_THRESHOLD   = 6;
 
 static int applyOCBScaling(int score, const BitboardSet& bb, int phase) {
   if (phase <= OCB_PHASE_THRESHOLD) {
@@ -1169,11 +1223,6 @@ int evaluatePosition(const BitboardSet& bb,
   }
 
   return evaluateImpl(bb, mgScore, egScore, pawnHash);
-}
-
-int evaluatePosition(const BitboardSet& bb, int mgMatPST, int egMatPST,
-                     PawnHashTable* pawnHash) {
-  return evaluateImpl(bb, mgMatPST, egMatPST, pawnHash);
 }
 
 int evaluatePosition(const BitboardSet& bb, int mgMatPST, int egMatPST,

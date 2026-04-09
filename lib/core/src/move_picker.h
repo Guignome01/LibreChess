@@ -272,7 +272,7 @@ struct MovePicker {
     ply      = p;
 
     ttMove = tt;
-    hasTT  = (tt.from != 0 || tt.to != 0);
+    hasTT  = !tt.isNull();
 
     killer0 = unpackMove(ssRef.killers[p][0]);
     killer1 = unpackMove(ssRef.killers[p][1]);
@@ -371,7 +371,7 @@ struct MovePicker {
             Move km = (killerPhase == 0) ? killer0 : killer1;
             ++killerPhase;
             // Skip null/empty killers
-            if (km.from == 0 && km.to == 0) continue;
+            if (km.isNull()) continue;
             // Skip if same as TT move
             if (ttYielded && km == ttMove) continue;
             // Skip if this is a capture in the current position
@@ -396,7 +396,7 @@ struct MovePicker {
             if (!(ttYielded && cm == ttMove) &&
                 !(killer0Yielded && cm == killer0) &&
                 !(killer1Yielded && cm == killer1) &&
-                cm.from != 0 && // not null
+                !cm.isNull() && // not null
                 mailbox[cm.to] == Piece::NONE &&
                 isMoveValid(*bb, mailbox, cm, *posState, side)) {
               lastSee = SEE_NOT_COMPUTED;
@@ -470,7 +470,8 @@ private:
     utils::resolveKingSquare(*bb, side, kingSq);
     legalCtx = movegen::buildLegalityContext(*bb, side, kingSq);
 
-    movegen::generateCaptures(*bb, mailbox, side, *posState, legalCtx, moves);
+    movegen::generateMoves(*bb, mailbox, side, *posState, legalCtx, moves,
+                            movegen::FilterMode::CAPTURES_PROMOS);
     totalCaps = moves.count;
 
     // Score all captures uniformly with MVV-LVA + captureHistory.
@@ -498,8 +499,8 @@ private:
 
   void initQuiets() {
     int beforeCount = moves.count;
-    movegen::generateQuietsAppend(*bb, mailbox, side, *posState, legalCtx,
-                                  moves);
+    movegen::generateMovesAppend(*bb, mailbox, side, *posState, legalCtx,
+                                  moves, movegen::FilterMode::QUIETS);
 
     uint8_t c = raw(side);
     for (int i = beforeCount; i < moves.count; ++i) {

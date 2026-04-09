@@ -66,11 +66,7 @@ static int runSuite(const char* suiteName,
     // Search — time-only, no depth cap
     search::SearchLimits limits;
     limits.hardTimeMs = TACTICS_TIME_MS;
-    search::SearchState state;
-    state.timeFunc = chronoMillis;
-    state.tt = &tables.tt;
-    state.pawnHash = &tables.pawn;
-    state.evalHash = &tables.eval;
+    search::SearchState state(chronoMillis, &tables.tt, &tables.pawn, &tables.eval);
     search::SearchResult result = search::findBestMove(
         pos, limits, state);
     std::string engineMove = moveToStr(result.bestMove);

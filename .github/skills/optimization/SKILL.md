@@ -1,12 +1,14 @@
 ---
 name: optimization
-description: "**WORKFLOW SKILL** — Structured code optimization and simplification. USE FOR: performance tuning (memory, speed, flash); reducing code complexity; eliminating dead code and redundancy; simplifying over-engineered abstractions; ESP32 resource optimization (stack, heap, IRAM); streamlining logic without changing behavior. DO NOT USE FOR: adding new features; architecture redesign (use refactoring skill); single-line tweaks; cosmetic formatting. INVOKES: file system tools, terminal (build/test), subagents for codebase exploration."
-argument-hint: "Describe the optimization goal (e.g., 'reduce heap usage in Position', 'simplify engine provider API', 'eliminate redundant sensor reads')"
+description: "**WORKFLOW SKILL** — Implementation-level code optimization and simplification. USE FOR: performance tuning (memory, speed, flash); reducing implementation complexity (nesting, branching, duplication); eliminating dead code; ESP32 resource optimization (stack, heap, IRAM); replacing branching cascades with lookup tables; streamlining logic without changing the public API surface. DO NOT USE FOR: adding new features; redesigning a module's public API or abstraction layers (use redesign skill); cross-module structural changes (use refactoring skill); single-line tweaks; cosmetic formatting. INVOKES: file system tools, terminal (build/test), subagents for codebase exploration."
+argument-hint: "Describe the optimization goal (e.g., 'reduce heap usage in Position', 'eliminate redundant sensor reads', 'simplify evaluation hot path')"
 ---
 
 # Code Optimization & Simplification Workflow
 
-A structured approach to making code faster, leaner, and simpler without changing its behavior. Every optimization must be measured, not assumed. Every simplification must preserve correctness.
+A structured approach to making code faster, leaner, and simpler at the implementation level — without changing behavior or the public API surface. Every optimization must be measured, not assumed. Every simplification must preserve correctness.
+
+**Scope boundary**: This skill works *within* the current design. It changes *how* code implements its contract, not *what* the contract is. If the problem is too many public functions, near-duplicate overloads, or the wrong abstraction layer — that's the redesign skill. If the problem is code in the wrong module or a broken class hierarchy — that's the refactoring skill.
 
 ## Step 1 — Profile & Measure
 
@@ -37,10 +39,14 @@ Categorize findings by type and impact.
 
 ### Simplification opportunities
 - **Dead code**: unreachable branches, unused parameters, stale variables, orphaned includes
-- **Redundancy**: near-duplicate functions, copy-pasted logic, repeated patterns that should be a helper
-- **Over-engineering**: unnecessary abstractions, intermediate classes that add indirection without value, generic solutions for single use cases
-- **Complexity**: deeply nested conditionals that could be early-returns, long functions that should be split, boolean parameters that should be enums
+- **Internal redundancy**: copy-pasted logic within a file, repeated inline expressions that should be a file-local helper
+- **Complexity**: deeply nested conditionals that could be early-returns, boolean parameters that should be enums, convoluted control flow
 - **Branching cascades**: if/switch chains that map discrete inputs to outputs. Replace with lookup tables (`constexpr` arrays) for cleaner, faster code
+
+**Not in scope** (hand off to other skills):
+- Near-duplicate *public* functions that differ only by a parameter → **redesign** (API consolidation)
+- Unnecessary abstraction layers or intermediate classes → **redesign** (questioning abstractions)
+- Functions that belong in a different module → **refactoring** (structural relocation)
 
 **Output**: Prioritized list of opportunities with estimated impact (high/medium/low) and risk (safe/moderate/risky). Present to user for approval.
 
@@ -128,5 +134,6 @@ Update all documentation that references the changed code.
 
 ## Related Skills
 
-- **refactoring** — use when optimization reveals an architectural problem that requires structural changes (class extraction, hierarchy redesign, module reorganization). Finish or pause the optimization, then invoke the refactoring workflow.
+- **redesign** — use when optimization reveals that the module's API surface itself is the problem (too many near-duplicate functions, parameter proliferation, leaked internals). Redesign uses blank-slate thinking to find the ideal API; optimization works within the current design.
+- **refactoring** — use when optimization reveals an architectural problem that requires cross-module structural changes (class extraction, hierarchy changes, module reorganization). Finish or pause the optimization, then invoke the refactoring workflow.
 - **audit** — use when you want to explore the codebase for quality issues before deciding what to optimize. An audit report may identify targets for this optimization workflow.

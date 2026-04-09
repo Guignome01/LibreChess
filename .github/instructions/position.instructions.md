@@ -49,6 +49,8 @@ Board representation and position-level chess logic — a pure position containe
 - **Decomposed parameters** — static methods accept `(BitboardSet&, Piece[], PositionState&)` to prevent circular headers (`position.h` ↔ `movegen.h`).
 - **Incremental accumulators** — `make()` delegates to `updateAccumulators()` for capture/movement/castling-rook/promotion/phase deltas. Decomposed into `removeCapture()`, `moveCastlingRook()`, `applyPromotion()`. `unmake()` uses `unmakeCastlingRook()`.
 - **`makeMove()` decomposition** — flag inference via `buildMoveFlags()`, result via `buildMoveResult()`, outcome via `detectGameEnd()`. Single code path for game and search.
+- **Undo state helpers** — `saveUndoState()` and `restoreFromUndo()` factor out the 7-field save/restore pattern shared by `make()`/`makeNullMove()` and `unmake()`/`unmakeNullMove()`.
+- **Castling rook square derivation** — the `rank + kingSide → rookFrom/rookTo` pattern appears in `moveCastlingRook()`, `unmakeCastlingRook()`, and `updateAccumulators()`. Kept inline at each site (4 lines) to avoid a struct return in the hot path.
 - **1-deep UndoCache** — stores `Move` + `UndoInfo` + post-hash. Hash-validated O(1) hot path for `reverseMove()`; cold path falls back to manual reversal + `recomputeDerived()`. [CPW — Copy-Make](https://www.chessprogramming.org/Copy-Make)
 - **EP legality caching** — `epIsLegal_` avoids redundant movegen in Zobrist make/unmake hot path.
 

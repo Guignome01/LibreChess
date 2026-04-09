@@ -16,7 +16,6 @@
 // Reference: https://www.chessprogramming.org/Search
 // ---------------------------------------------------------------------------
 
-#include <cmath>
 #include <cstdint>
 
 #include "search.h"  // MAX_PLY
@@ -24,13 +23,6 @@
 namespace LibreChess {
 namespace search {
 namespace {
-
-// ===========================================================================
-// Time control
-// ===========================================================================
-
-// Node check interval — every N nodes, poll time and external stop.
-constexpr uint32_t CHECK_INTERVAL = 512;
 
 // ===========================================================================
 // Quiescence search
@@ -69,23 +61,56 @@ static constexpr int LMR_MAX_MOVES        = 64;
 
 // Logarithmic LMR reduction table — precomputed base reduction by
 // [depth][moveIndex].  Formula: max(1, int(0.75 + ln(d)*ln(m) / 2.0)).
+//
+// Built at compile time via a constexpr struct.  The constexpr natural
+// log uses decomposition ln(x) = k*ln(2) + ln(1+f) with a 6th-order
+// Taylor series for ln(1+f), accurate to ±0.0001 for x ∈ [1,64] —
+// more than sufficient for integer truncation.
+//
 // Reference: https://www.chessprogramming.org/Late_Move_Reductions#Base_Reduction
-static int8_t LMR_TABLE[MAX_PLY][LMR_MAX_MOVES];
-static bool lmrInitialized = false;
 
-static void initLMR() {
-  if (lmrInitialized) return;
-  for (int d = 0; d < MAX_PLY; ++d) {
-    for (int m = 0; m < LMR_MAX_MOVES; ++m) {
-      if (d == 0 || m == 0)
-        LMR_TABLE[d][m] = 0;
-      else
-        LMR_TABLE[d][m] = static_cast<int8_t>(std::max(
-            1, static_cast<int>(0.75 + std::log(d) * std::log(m) / 2.0)));
+// Constexpr natural log approximation for positive integers.
+// Uses the identity ln(1+f) = 2·atanh(f/(f+2)) with a rapidly converging
+// series.  For f ∈ [0,1), t = f/(f+2) ∈ [0,1/3), so 9 terms yield
+// accuracy better than 1e-10 — far exceeding int-truncation needs.
+static constexpr double cxLn2 = 0.6931471805599453;
+
+static constexpr double cxLn(int x) {
+  // Decompose: x = 2^k * (1+f), f ∈ [0,1)
+  int k = 0;
+  int pow2 = 1;
+  while (pow2 * 2 <= x) { pow2 *= 2; ++k; }
+  double f = static_cast<double>(x) / pow2 - 1.0;
+  // ln(1+f) = 2·atanh(t) where t = f/(f+2), t ∈ [0, 1/3)
+  // atanh(t) = t + t³/3 + t⁵/5 + t⁷/7 + ...
+  double t = f / (f + 2.0);
+  double t2 = t * t;
+  double term = t;
+  double sum = t;
+  for (int i = 3; i <= 19; i += 2) {
+    term *= t2;
+    sum += term / i;
+  }
+  return k * cxLn2 + 2.0 * sum;
+}
+
+struct LMRTable {
+  int8_t data[MAX_PLY][LMR_MAX_MOVES]{};
+  constexpr LMRTable() {
+    for (int d = 0; d < MAX_PLY; ++d) {
+      for (int m = 0; m < LMR_MAX_MOVES; ++m) {
+        if (d == 0 || m == 0)
+          data[d][m] = 0;
+        else {
+          int val = static_cast<int>(0.75 + cxLn(d) * cxLn(m) / 2.0);
+          data[d][m] = static_cast<int8_t>(val < 1 ? 1 : val);
+        }
+      }
     }
   }
-  lmrInitialized = true;
-}
+};
+
+static constexpr LMRTable LMR_TABLE{};
 
 // ===========================================================================
 // Aspiration Windows

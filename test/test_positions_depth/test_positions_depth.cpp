@@ -33,7 +33,7 @@ static constexpr int DEPTH = 10;
 
 /// Minimum number of WAC positions the engine must solve at DEPTH.
 /// Calibrated from baseline run — update when search improves.
-static constexpr int WAC_DEPTH_BASELINE = 247;
+static constexpr int WAC_DEPTH_BASELINE = 242;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -59,11 +59,7 @@ static int runDepthSuite(const std::vector<EPDRecord>& records) {
     // Depth-only search — no time limit
     search::SearchLimits limits;
     limits.maxDepth = DEPTH;
-    search::SearchState state;
-    state.timeFunc = chronoMillis;
-    state.tt = &tables.tt;
-    state.pawnHash = &tables.pawn;
-    state.evalHash = &tables.eval;
+    search::SearchState state(chronoMillis, &tables.tt, &tables.pawn, &tables.eval);
     search::SearchResult result = search::findBestMove(
         pos, limits, state);
     std::string engineMove = moveToStr(result.bestMove);

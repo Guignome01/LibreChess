@@ -183,7 +183,7 @@ inline CastlingInfo checkCastling(const Piece mailbox[], Square from,
 // ---------------------------------------------------------------------------
 inline bool resolveKingSquare(const BitboardSet& bb, Color color,
                               Square& kingSq) {
-  int kidx = piece::pieceIndex(piece::makePiece(color, PieceType::KING));
+  int kidx = piece::pieceIndex(color, PieceType::KING);
   Bitboard kingBB = bb.byPiece[kidx];
   if (!kingBB) return false;
   kingSq = lsb(kingBB);

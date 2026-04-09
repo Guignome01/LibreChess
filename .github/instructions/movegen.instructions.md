@@ -10,9 +10,9 @@ Stateless namespace — all context (board, turn, state) passed as decomposed pa
 ## Public API
 
 **Per-piece**: `getPossibleMoves(bb, mailbox, sq, state, moves)` — legal moves for one piece
-**Bulk**: `generateAllMoves(...)`, `generateCaptures(...)` — self-contained (build own LegalityContext). Overloaded for both `MoveList` and `QSMoveList`.
-**Staged** (reuse context): `buildLegalityContext(bb, color, kingSq) → LegalityContext`, then `generateCaptures(bb, mailbox, color, state, ctx, moves)` + `generateQuiets(bb, mailbox, color, state, ctx, moves)` — avoids double pin/check computation in staged move pickers.
-**Append-mode**: `generateQuietsAppend(bb, mailbox, color, state, ctx, moves)` — appends quiet moves to existing `MoveList` without clearing (used by `MovePicker::initQuiets()`).
+**Bulk**: `generateMoves<N>(bb, mailbox, color, state, moves, filter)` — self-contained (build own LegalityContext). Template on `MoveListBase<N>` (works with both `MoveList` and `QSMoveList`).
+**Staged** (reuse context): `buildLegalityContext(bb, color, kingSq) → LegalityContext`, then `generateMoves(bb, mailbox, color, state, ctx, moves, filter)` — avoids double pin/check computation in staged move pickers.
+**Append-mode**: `generateMovesAppend(bb, mailbox, color, state, ctx, moves, filter)` — appends moves to existing `MoveList` without clearing (used by `MovePicker::initQuiets()`).
 **Validation**: `isValidMove(bb, mailbox, from, to, state)`, overload with `kingSq` — builds `LegalityContext` and delegates to `filterPieceMoves` with early-exit handler
 **Queries**: `hasAnyLegalMove(...)`, `hasLegalEnPassantCapture(...)`
 
@@ -36,7 +36,10 @@ Stateless namespace — all context (board, turn, state) passed as decomposed pa
 - `pinRayFor(pinData, sq)` — ray mask for pinned piece
 - `computePinData(bb, kingSq, color)` — compute pin rays
 - `leavesInCheck(bb, mailbox, from, to, kingSq, movingColor)` — copy-make legality check. For non-castling king moves, uses `isSquareUnderAttackOcc` with synthetic occupancy to avoid BitboardSet copy. For castling and EP, copies `BitboardSet` (~120 bytes) and applies move on copy.
-- `filterPieceMoves<Handler>(...)` — direct-emit template: generates attack bitboards per piece type inline, applies `legalMask` (pin-ray & check-mask) at the bitboard level before enumerating targets, emits legal moves directly to handler. King moves use `leavesInCheck` per target; castling is inlined (at most 2 candidates). No intermediate `MoveList` buffer — ~24% faster than the previous generate-then-filter approach.
+- `filterPieceMoves<Handler>(...)` — direct-emit template: generates attack bitboards per piece type inline, applies `legalMask` (pin-ray & check-mask) at the bitboard level before enumerating targets, emits legal moves directly to handler. Move-collection callers share a single `MoveAdder` functor to avoid redundant template instantiations. King moves use `leavesInCheck` per target; castling is inlined (at most 2 candidates). No intermediate `MoveList` buffer — ~24% faster than the previous generate-then-filter approach.
+- `collectLegalMoves<N>(...)` — clear + collect into `MoveListBase<N>` via shared `MoveAdder` functor. Requires a pre-built `LegalityContext`. Used by staged `generateMoves(ctx)` and `generateForColor`.
+- `generateForColor<N>(...)` — self-contained bulk generation: resolves king square, builds `LegalityContext`, delegates to `collectLegalMoves`. Entry point for the public `generateMoves<N>()` template. Staged API callers (`generateMoves(ctx)` and `generateMovesAppend`) call `collectLegalMoves` or `enumerateLegalMoves` directly since they already have a `LegalityContext`.
+- `MoveAdder` — named functor struct `{Move* buf, int& count}` shared by `collectLegalMoves`, `generateMovesAppend`, and `getPossibleMoves`. Single concrete type → one `filterPieceMoves<MoveAdder>` instantiation instead of three identical lambda-typed copies (~2.8 KiB flash savings on ESP32).
 
 ## Design Notes
 
@@ -45,6 +48,7 @@ Stateless namespace — all context (board, turn, state) passed as decomposed pa
 - **King-move fast path** — non-castling king moves bypass BitboardSet copy: computes `occ = (bb.occupied ^ squareBB(from)) | squareBB(to)` and calls `isSquareUnderAttackOcc(bb, to, color, occ)`. Avoids ~120-byte copy per king move. Castling still uses the copy-make path (must verify rook transit squares). The delta check `delta != 2 && delta != -2` distinguishes castling from normal king moves without `std::abs`.
 - **Direct-emit legal generation** — `filterPieceMoves` generates attack bitboards per piece type and masks with `legalMask` at the bitboard level before iterating. For sliding/leaper pieces: `atk &= ~friendly; atk &= legalMask;` then iterate bits. For pawns: push targets checked against `legalMask` individually; capture targets masked as `& enemy & legalMask`. Eliminates the intermediate `MoveList` buffer (~654 bytes stack per piece) and skips Move construction for targets filtered out by the legal mask.
 - **Promotions** — emit 4 `Move` variants per target square (one per piece type: N, B, R, Q).
+- **`pieceIndex(Color, PieceType)` indexing** — `byPiece[]` access uses `pieceIndex(color, PieceType::X)`, the codebase-wide standard. Never use `pieceIndex(makePiece(...))` indirection.
 
 ## Testing
 

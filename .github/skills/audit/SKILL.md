@@ -167,5 +167,6 @@ End with:
 
 ## Related Skills
 
+- **redesign** — use to act on findings related to overgrown module APIs (too many public functions, near-duplicate overloads, parameter proliferation). An audit finding like "movegen has 12 public functions; 4 differ only by FilterMode" becomes a redesign target.
 - **optimization** — use to act on findings related to performance, complexity reduction, dead code elimination, or simplification. An audit finding like "these two functions share 90% of their logic" becomes an optimization target.
-- **refactoring** — use to act on findings related to architectural violations, structural problems, or cross-cutting inconsistencies that require multi-file changes. An audit finding like "firmware code bypasses Game and includes Position directly" becomes a refactoring target.
+- **refactoring** — use to act on findings related to architectural violations, cross-module structural problems, or dependency issues that require multi-file changes. An audit finding like "firmware code bypasses Game and includes Position directly" becomes a refactoring target.

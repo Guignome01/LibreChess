@@ -225,6 +225,14 @@ class Position {
   // where incremental tracking is not possible.
   void recomputeDerived();
 
+  // Save common undo fields from current position state.
+  // Shared by make() and makeNullMove() to avoid duplication.
+  UndoInfo saveUndoState() const;
+
+  // Restore position state from an UndoInfo snapshot.
+  // Shared by unmake() and unmakeNullMove() to avoid duplication.
+  void restoreFromUndo(const UndoInfo& undo);
+
   // Shared incremental update for mgPST_, egPST_, material_ accumulators.
   // Called by make() with the move's captured piece, castling flag, and
   // promoted piece (Piece::NONE when not applicable).

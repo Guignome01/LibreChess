@@ -40,7 +40,7 @@ public:
 ## Design Notes
 
 - **Position by value**: Each `calculateMove` call rebuilds from FEN. TT provides cross-call continuity.
-- **Direct SearchState member**: `state_` is a direct `SearchState` member (not heap-allocated), reused across calls, eliminating per-search allocation. Constructor wires infrastructure fields (`state_.tt`, `state_.pawnHash`, `state_.evalHash`); `setTimeFunc` wires `state_.timeFunc`. `findBestMove()` resets per-search transients (`nodes`, `stopped`) at the start of each search.
+- **Direct SearchState member**: `state_` is a direct `SearchState` member (not heap-allocated), reused across calls, eliminating per-search allocation. Initialized via member initializer list: `state_(nullptr, &tt_, &pawnHash_, &evalHash_)` — infrastructure pointers are wired at construction. `setTimeFunc` wires `state_.timeFunc` post-construction (firmware deferred setup). `findBestMove()` resets per-search transients (`nodes`, `stopped`) at the start of each search.
 - **No game state**: Engine is stateless w.r.t. game lifecycle. Firmware manages game flow.
 - **Dependency**: Never imports game library.
 - **Platform function**: Uses `millis()` on ESP32, `nativeMillis()` on native (selected at compile time via `TIME_FUNC` / platform detection).

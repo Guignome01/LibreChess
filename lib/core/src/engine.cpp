@@ -16,13 +16,11 @@ namespace LibreChess {
 // Construction / destruction
 // ===========================================================================
 
-Engine::Engine(int ttSize) {
+Engine::Engine(int ttSize)
+    : state_(nullptr, &tt_, &pawnHash_, &evalHash_) {
   tt_.resize(ttSize);
   pawnHash_.resize(eval::DEFAULT_PAWN_HASH_SIZE);
   evalHash_.resize(eval::DEFAULT_EVAL_HASH_SIZE);
-  state_.tt       = &tt_;
-  state_.pawnHash = &pawnHash_;
-  state_.evalHash = &evalHash_;
   pos_.loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
 }
 

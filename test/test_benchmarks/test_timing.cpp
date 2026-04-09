@@ -28,8 +28,9 @@ static uint64_t perft(Position& pos, int depth) {
   if (depth == 0) return 1;
   uint64_t nodes = 0;
   MoveList moves;
-  movegen::generateAllMoves(pos.bitboards(), pos.mailbox(),
-                            pos.sideToMove(), pos.positionState(), moves);
+  movegen::generateMoves(pos.bitboards(), pos.mailbox(),
+                         pos.sideToMove(), pos.positionState(),
+                         moves, movegen::FilterMode::ALL);
   for (int i = 0; i < moves.count; i++) {
     UndoInfo undo = pos.make(moves.moves[i]);
     nodes += perft(pos, depth - 1);
@@ -49,8 +50,9 @@ static void test_bench_make_unmake(void) {
   pos.loadFEN("r1bqkbnr/pppppppp/2n5/4P3/8/8/PPPP1PPP/RNBQKBNR b KQkq - 0 2");
 
   MoveList moves;
-  movegen::generateAllMoves(pos.bitboards(), pos.mailbox(),
-                            pos.sideToMove(), pos.positionState(), moves);
+  movegen::generateMoves(pos.bitboards(), pos.mailbox(),
+                         pos.sideToMove(), pos.positionState(),
+                         moves, movegen::FilterMode::ALL);
   TEST_ASSERT_GREATER_THAN(0, moves.count);
 
   constexpr int ITERS = 200000;
@@ -82,8 +84,9 @@ static void test_bench_make_unmake_ep(void) {
       "rnbqkbnr/pppp1ppp/8/4pP2/8/8/PPPPP1PP/RNBQKBNR w KQkq e6 0 3");
 
   MoveList moves;
-  movegen::generateAllMoves(pos.bitboards(), pos.mailbox(),
-                            pos.sideToMove(), pos.positionState(), moves);
+  movegen::generateMoves(pos.bitboards(), pos.mailbox(),
+                         pos.sideToMove(), pos.positionState(),
+                         moves, movegen::FilterMode::ALL);
   TEST_ASSERT_GREATER_THAN(0, moves.count);
 
   constexpr int ITERS = 200000;
@@ -123,7 +126,7 @@ static void test_bench_evaluate(void) {
 
   for (int i = 0; i < ITERS; i++) {
     int score = eval::evaluatePosition(pos.bitboards(), pos.mgPST(),
-                                       pos.egPST(), &pawnHash);
+                                       pos.egPST(), pos.phase(), &pawnHash);
     dummy += score;
   }
 
@@ -165,8 +168,7 @@ static void test_bench_search_depth8(void) {
   search::SearchLimits limits;
   limits.maxDepth = 8;
 
-  search::SearchState state;
-  state.timeFunc = chronoMillis;
+  search::SearchState state(chronoMillis);
   uint64_t start = nowUs();
   search::SearchResult result =
       search::findBestMove(pos, limits, state);
@@ -208,7 +210,7 @@ static void test_bench_evaluate_multi(void) {
     uint64_t start = nowUs();
     for (int i = 0; i < ITERS_PER_POS; i++) {
       dummy += eval::evaluatePosition(pos.bitboards(), pos.mgPST(),
-                                      pos.egPST(), &pawnHash);
+                                      pos.egPST(), pos.phase(), &pawnHash);
     }
     totalUs += nowUs() - start;
   }
@@ -284,8 +286,7 @@ static void test_bench_search_multi(void) {
     search::SearchLimits limits;
     limits.maxDepth = 8;
 
-    search::SearchState state;
-    state.timeFunc = chronoMillis;
+    search::SearchState state(chronoMillis);
     uint64_t start = nowUs();
     search::SearchResult result =
         search::findBestMove(pos, limits, state);
@@ -306,7 +307,7 @@ static void test_bench_search_multi(void) {
 }
 
 // ===========================================================================
-// Benchmark: generateAllMoves throughput
+// Benchmark: generateMoves throughput
 //
 // Measures legal move generation calls/sec across diverse positions to
 // establish a movegen throughput baseline.  Useful for evaluating whether
@@ -334,8 +335,9 @@ static void test_bench_movegen_throughput(void) {
     uint64_t start = nowUs();
     for (int i = 0; i < ITERS; ++i) {
       MoveList moves;
-      movegen::generateAllMoves(pos.bitboards(), pos.mailbox(),
-                                pos.sideToMove(), pos.positionState(), moves);
+      movegen::generateMoves(pos.bitboards(), pos.mailbox(),
+                             pos.sideToMove(), pos.positionState(),
+                             moves, movegen::FilterMode::ALL);
     }
     uint64_t elapsed = nowUs() - start;
 
@@ -344,7 +346,7 @@ static void test_bench_movegen_throughput(void) {
   }
 
   double callsPerSec = (totalCalls * 1000000.0) / totalUs;
-  printf("  generateAllMoves: %d pos x %d iters in %llu us (%.0f calls/s)\n",
+  printf("  generateMoves: %d pos x %d iters in %llu us (%.0f calls/s)\n",
          NPOS, ITERS, (unsigned long long)totalUs, callsPerSec);
 
   TEST_ASSERT_TRUE(true);

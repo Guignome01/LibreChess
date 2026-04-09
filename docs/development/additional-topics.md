@@ -84,9 +84,9 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 | Async web server | ~10–20 KiB | ESPAsyncWebServer buffers |
 | LittleFS | ~5–10 KiB | Filesystem metadata |
 | NeoPixelBus (LED) | ~2–3 KiB | DMA buffer for 64 LEDs |
-| Transposition table | up to 128 KiB | Dynamic: `(freeHeap - 48KB) / 4`, capped, 16B/entry |
-| Pawn hash table | 4 KiB | 512 entries × 8B, owned by Engine |
-| Eval hash table | 16 KiB | 2048 entries × 8B (HARDWARE_LIMITATION), owned by Engine |
+| Transposition table | up to 64 KiB | Dynamic: `(freeHeap - 12KB) / 4`, capped at 64 KiB, 16B/entry |
+| Pawn hash table | 6 KiB | 256 entries × 24B, owned by Engine |
+| Eval hash table | 4 KiB | 1024 entries × 4B, owned by Engine |
 | SearchState | ~10 KiB | Pre-allocated in `Engine` constructor, reused across searches |
 | **Free after persistent allocs** | **~80–100 KiB** | Available for TT + hash tables + SearchState |
 

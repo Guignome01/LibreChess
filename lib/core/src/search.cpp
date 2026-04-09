@@ -44,6 +44,14 @@ void resetStats() {}
 SearchStats getStats() { return SearchStats{}; }
 #endif
 
+// ---------------------------------------------------------------------------
+// Internal constants — not part of the public API.
+// ---------------------------------------------------------------------------
+
+static constexpr int INF_SCORE  = 31000;
+static constexpr int DRAW_SCORE = 0;
+static constexpr uint32_t CHECK_INTERVAL = 512;
+
 // ===========================================================================
 // TranspositionTable — resize / free / clear / probe / store are now
 // defined in search.h (base from hash_table.h).
@@ -56,6 +64,23 @@ void SearchState::clearHeuristics() {
   std::memset(countermoves, 0, sizeof(countermoves));
   std::memset(staticEvals, 0, sizeof(staticEvals));
   std::memset(pvLength, 0, sizeof(pvLength));
+}
+
+SearchState::SearchState(TimeFunc tf, TranspositionTable* ttPtr,
+                         eval::PawnHashTable* ph, eval::EvalHashTable* eh)
+    : timeFunc(tf), tt(ttPtr), pawnHash(ph), evalHash(eh) {}
+
+void SearchState::checkTime() {
+  if (stopped) return;
+  if ((nodes & (CHECK_INTERVAL - 1)) != 0) return;
+  if (externalStop && externalStop->load(std::memory_order_relaxed)) {
+    stopped = true;
+    return;
+  }
+  if (hardTimeMs > 0 && timeFunc) {
+    uint32_t elapsed = timeFunc() - startTime;
+    if (elapsed >= hardTimeMs) stopped = true;
+  }
 }
 
 namespace {
@@ -103,8 +128,7 @@ inline int scoreFromTT(int score, int ply) {
 inline void collectPV(SearchState& state, int ply, PackedMove move) {
   state.pv[ply][0] = move;
   int childLen = (ply + 1 < MAX_PLY) ? state.pvLength[ply + 1] : 0;
-  if (childLen < 0) childLen = 0;
-  if (childLen > MAX_PV_LEN - 1) childLen = MAX_PV_LEN - 1;
+  childLen = std::max(0, std::min(childLen, MAX_PV_LEN - 1));
   std::memcpy(&state.pv[ply][1], &state.pv[ply + 1][0],
               childLen * sizeof(PackedMove));
   state.pvLength[ply] = childLen + 1;
@@ -128,7 +152,7 @@ inline void collectPV(SearchState& state, int ply, PackedMove move) {
 inline int computeLMRReduction(int depth, int moveIndex, int16_t hist,
                                bool improving, bool pvNode) {
   int mi = moveIndex < LMR_MAX_MOVES ? moveIndex : LMR_MAX_MOVES - 1;
-  int reduction = LMR_TABLE[depth][mi];
+  int reduction = LMR_TABLE.data[depth][mi];
 
   if (hist < -500)
     ++reduction;           // Bad history → reduce more
@@ -139,11 +163,8 @@ inline int computeLMRReduction(int depth, int moveIndex, int16_t hist,
   if (!pvNode)
     ++reduction;           // Non-PV nodes → reduce more
 
-  int newDepth = depth - 1;
-  if (reduction < 1) reduction = 1;
-  if (reduction > newDepth - 2) reduction = newDepth - 2;
-  if (reduction < 1) reduction = 1;
-  return reduction;
+  int maxR = std::max(1, depth - 3);  // depth-1 − 2, at least 1
+  return std::max(1, std::min(reduction, maxR));
 }
 
 // ---------------------------------------------------------------------------
@@ -155,12 +176,8 @@ inline int computeLMRReduction(int depth, int moveIndex, int16_t hist,
 
 inline void reorderRootMoves(MoveList& rootMoves, const Move& bestMove) {
   for (int i = 1; i < rootMoves.count; ++i) {
-    if (rootMoves.moves[i].from  == bestMove.from &&
-        rootMoves.moves[i].to    == bestMove.to   &&
-        rootMoves.moves[i].flags == bestMove.flags) {
-      Move tmp = rootMoves.moves[0];
-      rootMoves.moves[0] = rootMoves.moves[i];
-      rootMoves.moves[i] = tmp;
+    if (rootMoves.moves[i] == bestMove) {
+      std::swap(rootMoves.moves[0], rootMoves.moves[i]);
       break;
     }
   }
@@ -250,7 +267,7 @@ int quiescence(Position& pos, int alpha, int beta, int ply, int qsPly,
     return evaluate(pos, state);
 
   // Periodic time / cancellation check
-  if ((state.nodes & (CHECK_INTERVAL - 1)) == 0) state.checkTime();
+  state.checkTime();
   if (state.stopped) return 0;
 
   bool inCheck = pos.inCheck();
@@ -277,11 +294,13 @@ int quiescence(Position& pos, int alpha, int beta, int ply, int qsPly,
   // ~540 bytes/ply vs full MoveList (cap 218).
   QSMoveList moves;
   if (inCheck)
-    movegen::generateAllMoves(pos.bitboards(), pos.mailbox(),
-                              pos.sideToMove(), pos.positionState(), moves);
+    movegen::generateMoves(pos.bitboards(), pos.mailbox(),
+                           pos.sideToMove(), pos.positionState(),
+                           moves, movegen::FilterMode::ALL);
   else
-    movegen::generateCaptures(pos.bitboards(), pos.mailbox(),
-                              pos.sideToMove(), pos.positionState(), moves);
+    movegen::generateMoves(pos.bitboards(), pos.mailbox(),
+                           pos.sideToMove(), pos.positionState(),
+                           moves, movegen::FilterMode::CAPTURES_PROMOS);
 
   // --- MVV-LVA ordering for captures ---
   // Score captures by Most Valuable Victim - Least Valuable Aggressor so
@@ -391,7 +410,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   state.pvLength[ply] = 0;  // no PV line yet at this ply
 
   // Periodic time / cancellation check
-  if ((state.nodes & (CHECK_INTERVAL - 1)) == 0) state.checkTime();
+  state.checkTime();
   if (state.stopped) return 0;
 
   // --- Draw detection ---
@@ -432,6 +451,11 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // Non-PV nodes use a null window (beta == alpha + 1).
   bool pvNode = (beta - alpha) > 1;
 
+  // --- Pre-move pruning eligibility ---
+  // Many pruning techniques share the same guard: not PV, not in check.
+  // Compute once and reuse throughout negamax.
+  bool canPrune = !pvNode && !inCheck;
+
   // --- Lazy Evaluation ---
   // In non-PV, non-check nodes, compute a cheap material-only score first.
   // If the material score is far outside the alpha-beta window, the
@@ -443,7 +467,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   //
   // Reference: https://www.chessprogramming.org/Lazy_Evaluation
   int staticEval;
-  if (!pvNode && !inCheck) {
+  if (canPrune) {
     int materialScore = lazyEval(pos);
     if (materialScore - LAZY_EVAL_MARGIN >= beta ||
         materialScore + LAZY_EVAL_MARGIN <= alpha) {
@@ -484,7 +508,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // Guards: not PV, not in check, shallow depth (1-2).
   //
   // Reference: https://www.chessprogramming.org/Razoring
-  if (!pvNode && !inCheck && depth <= 2 && depth >= 1 &&
+  if (canPrune && depth <= 2 &&
       staticEval + RAZOR_MARGIN[depth] <= alpha) {
     STAT_INC(razoringPrunes);
     return quiescence(pos, alpha, beta, ply, 0, state);
@@ -498,7 +522,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // in the tree where eval reliability drops).
   //
   // Reference: https://www.chessprogramming.org/Reverse_Futility_Pruning
-  if (!pvNode && !inCheck && depth <= 6 &&
+  if (canPrune && depth <= 6 &&
       staticEval - RFP_MARGIN * depth / (1 + improving) >= beta) {
     STAT_INC(rfpPrunes);
     return staticEval;
@@ -506,11 +530,8 @@ int negamax(Position& pos, int depth, int alpha, int beta,
 
   // --- TT probe ---
   const int origAlpha = alpha;
-  Move ttMove;
-  ttMove.from = 0;
-  ttMove.to = 0;
-  ttMove.flags = 0;
-  bool hasExcluded = (excludedMove.from != 0 || excludedMove.to != 0);
+  Move ttMove{};
+  bool hasExcluded = !excludedMove.isNull();
 
   // TT entry pointer retained for singular extension check below.
   const TTEntry* ttEntry = nullptr;
@@ -551,8 +572,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // Guards: TT available, no hash move found, sufficient depth.
   //
   // Reference: https://www.chessprogramming.org/Internal_Iterative_Reductions
-  if (state.tt && depth >= IID_DEPTH_THRESHOLD &&
-      ttMove.from == 0 && ttMove.to == 0) {
+  if (state.tt && depth >= IID_DEPTH_THRESHOLD && ttMove.isNull()) {
     --depth;
   }
 
@@ -601,16 +621,13 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   //   - Side has non-pawn material (avoids zugzwang in K+P endgames)
   //
   // Reference: https://www.chessprogramming.org/Null_Move_Pruning
-  if (ply > 0 && depth >= NMP_DEPTH_THRESHOLD && !inCheck &&
-      !pvNode && hasNonPawnMaterial(pos)) {
+  if (ply > 0 && depth >= NMP_DEPTH_THRESHOLD && canPrune &&
+      hasNonPawnMaterial(pos)) {
     // Adaptive reduction: deeper positions get more aggressive pruning,
     // and a large eval surplus over beta adds further reduction.
     // Reference: https://www.chessprogramming.org/Null_Move_Pruning#Adaptive
-    int evalSurplus = (staticEval > beta) ? (staticEval - beta) : 0;
-    int evalBonus = evalSurplus / 200;
-    if (evalBonus > 3) evalBonus = 3;
-    int R = NMP_REDUCTION + depth / 4 + evalBonus;
-    if (R > depth - 1) R = depth - 1;
+    int evalBonus = std::min(3, std::max(0, staticEval - beta) / 200);
+    int R = std::min(NMP_REDUCTION + depth / 4 + evalBonus, depth - 1);
 
     UndoInfo nullUndo = pos.makeNullMove();
     // Zero-window search at reduced depth: just testing if score >= beta.
@@ -638,11 +655,8 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // Reuses the `staticEval` computed earlier (above razoring).
   //
   // Reference: https://www.chessprogramming.org/Futility_Pruning
-  bool futilityPruning = false;
-  if (!pvNode && !inCheck && depth <= 2 && depth >= 1) {
-    if (staticEval + FUTILITY_MARGIN[depth] <= alpha)
-      futilityPruning = true;
-  }
+  bool futilityPruning = canPrune && depth <= 2 &&
+      staticEval + FUTILITY_MARGIN[depth] <= alpha;
 
   // --- Staged move generation via MovePicker ---
   // Moves are generated lazily in priority order: TT move → good captures
@@ -671,16 +685,18 @@ int negamax(Position& pos, int depth, int alpha, int beta,
 
   while (true) {
     Move m = picker.next();
-    if (!m.from && !m.to) break;  // all stages exhausted
+    if (m.isNull()) break;  // all stages exhausted
 
     // Skip the excluded move during a singular extension exclusion search.
     if (hasExcluded && m == excludedMove) continue;
 
+    // Late quiet: non-first, non-tactical move eligible for pruning.
+    bool lateQuiet = movesSearched > 0 && !m.isTactical();
+
     // --- Futility Pruning: skip hopeless quiet moves at shallow depth ---
     // Never prune the first move (we need at least one legal move searched)
     // and never prune captures or promotions (tactical moves can surprise).
-    if (futilityPruning && movesSearched > 0 &&
-        !m.isCapture() && !m.isPromotion()) {
+    if (futilityPruning && lateQuiet) {
       STAT_INC(futilityPrunes);
       continue;
     }
@@ -690,9 +706,8 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     // quiet moves at low depth are unlikely to improve — skip them entirely.
     // Guards: not PV, not in check, shallow depth, not the first move,
     //         not a capture or promotion (those are always searched).
-    if (!pvNode && !inCheck && depth <= 5 && movesSearched > 0 &&
-        movesSearched >= LMP_THRESHOLD[depth] + (improving ? 2 : 0) &&
-        !m.isCapture() && !m.isPromotion()) {
+    if (canPrune && depth <= 5 && lateQuiet &&
+        movesSearched >= LMP_THRESHOLD[depth] + (improving ? 2 : 0)) {
       STAT_INC(lmpPrunes);
       continue;
     }
@@ -705,8 +720,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     //         quiet move only.
     //
     // Reference: https://www.chessprogramming.org/History_Leaf_Pruning
-    if (!pvNode && !inCheck && depth <= HISTORY_PRUNE_DEPTH &&
-        movesSearched > 0 && !m.isCapture() && !m.isPromotion()) {
+    if (canPrune && depth <= HISTORY_PRUNE_DEPTH && lateQuiet) {
       uint8_t mc = raw(pos.sideToMove());
       int16_t hist = state.history[mc][raw(pieceType(pos.mailbox()[m.from])) - 1][m.to];
       if (hist < -HISTORY_PRUNE_THRESHOLD * depth) {
@@ -785,8 +799,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
       //   - Side was not in check before the move
       bool doLMR = movesSearched >= LMR_FULL_DEPTH_MOVES &&
                    depth >= LMR_DEPTH_THRESHOLD &&
-                   !m.isCapture() && !m.isPromotion() &&
-                   !inCheck;
+                   !m.isTactical() && !inCheck;
 
       if (doLMR) {
         STAT_INC(lmrSearches);
@@ -827,7 +840,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     if (state.stopped) return 0;
 
     // Track quiet moves for history gravity.
-    if (!m.isCapture() && !m.isPromotion() && quietCount < 32)
+    if (!m.isTactical() && quietCount < 32)
       quietsSearched[quietCount++] = packMove(m);
 
     // Track captures for capture history gravity.
@@ -910,9 +923,6 @@ int negamax(Position& pos, int depth, int alpha, int beta,
 SearchResult findBestMove(Position& pos, const SearchLimits& limits,
                           SearchState& state,
                           InfoCallback info) {
-  // One-time initialization of the logarithmic LMR reduction table.
-  initLMR();
-
   // Advance TT generation so stale entries from previous searches are
   // replaced cheaply by the depth-preferred replacement policy.
   if (state.tt) state.tt->newGeneration();
@@ -933,8 +943,9 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
 
   // Generate root moves once (legal moves don't change between iterations)
   MoveList rootMoves;
-  movegen::generateAllMoves(pos.bitboards(), pos.mailbox(),
-                            pos.sideToMove(), pos.positionState(), rootMoves);
+  movegen::generateMoves(pos.bitboards(), pos.mailbox(),
+                         pos.sideToMove(), pos.positionState(),
+                         rootMoves, movegen::FilterMode::ALL);
 
   if (rootMoves.count == 0) return result;  // No legal moves
 
@@ -1029,20 +1040,23 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
 
       if (state.stopped) break;
 
+      // Widen aspiration delta: double until full width.
+      auto widenDelta = [&]() {
+        delta = (delta < INF_SCORE / 2) ? delta * 2 : INF_SCORE;
+      };
+
       // Fail-low: every root move scored at or below the aspiration lower
       // bound.  Widen the lower bound and re-search.
       if (iterBestScore <= aspAlpha) {
-        delta = (delta < INF_SCORE / 2) ? delta * 2 : INF_SCORE;
-        alpha = prevScore - delta;
-        if (alpha < -INF_SCORE) alpha = -INF_SCORE;
+        widenDelta();
+        alpha = std::max(prevScore - delta, -INF_SCORE);
         continue;
       }
       // Fail-high: the best score met or exceeded the upper bound.
       // Widen the upper bound and re-search.
       if (iterBestScore >= aspBeta) {
-        delta = (delta < INF_SCORE / 2) ? delta * 2 : INF_SCORE;
-        beta = prevScore + delta;
-        if (beta > INF_SCORE) beta = INF_SCORE;
+        widenDelta();
+        beta = std::min(prevScore + delta, INF_SCORE);
         continue;
       }
       // Score falls within the window — iteration is complete.
@@ -1060,9 +1074,8 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
     prevScore       = iterBestScore;
 
     // Unpack principal variation from this iteration's PV table.
-    result.pvLength = state.pvLength[0];
-    if (result.pvLength < 0) result.pvLength = 0;
-    if (result.pvLength > MAX_PV_LEN) result.pvLength = MAX_PV_LEN;
+    result.pvLength = std::max(0, std::min(static_cast<int>(state.pvLength[0]),
+                                            MAX_PV_LEN));
     for (int i = 0; i < result.pvLength; ++i)
       result.pv[i] = unpackMove(state.pv[0][i]);
 
@@ -1077,9 +1090,7 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
 
     // --- Time management: stability tracking + instability extension ---
     // Track how many consecutive iterations had the same best move.
-    if (iterBestMove.from == prevIterBest.from &&
-        iterBestMove.to   == prevIterBest.to   &&
-        iterBestMove.flags == prevIterBest.flags) {
+    if (iterBestMove == prevIterBest) {
       ++stableCount;
     } else {
       // Move instability: when the best move changes at depth >= 4,
@@ -1088,8 +1099,7 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
       // Base factor: 1.5×, + 0.25× per prior change (capped at 2.5×).
       // Reference: https://www.chessprogramming.org/Time_Management
       if (depth >= 4 && effectiveSoftTime > 0) {
-        int factor = 150 + bestMoveChanges * 25;
-        if (factor > 250) factor = 250;
+        int factor = std::min(250, 150 + bestMoveChanges * 25);
         effectiveSoftTime = effectiveSoftTime * factor / 100;
         if (limits.hardTimeMs > 0 && effectiveSoftTime > limits.hardTimeMs)
           effectiveSoftTime = limits.hardTimeMs;

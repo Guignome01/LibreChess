@@ -38,7 +38,7 @@ Detailed API, design decisions, and patterns for each module live in dedicated f
 
 - **Standalone hash tables** — `TranspositionTable`, `PawnHashTable`, and `EvalHashTable` inherit `HashTableBase<Entry>` from `hash_table.h` for common `resize`/`free`/`clear`. Each adds its own `probe`/`store` and any extra state (e.g. TT adds `generation`). Three instances with shared base, specialized behavior.
 
-- **Search is a stateless namespace** — `search::findBestMove()` takes `Position&`, `SearchLimits`, `SearchState&` (required), optional `InfoCallback`. Infrastructure fields (`timeFunc`, `tt`, `pawnHash`, `evalHash`) are set on `SearchState` by the caller before calling. All per-search state in `SearchState`. Safe to run from any context.
+- **Search is a stateless namespace** — `search::findBestMove()` takes `Position&`, `SearchLimits`, `SearchState&` (required), optional `InfoCallback`. Infrastructure pointers (`timeFunc`, `tt`, `pawnHash`, `evalHash`) are set via `SearchState` constructor. All per-search state in `SearchState`. Safe to run from any context.
 
 - **Engine facade owns infrastructure** — `Engine` owns Position + TT + SearchState (direct member) + stop control. Thin wrapper around `findBestMove()`.
 

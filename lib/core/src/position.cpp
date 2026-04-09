@@ -163,11 +163,13 @@ Piece Position::removeCapture(Piece piece, Square to, bool isEP,
 // The king has already been moved by the caller; this handles only the rook.
 // Updates bitboards, mailbox, and Zobrist hash incrementally.
 //
+// The rank+kingSide→rookFrom/rookTo derivation appears in moveCastlingRook,
+// unmakeCastlingRook, and updateAccumulators.  Kept inline at each site to
+// avoid a struct return in the make/unmake hot path (only 4 lines each).
+//
 // Reference: https://www.chessprogramming.org/Castling
 // ---------------------------------------------------------------------------
 void Position::moveCastlingRook(Color color, Square kingFrom, Square kingTo) {
-  // Kingside: rook h-file (7) → f-file (5)
-  // Queenside: rook a-file (0) → d-file (3)
   int rank = rankOf(kingFrom);
   bool kingSide = fileOf(kingTo) > fileOf(kingFrom);
   Square rookFrom = makeSquare(rank, kingSide ? 7 : 0);
@@ -252,7 +254,8 @@ uint8_t Position::buildMoveFlags(Piece piece, Square from, Square to,
     flags |= MOVE_CASTLING;
 
   if (isPawn && rankOf(to) == piece::promotionRank(piece::pieceColor(piece))) {
-    PieceType promoType = (promotion != ' ' && promotion != '\0')
+    bool hasExplicitPromo = promotion != ' ' && promotion != '\0';
+    PieceType promoType = hasExplicitPromo
         ? piece::charToPieceType(promotion) : PieceType::QUEEN;
     flags |= Move::promoFlags(Move::promoIndexFromType(promoType));
   }
@@ -299,19 +302,23 @@ MoveResult Position::buildMoveResult(Move m, Piece piece, Square to) const {
   MoveResult result;
   result.flags = MR_VALID;
   if (m.isCapture())   result.flags |= MR_CAPTURE;
-  if (m.isEP())        result.flags |= MR_EP;
   if (m.isCastling())  result.flags |= MR_CASTLING;
-  if (m.isPromotion()) result.flags |= MR_PROMOTION;
+
   if (m.isEP()) {
+    result.flags |= MR_EP;
     int dir = (piece::pieceColor(piece) == Color::WHITE) ? SOUTH : NORTH;
     result.epCapturedSq = to + dir;
   } else {
     result.epCapturedSq = SQ_NONE;
   }
-  result.promotedTo = m.isPromotion()
-      ? piece::makePiece(piece::pieceColor(piece),
-                         Move::promoTypeFromIndex(m.promoIndex()))
-      : Piece::NONE;
+
+  if (m.isPromotion()) {
+    result.flags |= MR_PROMOTION;
+    result.promotedTo = piece::makePiece(piece::pieceColor(piece),
+                                         Move::promoTypeFromIndex(m.promoIndex()));
+  } else {
+    result.promotedTo = Piece::NONE;
+  }
   return result;
 }
 
@@ -494,19 +501,12 @@ UndoInfo Position::make(Move m) {
   Piece piece = mailbox_[from];
 
   // --- Save undo state ---
-  UndoInfo undo;
-  undo.state = state_;
-  undo.hash = hash_;
+  UndoInfo undo = saveUndoState();
   undo.captured = Piece::NONE;
   undo.capturedSquare = to;
-  undo.historyCount = hashHistory_.count;
-  undo.mgPST = mgPST_;
-  undo.egPST = egPST_;
-  undo.material = material_;
-  undo.epIsLegal = epIsLegal_;
-  undo.phase = phase_;
 
-  // Analyze EP / Castling from flags and mailbox
+  // Classify move flags
+  bool isPawn = piece::pieceType(piece) == PieceType::PAWN;
   bool isEP = m.isEP();
   bool isCastle = m.isCastling();
   bool isPromo = m.isPromotion();
@@ -529,7 +529,6 @@ UndoInfo Position::make(Move m) {
     moveCastlingRook(piece::pieceColor(piece), from, to);
 
   // --- Update EP state ---
-  bool isPawn = piece::pieceType(piece) == PieceType::PAWN;
   if (isPawn && abs(rankOf(to) - rankOf(from)) == 2) {
     // EP target is the square the pawn skipped over
     state_.epSquare = makeSquare((rankOf(from) + rankOf(to)) / 2, fileOf(from));
@@ -628,14 +627,7 @@ void Position::unmake(Move m, const UndoInfo& undo) {
     kingSquare_[piece::raw(currentTurn_)] = from;
 
   // Restore state and hash from undo (no recomputation!)
-  state_ = undo.state;
-  hash_ = undo.hash;
-  mgPST_ = undo.mgPST;
-  egPST_ = undo.egPST;
-  material_ = undo.material;
-  phase_ = undo.phase;
-  epIsLegal_ = undo.epIsLegal;
-  hashHistory_.count = undo.historyCount;
+  restoreFromUndo(undo);
 }
 
 // ---------------------------------------------------------------------------
@@ -649,17 +641,9 @@ void Position::unmake(Move m, const UndoInfo& undo) {
 // ---------------------------------------------------------------------------
 
 UndoInfo Position::makeNullMove() {
-  UndoInfo undo;
-  undo.state = state_;
-  undo.hash = hash_;
+  UndoInfo undo = saveUndoState();
   undo.captured = Piece::NONE;
   undo.capturedSquare = SQ_NONE;
-  undo.mgPST = mgPST_;
-  undo.egPST = egPST_;
-  undo.material = material_;
-  undo.epIsLegal = epIsLegal_;
-  undo.phase = phase_;
-  undo.historyCount = hashHistory_.count;
 
   // Remove old EP key (using cached legality — no recomputation needed)
   if (epIsLegal_)
@@ -682,14 +666,7 @@ UndoInfo Position::makeNullMove() {
 
 void Position::unmakeNullMove(const UndoInfo& undo) {
   currentTurn_ = ~currentTurn_;
-  state_ = undo.state;
-  hash_ = undo.hash;
-  mgPST_ = undo.mgPST;
-  egPST_ = undo.egPST;
-  material_ = undo.material;
-  phase_ = undo.phase;
-  epIsLegal_ = undo.epIsLegal;
-  hashHistory_.count = undo.historyCount;
+  restoreFromUndo(undo);
 }
 
 // ---------------------------------------------------------------------------
@@ -761,7 +738,7 @@ bool Position::isRepetition() const {
 // ---------------------------------------------------------------------------
 
 bool Position::isCheck(const BitboardSet& bb, Color kingColor) {
-  int kidx = piece::pieceIndex(piece::makePiece(kingColor, PieceType::KING));
+  int kidx = piece::pieceIndex(kingColor, PieceType::KING);
   Bitboard kingBB = bb.byPiece[kidx];
   if (!kingBB) return false;
   return attacks::isSquareUnderAttack(bb, lsb(kingBB), kingColor);
@@ -779,14 +756,10 @@ bool Position::isStalemate(const BitboardSet& bb, const Piece mailbox[],
 
 bool Position::isInsufficientMaterial(const BitboardSet& bb) {
   // Any pawns, rooks, or queens → sufficient material
-  if (bb.byPiece[piece::pieceIndex('P')]
-    | bb.byPiece[piece::pieceIndex('p')]) return false;
-
-  if (bb.byPiece[piece::pieceIndex('R')]
-    | bb.byPiece[piece::pieceIndex('r')]) return false;
-
-  if (bb.byPiece[piece::pieceIndex('Q')]
-    | bb.byPiece[piece::pieceIndex('q')]) return false;
+  if (bb.byPiece[piece::pieceIndex('P')] | bb.byPiece[piece::pieceIndex('p')]
+    | bb.byPiece[piece::pieceIndex('R')] | bb.byPiece[piece::pieceIndex('r')]
+    | bb.byPiece[piece::pieceIndex('Q')] | bb.byPiece[piece::pieceIndex('q')])
+    return false;
 
   int wKnightIdx = piece::pieceIndex('N');
   int wBishopIdx = piece::pieceIndex('B');
@@ -798,24 +771,17 @@ bool Position::isInsufficientMaterial(const BitboardSet& bb) {
 
   if (whiteMinors > 1 || blackMinors > 1) return false;
 
-  // K vs K
-  if (whiteMinors == 0 && blackMinors == 0) return true;
-
-  // K+minor vs K
-  if ((whiteMinors == 1 && blackMinors == 0) ||
-      (whiteMinors == 0 && blackMinors == 1))
-    return true;
+  // K vs K, or K+minor vs K
+  if (whiteMinors + blackMinors <= 1) return true;
 
   // K+B vs K+B with same-color bishops → insufficient.
   // K+N vs K+B or K+B vs K+N → sufficient (falls through to false).
-  if (whiteMinors == 1 && blackMinors == 1) {
-    Bitboard wb = bb.byPiece[wBishopIdx];
-    Bitboard bBish = bb.byPiece[bBishopIdx];
-    if (wb && bBish) {
-      bool wOnDark = (wb & DARK_SQUARES) != 0;
-      bool bOnDark = (bBish & DARK_SQUARES) != 0;
-      return wOnDark == bOnDark;
-    }
+  Bitboard wb = bb.byPiece[wBishopIdx];
+  Bitboard bBish = bb.byPiece[bBishopIdx];
+  if (wb && bBish) {
+    bool wOnDark = (wb & DARK_SQUARES) != 0;
+    bool bOnDark = (bBish & DARK_SQUARES) != 0;
+    return wOnDark == bOnDark;
   }
 
   return false;
@@ -851,7 +817,7 @@ bool Position::isDraw(const BitboardSet& bb, const Piece mailbox[], Color colorT
 GameResult Position::isGameOver(const BitboardSet& bb, const Piece mailbox[],
                                 Color colorToMove, const PositionState& state,
                                 const HashHistory& hashes, char& winner) {
-  int kidx = piece::pieceIndex(piece::makePiece(colorToMove, PieceType::KING));
+  int kidx = piece::pieceIndex(colorToMove, PieceType::KING);
   Bitboard kingBB = bb.byPiece[kidx];
   if (!kingBB) {
     winner = ' ';
@@ -902,6 +868,30 @@ CastlingInfo Position::checkCastling(Square from, Square to) const {
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+UndoInfo Position::saveUndoState() const {
+  UndoInfo undo;
+  undo.state = state_;
+  undo.hash = hash_;
+  undo.mgPST = mgPST_;
+  undo.egPST = egPST_;
+  undo.material = material_;
+  undo.epIsLegal = epIsLegal_;
+  undo.phase = phase_;
+  undo.historyCount = hashHistory_.count;
+  return undo;
+}
+
+void Position::restoreFromUndo(const UndoInfo& undo) {
+  state_ = undo.state;
+  hash_ = undo.hash;
+  mgPST_ = undo.mgPST;
+  egPST_ = undo.egPST;
+  material_ = undo.material;
+  phase_ = undo.phase;
+  epIsLegal_ = undo.epIsLegal;
+  hashHistory_.count = undo.historyCount;
+}
 
 void Position::recordPosition() {
   if (state_.halfmoveClock == 0 && hashHistory_.count > 0)

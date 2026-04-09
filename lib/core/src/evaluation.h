@@ -19,15 +19,15 @@ namespace eval {
 // Pawn Hash Table — caches pawn structure scores (MG + EG separately).
 //
 // Keyed by a pawn-only Zobrist hash (zobrist::computePawnHash).  Each entry
-// stores the midgame and endgame pawn structure scores.  Because pawn
-// structures change infrequently during search (~1 pawn move per 30 plies),
-// hit rates of 95%+ are typical.
+// stores the midgame and endgame pawn structure scores plus passed pawn
+// bitboards.  Because pawn structures change infrequently during search
+// (~1 pawn move per 30 plies), hit rates of 95%+ are typical.
 //
-// Entry size: 8 bytes.  Default 512 entries = 4 KiB.
+// Entry size: 24 bytes.  Default 256 entries = 6 KiB.
 // Reference: https://www.chessprogramming.org/Pawn_Hash_Table
 // ---------------------------------------------------------------------------
 
-static constexpr int DEFAULT_PAWN_HASH_SIZE = 512;
+static constexpr int DEFAULT_PAWN_HASH_SIZE = 256;
 
 struct PawnEntry {
   uint32_t key;       // Upper 32 bits of pawn Zobrist hash (verification)
@@ -55,24 +55,21 @@ struct PawnHashTable : HashTableBase<PawnEntry> {
 // common in search trees).  The cached score is the raw white-relative
 // evaluatePosition() output — the search layer applies STM flip and tempo.
 //
-// Entry size: 8 bytes.  Default 4096 entries = 32 KiB (2048 = 16 KiB on
-// memory-constrained targets).
+// Entry size: 4 bytes.  Compact 16-bit key combined with the index mask
+// provides ~26 effective bits of collision resistance — sufficient for a
+// soft cache.
+// Default 1024 entries = 4 KiB.
 // Reference: https://www.chessprogramming.org/Evaluation_Hash_Table
 // ---------------------------------------------------------------------------
 
-#ifdef HARDWARE_LIMITATION
-static constexpr int DEFAULT_EVAL_HASH_SIZE = 2048;
-#else
-static constexpr int DEFAULT_EVAL_HASH_SIZE = 4096;
-#endif
+static constexpr int DEFAULT_EVAL_HASH_SIZE = 1024;
 
 struct EvalEntry {
-  uint32_t key;       // Upper 32 bits of position Zobrist hash (verification)
+  uint16_t key;       // Upper 16 bits of (hash >> 32) — compact verification
   int16_t  score;     // White-relative evaluation score (centipawns)
-  uint16_t pad;       // Padding for alignment
 };
 
-static_assert(sizeof(EvalEntry) == 8, "EvalEntry should be 8 bytes");
+static_assert(sizeof(EvalEntry) == 4, "EvalEntry should be 4 bytes");
 
 struct EvalHashTable : HashTableBase<EvalEntry> {
   // Probe the table for a matching entry.  Returns nullptr on miss.
@@ -90,14 +87,6 @@ struct EvalHashTable : HashTableBase<EvalEntry> {
 // Returns evaluation in centipawns (positive = White, negative = Black).
 // `pawnHash` is an optional pawn hash table for caching pawn structure scores.
 int evaluatePosition(const BitboardSet& bb,
-                     PawnHashTable* pawnHash = nullptr);
-
-// Evaluate with precomputed material+PST scores.
-// Skips the per-piece material+PST loop — uses `mgMatPST` / `egMatPST`
-// directly.  Used by the search engine where Position tracks these values
-// incrementally via make/unmake.
-// Reference: https://www.chessprogramming.org/Incremental_Updates
-int evaluatePosition(const BitboardSet& bb, int mgMatPST, int egMatPST,
                      PawnHashTable* pawnHash = nullptr);
 
 // Evaluate with precomputed material+PST scores AND incremental phase.
@@ -132,7 +121,6 @@ int computeMaterial(const BitboardSet& bb);
 int materialValue(PieceType pt);
 
 // Pawn-structure query functions (exposed for unit testing).
-void initPawnMasks();
 bool isPassed(Square sq, Color color, Bitboard enemyPawns);
 bool isIsolated(Square sq, Bitboard friendlyPawns);
 bool isDoubled(Square sq, Color color, Bitboard friendlyPawns);
@@ -160,13 +148,6 @@ constexpr int PHASE_WEIGHT[] = {0, 0, PHASE_KNIGHT, PHASE_BISHOP,
 // Used for initial computation; the search path uses an incremental
 // phase accumulator in Position to avoid 4 popcounts per eval.
 int computeGamePhase(const BitboardSet& bb);
-
-// Opposite-color bishop scaling (numerator/denominator form, default 3/4).
-constexpr int OCB_SCALE_NUM   = 3;
-constexpr int OCB_SCALE_DENOM = 4;
-
-// Maximum game phase for OCB scaling to apply.
-constexpr int OCB_PHASE_THRESHOLD = 6;
 
 // King danger table size.
 constexpr int KING_DANGER_TABLE_SIZE = 13;

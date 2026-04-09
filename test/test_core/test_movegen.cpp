@@ -423,7 +423,7 @@ void test_initial_position_black_moves(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Bulk legal move generation (generateAllMoves / generateCaptures)
+// Bulk legal move generation (generateMoves)
 // ---------------------------------------------------------------------------
 
 void test_generateAllMoves_initial_position(void) {
@@ -431,10 +431,10 @@ void test_generateAllMoves_initial_position(void) {
   PositionState state{0x0F, SQ_NONE};
 
   MoveList moves;
-  movegen::generateAllMoves(bb, mailbox, Color::WHITE, state, moves);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, state, moves, movegen::FilterMode::ALL);
   TEST_ASSERT_EQUAL_INT(20, moves.count);
 
-  movegen::generateAllMoves(bb, mailbox, Color::BLACK, state, moves);
+  movegen::generateMoves(bb, mailbox, Color::BLACK, state, moves, movegen::FilterMode::ALL);
   TEST_ASSERT_EQUAL_INT(20, moves.count);
 }
 
@@ -450,7 +450,7 @@ void test_generateAllMoves_captures_only(void) {
   state.castlingRights = 0;
 
   MoveList caps;
-  movegen::generateCaptures(bb, mailbox, Color::WHITE, state, caps);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, state, caps, movegen::FilterMode::CAPTURES_PROMOS);
 
   // Count captures actually flagged
   int captureCount = 0;
@@ -473,7 +473,7 @@ void test_generateAllMoves_under_check(void) {
   state.castlingRights = 0;
 
   MoveList moves;
-  movegen::generateAllMoves(bb, mailbox, Color::WHITE, state, moves);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, state, moves, movegen::FilterMode::ALL);
 
   // All generated moves must be legal evasions.
   TEST_ASSERT_TRUE(moves.count > 0);
@@ -506,7 +506,7 @@ void test_generateAllMoves_double_check(void) {
   state.castlingRights = 0;
 
   MoveList moves;
-  movegen::generateAllMoves(bb, mailbox, Color::WHITE, state, moves);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, state, moves, movegen::FilterMode::ALL);
 
   // All moves must be king moves.
   uint8_t kingSq = static_cast<uint8_t>(squareOf(7, 4)); // e1
@@ -524,7 +524,7 @@ void test_generateAllMoves_flags_capture(void) {
   state.castlingRights = 0;
 
   MoveList moves;
-  movegen::generateAllMoves(bb, mailbox, Color::WHITE, state, moves);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, state, moves, movegen::FilterMode::ALL);
 
   uint8_t e6 = static_cast<uint8_t>(squareOf(2, 4)); // e6
   bool foundCapture = false;
@@ -553,7 +553,7 @@ void test_generateAllMoves_flags_ep(void) {
   state.epSquare = squareOf(2, 3);  // d6 → row 2 (rank 6), file d
 
   MoveList moves;
-  movegen::generateAllMoves(bb, mailbox, Color::WHITE, state, moves);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, state, moves, movegen::FilterMode::ALL);
 
   uint8_t d6 = static_cast<uint8_t>(squareOf(2, 3));
   bool foundEP = false;
@@ -577,7 +577,7 @@ void test_generateAllMoves_flags_castling(void) {
   state.castlingRights = 0x01; // White kingside only
 
   MoveList moves;
-  movegen::generateAllMoves(bb, mailbox, Color::WHITE, state, moves);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, state, moves, movegen::FilterMode::ALL);
 
   uint8_t g1 = static_cast<uint8_t>(squareOf(7, 6));
   bool foundCastle = false;
@@ -600,7 +600,7 @@ void test_generateAllMoves_flags_promotion(void) {
   state.castlingRights = 0;
 
   MoveList moves;
-  movegen::generateAllMoves(bb, mailbox, Color::WHITE, state, moves);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, state, moves, movegen::FilterMode::ALL);
 
   uint8_t e8 = static_cast<uint8_t>(squareOf(0, 4));
   int promoCount = 0;
@@ -641,7 +641,7 @@ void test_generateAllMoves_matches_perPiece(void) {
 
   // Count via bulk generateAllMoves
   MoveList bulk;
-  movegen::generateAllMoves(bb, mailbox, Color::WHITE, state, bulk);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, state, bulk, movegen::FilterMode::ALL);
 
   TEST_ASSERT_EQUAL_INT(perPieceCount, bulk.count);
 
@@ -663,7 +663,7 @@ void test_generateCaptures_ep_included(void) {
   state.epSquare = squareOf(2, 3);  // d6
 
   MoveList caps;
-  movegen::generateCaptures(bb, mailbox, Color::WHITE, state, caps);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, state, caps, movegen::FilterMode::CAPTURES_PROMOS);
 
   bool foundEP = false;
   for (int i = 0; i < caps.count; i++) {
@@ -681,7 +681,7 @@ void test_generateCaptures_no_quiet_moves(void) {
   PositionState state{0x0F, SQ_NONE};
 
   MoveList caps;
-  movegen::generateCaptures(bb, mailbox, Color::WHITE, state, caps);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, state, caps, movegen::FilterMode::CAPTURES_PROMOS);
 
   // Initial position has zero captures available.
   TEST_ASSERT_EQUAL_INT(0, caps.count);
@@ -697,7 +697,7 @@ void test_generateAllMoves_stalemate(void) {
   state.castlingRights = 0;
 
   MoveList moves;
-  movegen::generateAllMoves(bb, mailbox, Color::BLACK, state, moves);
+  movegen::generateMoves(bb, mailbox, Color::BLACK, state, moves, movegen::FilterMode::ALL);
   TEST_ASSERT_EQUAL_INT(0, moves.count);
 }
 
@@ -785,15 +785,15 @@ void test_staged_matches_all_moves_initial(void) {
   PositionState flags{0x0F, SQ_NONE, 0, 1};
 
   MoveList allMoves;
-  movegen::generateAllMoves(bb, mailbox, Color::WHITE, flags, allMoves);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, flags, allMoves, movegen::FilterMode::ALL);
 
   int kidx = piece::pieceIndex('K');
   Square kingSq = lsb(bb.byPiece[kidx]);
   movegen::LegalityContext ctx = movegen::buildLegalityContext(bb, Color::WHITE, kingSq);
 
   MoveList caps, quiets;
-  movegen::generateCaptures(bb, mailbox, Color::WHITE, flags, ctx, caps);
-  movegen::generateQuiets(bb, mailbox, Color::WHITE, flags, ctx, quiets);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, flags, ctx, caps, movegen::FilterMode::CAPTURES_PROMOS);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, flags, ctx, quiets, movegen::FilterMode::QUIETS);
 
   // No captures in initial position, 20 quiets
   TEST_ASSERT_EQUAL_INT(0, caps.count);
@@ -839,15 +839,15 @@ void test_staged_matches_all_moves_middlegame(void) {
   PositionState flags{0x0F, SQ_NONE, 0, 1};
 
   MoveList allMoves;
-  movegen::generateAllMoves(bb, mailbox, Color::WHITE, flags, allMoves);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, flags, allMoves, movegen::FilterMode::ALL);
 
   int kidx = piece::pieceIndex('K');
   Square kingSq = lsb(bb.byPiece[kidx]);
   movegen::LegalityContext ctx = movegen::buildLegalityContext(bb, Color::WHITE, kingSq);
 
   MoveList caps, quiets;
-  movegen::generateCaptures(bb, mailbox, Color::WHITE, flags, ctx, caps);
-  movegen::generateQuiets(bb, mailbox, Color::WHITE, flags, ctx, quiets);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, flags, ctx, caps, movegen::FilterMode::CAPTURES_PROMOS);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, flags, ctx, quiets, movegen::FilterMode::QUIETS);
 
   TEST_ASSERT_EQUAL_INT(allMoves.count, caps.count + quiets.count);
 
@@ -868,15 +868,15 @@ void test_staged_matches_all_moves_in_check(void) {
   PositionState flags{0x00, SQ_NONE, 0, 1};
 
   MoveList allMoves;
-  movegen::generateAllMoves(bb, mailbox, Color::WHITE, flags, allMoves);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, flags, allMoves, movegen::FilterMode::ALL);
 
   int kidx = piece::pieceIndex('K');
   Square kingSq = lsb(bb.byPiece[kidx]);
   movegen::LegalityContext ctx = movegen::buildLegalityContext(bb, Color::WHITE, kingSq);
 
   MoveList caps, quiets;
-  movegen::generateCaptures(bb, mailbox, Color::WHITE, flags, ctx, caps);
-  movegen::generateQuiets(bb, mailbox, Color::WHITE, flags, ctx, quiets);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, flags, ctx, caps, movegen::FilterMode::CAPTURES_PROMOS);
+  movegen::generateMoves(bb, mailbox, Color::WHITE, flags, ctx, quiets, movegen::FilterMode::QUIETS);
 
   TEST_ASSERT_EQUAL_INT(allMoves.count, caps.count + quiets.count);
 }

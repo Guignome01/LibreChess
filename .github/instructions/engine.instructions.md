@@ -71,9 +71,9 @@ API modules handle raw HTTP + TLS. Providers handle chess-domain logic and FreeR
 `LibreChessProvider` runs the search in a FreeRTOS task (`lcTask`) with a 64 KiB stack. The Engine is created once in `initialize()` and persists for the game's lifetime (TT, hash tables, SearchState all reuse across moves). The persistent Engine is destroyed in the `LibreChessProvider` destructor after cancelling any running task. Major allocations:
 
 - **SearchState** (~10 KiB: `history[2][6][64]` = 1.5 KiB piece-to history, `captureHistory[6][6][64]` = 4.5 KiB, `killers[48][2]` = 192 B via `PackedMove`, `countermoves[12][64]` = 1.5 KiB, `staticEvals[48]` = 96 B, PV table 48×24×2 = 2.3 KiB via `PackedMove`, `pvLength[48]` = 48 B) — **pre-allocated** in `Engine` constructor, reused across searches. `findBestMove()` resets `nodes`/`stopped` per search. Eliminates per-search heap alloc/free cycle.
-- **Transposition table** — heap-allocated (`new TTEntry[]`), dynamically sized to available heap (reserves extra 20 KiB for eval hash tables), capped at 128 KiB.
-- **Pawn hash table** — 4 KiB (512 entries × 8B `PawnEntry`), heap-allocated by `Engine`. Caches pawn structure MG/EG scores; ~92%+ hit rate.
-- **Eval hash table** — 16 KiB (2048 entries × 8B `EvalEntry` under `HARDWARE_LIMITATION`), heap-allocated by `Engine`. Caches full `evaluatePosition()` results.
+- **Transposition table** — heap-allocated (`new TTEntry[]`), dynamically sized to available heap (reserves 12 KiB for pawn hash 6 KiB + eval hash 4 KiB + margin), capped at 64 KiB (`MAX_TT_BYTES`).
+- **Pawn hash table** — 6 KiB (256 entries × 24B `PawnEntry`), heap-allocated by `Engine`. Caches pawn structure MG/EG scores + passed pawn bitboards; ~92%+ hit rate.
+- **Eval hash table** — 4 KiB (1024 entries × 4B `EvalEntry`), heap-allocated by `Engine`. Caches full `evaluatePosition()` results. Compact 16-bit key.
 - **Engine** (owns Position + TT + pawn/eval hash tables + SearchState) — **heap-allocated** once in `initialize()`, persists across moves. Position contains `HashHistory` (128 × 8B = 1 KiB) plus board state (~300B).
 - **Per-ply negamax** — ~1,500 B per ply (MovePicker with MoveList 658B + int16_t scores[218] 436B + other fields + PackedMove quietsSearched[32] + capturesSearched[32] 128B + UndoInfo + locals). Uses `int16_t` scores array. SEE cached in scores[] when reclassifying bad captures.
 - **Per-ply quiescence** — ~600 B per ply (QSMoveList 390B + int16_t capScores[128] 256B + UndoInfo + locals).

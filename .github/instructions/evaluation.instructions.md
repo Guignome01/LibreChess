@@ -10,9 +10,8 @@ Tapered evaluation returning centipawns (`int`), white-relative. Interpolates MG
 ## Public API
 
 **Main overloads**:
-- `evaluatePosition(bb)` — full computation
-- `evaluatePosition(bb, mgMatPST, egMatPST, pawnHash)` — with pre-computed material+PST
-- `evaluatePosition(bb, mgMatPST, egMatPST, phase, pawnHash)` — with pre-computed phase (hot path from search)
+- `evaluatePosition(bb, pawnHash)` — full computation (material+PST from scratch)
+- `evaluatePosition(bb, mgMatPST, egMatPST, phase, pawnHash)` — with pre-computed material+PST + phase (hot path from search)
 
 **Extracted parameters** — all tunable evaluation constants (material values, PST tables, pawn structure bonuses, king safety weights, mobility/threat/space terms) live in `eval_params.h`. The `EVAL_CONST`/`EVAL_FIXED`/`PST_ELEM`/`MAT_ELEM` macros are also defined there.
 
@@ -25,8 +24,8 @@ Tapered evaluation returning centipawns (`int`), white-relative. Interpolates MG
 - `invalidatePSQT()` — force PSQT rebuild (tuning builds only)
 
 **Hash tables** (both inherit `HashTableBase` from `hash_table.h`):
-- `PawnHashTable` — caches pawn structure MG/EG + `passedPawns[2]` bitboards, keyed by `computePawnHash()`. 512 entries × 24B = 12 KiB. ~92%+ hit rate. Passed pawn bitboards are cached to avoid re-scanning pawns for king distance and rook-behind-passer evaluation.
-- `EvalHashTable` — caches full evaluation keyed by position Zobrist hash. 4096 entries × 8B = 32 KiB (2048 entries = 16 KiB under `HARDWARE_LIMITATION`).
+- `PawnHashTable` — caches pawn structure MG/EG + `passedPawns[2]` bitboards, keyed by `computePawnHash()`. Default 256 entries × 24B = 6 KiB. ~92%+ hit rate. Passed pawn bitboards are cached to avoid re-scanning pawns for king distance and rook-behind-passer evaluation.
+- `EvalHashTable` — caches full evaluation keyed by position Zobrist hash. Default 1024 entries × 4B = 4 KiB. Compact `EvalEntry` layout: `uint16_t key` + `int16_t score` = 4B. The 16-bit key combined with the index mask provides ~26 effective bits of collision resistance — sufficient for a soft cache.
 
 ## Evaluation Terms
 
@@ -48,14 +47,16 @@ Tapered evaluation returning centipawns (`int`), white-relative. Interpolates MG
 | Space | MG only (`SPACE_BONUS_MG`) |
 | Trapped pieces | Penalty for trapped bishops/rooks |
 | Threats | Pawn→minor/rook/queen, minor→rook/queen, rook→queen (all MG only) |
-| OCB scaling | Opposite-color bishop scaling via `OCB_SCALE_NUM/OCB_SCALE_DENOM`, EG only, phase ≤ `OCB_PHASE_THRESHOLD` |
+| OCB scaling | Opposite-color bishop scaling (3/4), EG only, phase ≤ 6. Constants are internal to evaluation.cpp |
 
 ## Key Patterns
 
-- **Color-parameterized loops**: `for (int c = 0; c < 2; ++c)` with `sign = (c == 0) ? 1 : -1` and `c * 6` offset into `byPiece[]`. Applied across ALL bilateral eval terms. New eval functions MUST follow this pattern — never duplicate white/black code.
-- **Flat PSQT lookup** — `PSQT_MG/EG[12][64]` combine material + PST + color sign. Lazy-built, `invalidatePSQT()` for tuning.
-- **Pawn-structure masks** — `static constexpr PawnMasks` struct in anonymous namespace, containing `passed[64]` and `forward[64]` arrays (white-only, placed in .rodata; black derived via `byteSwap64(mask[sq^56])`). `adjacentFilesMask()` inline for isolated detection. `initPawnMasks()` is a no-op retained for backward compatibility.
+- **Color-parameterized loops**: `for (int c = 0; c < 2; ++c)` with file-scope `SIDE_SIGN[c]` and `COLORS[c]` constexpr lookup tables (anonymous namespace).  `SIDE_SIGN[] = {1, -1}` maps color index to white-relative sign; `COLORS[] = {Color::WHITE, Color::BLACK}` maps index to enum.  All bilateral eval terms use these — never duplicate white/black code or use raw ternaries for sign/color.
+- **Flat PSQT lookup** — `PSQT_MG/EG[12][64]` combine material + PST + color sign. Production: `static constexpr` arrays in rodata via macro-based aggregate initializers (`PSQT_R64_`, `PSQT_N64_`). Tuning: mutable arrays with `invalidatePSQT()`/`buildPSQT()` for runtime parameter modification.
+- **Pawn-structure masks** — `static constexpr PawnMasks` struct in anonymous namespace, containing `passed[64]` and `forward[64]` arrays (white-only, placed in .rodata; black derived via `byteSwap64(mask[sq^56])`). `adjacentFilesMask()` inline for isolated detection (also reused by `isOutpostSquare`).
 - **Passed pawns cached in pawn hash** — `PawnEntry` stores `Bitboard passedPawns[2]` alongside MG/EG scores. `evalPawnStructure` builds the bitboards during its pawn loop and stores them in the hash. On pawn hash hit, bitboards are retrieved without re-scanning. Shared by `evalPassedPawnKingDist()` and `evalRookBehindPasser()`.
+- **Trapped pieces — 2D color-indexed trap arrays** — `BISHOP_TRAPS[2][4]` and `ROOK_TRAPS[2][2]` store per-color trap patterns. A single color loop handles both colors, using `pieceIndex(color, type)` for piece lookups. Bishop traps check own bishops blocked by enemy pawns; rook traps check own rooks hemmed by own king.
+- **King danger sign convention** — `evalKingDanger` uses the standard `SIDE_SIGN[c]` with `mgScore -= sign * penalty` (subtraction makes the penalty semantics explicit). Other eval terms use `mgScore += sign * bonus`.
 - **Tempo bonus** — applied in search layer, not in eval.
 
 ## Testing
