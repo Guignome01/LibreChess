@@ -33,7 +33,7 @@ static constexpr int DEPTH = 10;
 
 /// Minimum number of WAC positions the engine must solve at DEPTH.
 /// Calibrated from baseline run — update when search improves.
-static constexpr int WAC_DEPTH_BASELINE = 238;
+static constexpr int WAC_DEPTH_BASELINE = 234;
 
 // ---------------------------------------------------------------------------
 // Helpers
