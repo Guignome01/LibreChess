@@ -586,6 +586,12 @@ UndoInfo Position::make(Move m) {
   // --- Record position for threefold detection ---
   recordPosition();
 
+  // If recordPosition() compacted the sliding window, the UndoInfo's saved
+  // historyCount (absolute pre-compaction index) is now stale.  Adjust it
+  // to the post-compaction value so unmake() restores a consistent count.
+  if (undo.historyCount >= hashHistory_.count)
+    undo.historyCount = hashHistory_.count - 1;
+
   return undo;
 }
 
@@ -661,6 +667,11 @@ UndoInfo Position::makeNullMove() {
   state_.halfmoveClock++;
 
   recordPosition();
+
+  // Adjust UndoInfo if sliding window compaction occurred (see make()).
+  if (undo.historyCount >= hashHistory_.count)
+    undo.historyCount = hashHistory_.count - 1;
+
   return undo;
 }
 
@@ -722,8 +733,46 @@ bool Position::isDraw() const {
   return isDraw(bb_, mailbox_, currentTurn_, state_, hashHistory_);
 }
 
+// ---------------------------------------------------------------------------
+// Repetition counting — shared logic for twofold (search) and threefold (FIDE).
+//
+// Walks same-side history entries (step −2) and counts how many times the
+// current position hash appears.  Returns true as soon as count >= minCount.
+// The walk-back is bounded by halfmoveClock: positions cannot repeat across
+// irreversible moves (pawn pushes / captures), so there is no point looking
+// further than the clock allows.  This bound also prevents false matches
+// caused by the search's make/unmake cycle — recordPosition() no longer
+// clears the history array, so stale entries beyond the clock window are
+// simply ignored.
+//
+// Reference: https://www.chessprogramming.org/Repetitions
+// ---------------------------------------------------------------------------
+static bool hasRepeated(const HashHistory& hashes, int halfmoveClock,
+                        int minCount) {
+  int minEntries = minCount * 2 - 1;
+  if (hashes.count < minEntries || halfmoveClock < minEntries - 1) return false;
+
+  uint64_t current = hashes.keys[hashes.count - 1];
+  int count = 1;
+
+  // Earliest index reachable within the halfmove clock window.
+  int earliest = hashes.count - 1 - halfmoveClock;
+  if (earliest < 0) earliest = 0;
+
+  for (int i = hashes.count - 3; i >= earliest; i -= 2) {
+    if (hashes.keys[i] == current) {
+      if (++count >= minCount) return true;
+    }
+  }
+  return false;
+}
+
 bool Position::isRepetition() const {
-  return isThreefoldRepetition(hashHistory_);
+  // Twofold detection for the search: a position that appeared once before
+  // can be forced to a draw.  The search treats this as a draw because
+  // either side can force the third occurrence.
+  // Reference: https://www.chessprogramming.org/Repetitions
+  return hasRepeated(hashHistory_, state_.halfmoveClock, 2);
 }
 
 // ---------------------------------------------------------------------------
@@ -787,19 +836,9 @@ bool Position::isInsufficientMaterial(const BitboardSet& bb) {
   return false;
 }
 
-bool Position::isThreefoldRepetition(const HashHistory& hashes) {
-  if (hashes.count < 5) return false;
-
-  uint64_t current = hashes.keys[hashes.count - 1];
-  int count = 1;
-
-  for (int i = hashes.count - 3; i >= 0; i -= 2) {
-    if (hashes.keys[i] == current) {
-      count++;
-      if (count >= 3) return true;
-    }
-  }
-  return false;
+bool Position::isThreefoldRepetition(const HashHistory& hashes,
+                                     int halfmoveClock) {
+  return hasRepeated(hashes, halfmoveClock, 3);
 }
 
 bool Position::isFiftyMoveRule(const PositionState& state) {
@@ -811,7 +850,7 @@ bool Position::isDraw(const BitboardSet& bb, const Piece mailbox[], Color colorT
   return isStalemate(bb, mailbox, colorToMove, state)
       || isFiftyMoveRule(state)
       || isInsufficientMaterial(bb)
-      || isThreefoldRepetition(hashes);
+      || isThreefoldRepetition(hashes, state.halfmoveClock);
 }
 
 GameResult Position::isGameOver(const BitboardSet& bb, const Piece mailbox[],
@@ -845,7 +884,7 @@ GameResult Position::isGameOver(const BitboardSet& bb, const Piece mailbox[],
     winner = 'd';
     return GameResult::DRAW_INSUFFICIENT;
   }
-  if (isThreefoldRepetition(hashes)) {
+  if (isThreefoldRepetition(hashes, state.halfmoveClock)) {
     winner = 'd';
     return GameResult::DRAW_3FOLD;
   }
@@ -894,11 +933,22 @@ void Position::restoreFromUndo(const UndoInfo& undo) {
 }
 
 void Position::recordPosition() {
-  if (state_.halfmoveClock == 0 && hashHistory_.count > 0)
-    hashHistory_.count = 0;
-
-  if (hashHistory_.count < HashHistory::MAX_SIZE)
-    hashHistory_.keys[hashHistory_.count++] = hash_;
+  // Sliding window: when the array is full, compact to keep only entries
+  // reachable by hasRepeated() (bounded by halfmoveClock).  This avoids
+  // silent drops that would break repetition detection in long games.
+  // The callers (make, makeNullMove) detect compaction and adjust UndoInfo
+  // so that unmake() restores a consistent count.
+  if (hashHistory_.count >= HashHistory::MAX_SIZE) {
+    int keep = state_.halfmoveClock + 1;
+    if (keep > hashHistory_.count) keep = hashHistory_.count;
+    int discard = hashHistory_.count - keep;
+    if (discard > 0) {
+      std::memmove(hashHistory_.keys, hashHistory_.keys + discard,
+                   keep * sizeof(uint64_t));
+      hashHistory_.count = keep;
+    }
+  }
+  hashHistory_.keys[hashHistory_.count++] = hash_;
 }
 
 }  // namespace LibreChess

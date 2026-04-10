@@ -39,25 +39,57 @@ struct EvalHashTable;
 namespace search {
 
 // ---------------------------------------------------------------------------
-// Packed move — 16-bit encoding for compact storage in TT, killers, and PV.
+// Packed move — lossless 16-bit encoding for TT, killers, PV table.
 //
-// Layout: from (6 bits) | to (6 bits) | flags (4 bits).
-// Reconstructed into a Move for use.
+// Layout: from (6 bits) | to (6 bits) | move type (4 bits).
+//
+// Move type encodes the mutually-exclusive special-move classes:
+//   0x0 = quiet, 0x1 = capture, 0x2 = EP capture, 0x3 = castling,
+//   0x4..0x7 = quiet promotion (low 2 bits = promo index),
+//   0x8..0xB = capture promotion (low 2 bits = promo index).
+//
+// This preserves all flags including the 2-bit promotion piece index
+// (Knight=0, Bishop=1, Rook=2, Queen=3), which the prior 4-bit
+// truncation was silently losing (bits 4-5 overflowed uint16_t).
+//
+// Reference: https://www.chessprogramming.org/Encoding_Moves
 // ---------------------------------------------------------------------------
 
 using PackedMove = uint16_t;
 
 inline PackedMove packMove(Move m) {
-  return static_cast<PackedMove>(m.from)
-       | (static_cast<PackedMove>(m.to) << 6)
-       | (static_cast<PackedMove>(m.flags) << 12);
+  uint16_t packed = static_cast<uint16_t>(m.from)
+                  | (static_cast<uint16_t>(m.to) << 6);
+  uint16_t type = 0;
+  if (m.isPromotion()) {
+    type = m.isCapture() ? 0x8 : 0x4;
+    type |= m.promoIndex();
+  } else if (m.isEP()) {
+    type = 0x2;
+  } else if (m.isCastling()) {
+    type = 0x3;
+  } else if (m.isCapture()) {
+    type = 0x1;
+  }
+  return packed | (type << 12);
 }
 
 inline Move unpackMove(PackedMove pm) {
   Move m;
-  m.from  = pm & 0x3F;
-  m.to    = (pm >> 6) & 0x3F;
-  m.flags = (pm >> 12) & 0x0F;
+  m.from = pm & 0x3F;
+  m.to   = (pm >> 6) & 0x3F;
+  uint8_t type = (pm >> 12) & 0x0F;
+  switch (type) {
+  case 0x0: m.flags = 0; break;
+  case 0x1: m.flags = MOVE_CAPTURE; break;
+  case 0x2: m.flags = MOVE_CAPTURE | MOVE_EP; break;
+  case 0x3: m.flags = MOVE_CASTLING; break;
+  default:
+    // 0x4..0x7 = quiet promotion, 0x8..0xB = capture promotion.
+    m.flags = (type >= 0x8 ? MOVE_CAPTURE : 0)
+            | Move::promoFlags(type & 0x3);
+    break;
+  }
   return m;
 }
 

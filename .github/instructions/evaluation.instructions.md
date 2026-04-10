@@ -44,6 +44,7 @@ Tapered evaluation returning centipawns (`int`), white-relative. Interpolates MG
 | King safety | Pawn shield rank-indexed (`SHIELD_ADV_RANK3`, `SHIELD_ADV_RANK4PLUS`) |
 | King danger | Unified zone attack counting, nonlinear `KING_DANGER_TABLE[13]`, MG only |
 | Knight outposts | MG/EG split |
+| Bishop outposts | MG/EG split, doubled on central files (d/e) |
 | Space | MG only (`SPACE_BONUS_MG`) |
 | Trapped pieces | Penalty for trapped bishops/rooks |
 | Threats | Pawn→minor/rook/queen, minor→rook/queen, rook→queen (all MG only) |

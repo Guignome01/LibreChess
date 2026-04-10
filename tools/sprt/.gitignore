@@ -2,6 +2,7 @@
 fastchess*
 *.exe
 *.pgn
+config.json
 
 # Temporary worktree (created during baseline build)
 worktree/

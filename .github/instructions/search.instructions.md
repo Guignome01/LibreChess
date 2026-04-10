@@ -11,7 +11,7 @@ Fail-soft negamax + alpha-beta + quiescence with iterative deepening. Stateless 
 
 | File | Purpose |
 |------|---------|
-| `search.h` | Public API, constants, `SearchLimits`, `SearchResult`, `SearchState`, `TTFlag`, `PackedMove` (pack/unpack), `TTEntry`, `TranspositionTable` (inherits `HashTableBase<TTEntry>`) |
+| `search.h` | Public API, constants, `SearchLimits`, `SearchResult`, `SearchState`, `TTFlag`, `PackedMove` (lossless pack/unpack), `TTEntry`, `TranspositionTable` (inherits `HashTableBase<TTEntry>`) |
 | `search.cpp` | Search algorithm (negamax, quiescence, findBestMove), PV collection, root reordering |
 | `search_params.h` | Extracted search constants: pruning margins, reduction thresholds, constexpr LMR table, aspiration/futility/razor/LMP/RFP parameters, tempo bonus |
 | `move_picker.h` | `MovePicker` struct (staged generation), MVV-LVA scoring, move validation, heuristic update functions (`updateKillers`, `updateHistory`, `updateCaptureCutoffHistory`, `updateQuietCutoffHeuristics`) |
@@ -31,7 +31,7 @@ Fail-soft negamax + alpha-beta + quiescence with iterative deepening. Stateless 
 **Transposition Table** (in `search.h`):
 - `TTEntry` — `key32`, `score: int16_t`, `bestMove: PackedMove`, `depth: int8_t`, `flag: TTFlag`, `generation: uint8_t`
 - `TranspositionTable : HashTableBase<TTEntry>` — inherits `resize`/`free`/`clear` from `hash_table.h`, adds `newGeneration`, inline `probe`/`store`
-- `PackedMove` (uint16_t) — `packMove(m)`, `unpackMove(pm)`
+- `PackedMove` (uint16_t) — lossless `packMove(m)` / `unpackMove(pm)`. Encoding: from(6) | to(6) | type(4) where type encodes the mutually-exclusive special-move class (0=quiet, 1=capture, 2=EP, 3=castling, 4–7=quiet promo+index, 8–11=capture promo+index). All flags including the 2-bit promotion piece index are preserved.
 - Mate scores adjusted per ply (`scoreToTT`/`scoreFromTT` in search.cpp). Size = power-of-two.
 - `DEFAULT_TT_SIZE` — 4096 entries (64 KiB). `LibreChessProvider` may further cap dynamically based on available heap
 
@@ -84,7 +84,7 @@ Also contains heuristic update functions: `updateKillers`, `updateHistory` (grav
 | Reverse futility | staticEval − RFP_MARGIN × depth / (1+improving) ≥ beta, depth ≤ 6 |
 | Razoring | Drop to quiescence when eval far below alpha at shallow depth |
 | Aspiration windows | Gradual doubling on fail-low/fail-high |
-| Singular extensions | Exclusion search at TT-hit nodes, depth ≥ 6; singularBeta = ttScore − 2×depth |
+| Singular extensions | Exclusion search at TT-hit nodes, depth ≥ 6; singularBeta = ttScore − 2×depth. After the exclusion search returns, `pvLength[ply]` is reset to 0 to prevent stale PV data from the same-ply recursive call from leaking into the main search's PV. |
 | Recapture extensions | Same target square, depth ≥ 2, lazy SEE ≥ 0 |
 | Delta pruning | QS: skip captures that can't raise alpha |
 | Futility pruning | Shallow negamax: skip when eval + margin below alpha |
@@ -93,15 +93,24 @@ Also contains heuristic update functions: `updateKillers`, `updateHistory` (grav
 | Mate distance pruning | Tighten alpha/beta to best possible mate at current ply |
 | IIR | Reduce depth at PV nodes without TT hit |
 | Pawn-defended-pawn QS pruning | Skip non-pawn × defended-pawn captures in quiescence |
+| Draw detection | Twofold repetition (`isRepetition()` → file-local `hasRepeated(hashes, halfmoveClock, 2)`) + 50-move rule at ply > 0. Walk-back bounded by `halfmoveClock` to avoid stale entries from make/unmake corruption. Uses twofold (any single hash match) per [CPW — Repetitions](https://www.chessprogramming.org/Repetitions); game-end uses threefold (`isDraw()` / `isThreefoldRepetition()` → `hasRepeated(hashes, halfmoveClock, 3)`) |
 
 ## Key File-Local Helpers (search.cpp)
 
 - `LMR_TABLE` — constexpr `LMRTable` struct (rodata segment, ~3 KiB). `.data[d][m]` holds the base LMR reduction. Uses atanh-based constexpr natural-log approximation. No runtime initialization needed.
 - `collectPV()` — triangular PV memcpy
+- `validatePV()` — replays the extracted PV on the root position, truncating at the first illegal or drawn move. Uses `isMoveValid()` (from move_picker.h) to check full legality and reconstruct correct flags (EP, castling, promotion type) from the board state, then writes the corrected move back into the result PV. Truncates at twofold repetition (`isRepetition()`) or 50-move rule, matching the search's own draw detection. This catches stale PV entries (hash collisions, SE exclusion search leakage, inter-iteration staleness) and ensures UCI output has correct move notation. Called after PV extraction and before the info callback in both completed-iteration and stopped-mid-iteration paths.
 - `computeLMRReduction()` — base table + history/improving/PV adjustments, clamped to `[1, max(1, depth-3)]`
 - `reorderRootMoves()` — promote best move to index 0 (uses `Move::operator==` and `std::swap`)
 - `scoreToTT()` / `scoreFromTT()` — mate score adjustments for TT storage
 - `lazyEval()` / `evaluate()` — search-side evaluation wrappers
+
+## Stopped Search Safety
+
+When the search is stopped mid-iteration:
+- `negamax` returns 0 immediately; callers must check `state.stopped` before using the score or updating the PV/TT.
+- `findBestMove`: if no completed iteration exists yet (result.bestMove is null) but partial results are available, the partial best move from the current iteration is committed. This prevents `bestmove 0000` (which would be an illegal move) and ensures an info line is emitted.
+- As a final safety net, if no iteration produced any result, the first root move is returned with depth 0.
 
 ## Readability Patterns (search.cpp)
 

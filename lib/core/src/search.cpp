@@ -135,6 +135,55 @@ inline void collectPV(SearchState& state, int ply, PackedMove move) {
 }
 
 // ---------------------------------------------------------------------------
+// PV validation — replay the extracted PV on the root position, truncating
+// at the first illegal move or draw (twofold repetition, 50-move rule).
+//
+// Each PV move is validated via isMoveValid() (from move_picker.h), which
+// checks full legality (pseudo-legal + king-safety) and reconstructs
+// correct flags (EP, castling, promotion type) from the board state.  This
+// catches stale PV entries from hash collisions, singular-extension
+// exclusion search leakage, or inter-iteration staleness — and ensures
+// make/unmake operates on correctly-flagged moves.
+//
+// Uses twofold repetition detection (isRepetition) to truncate PVs that
+// enter a repeated position — matching the search's own draw detection.
+//
+// Called after PV extraction from the triangular table and before the info
+// callback.  The position is restored to its original state via make/unmake.
+//
+// Reference: https://www.chessprogramming.org/Principal_Variation
+// ---------------------------------------------------------------------------
+static void validatePV(Position& pos, SearchResult& result) {
+  int validLen = 0;
+  UndoInfo undos[MAX_PV_LEN];
+  Move validMoves[MAX_PV_LEN];
+
+  for (int i = 0; i < result.pvLength; ++i) {
+    Move m = result.pv[i];
+    // isMoveValid validates legality (from/to legal, doesn't leave king
+    // in check) AND reconstructs correct flags from the board state
+    // (EP, castling, promotion type).  This catches stale PV entries
+    // from TT hash collisions, SE exclusion search leakage, or inter-
+    // iteration staleness, while ensuring make/unmake uses correct flags.
+    if (!isMoveValid(pos.bitboards(), pos.mailbox(),
+                     m, pos.positionState(), pos.sideToMove()))
+      break;
+
+    // Write back the flag-corrected move so UCI output is accurate.
+    result.pv[i] = m;
+    validMoves[validLen] = m;
+    undos[validLen] = pos.make(m);
+    ++validLen;
+    if (pos.isRepetition() || pos.isFiftyMoves()) break;
+  }
+
+  for (int i = validLen - 1; i >= 0; --i)
+    pos.unmake(validMoves[i], undos[i]);
+
+  result.pvLength = validLen;
+}
+
+// ---------------------------------------------------------------------------
 // Compute the LMR (Late Move Reduction) for a quiet move in negamax.
 //
 // Base reduction comes from the logarithmic LMR table, with adjustments:
@@ -413,7 +462,11 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   state.checkTime();
   if (state.stopped) return 0;
 
-  // --- Draw detection ---
+  // --- Draw detection (twofold repetition / 50-move rule) ---
+  // isRepetition() uses twofold: any single match in same-side history
+  // signals a potential forced draw.  This prevents the search from
+  // exploring (and exposing in the PV) repetitive continuations.
+  // Reference: https://www.chessprogramming.org/Repetitions
   if (ply > 0 && (pos.isRepetition() || pos.isFiftyMoves()))
     return DRAW_SCORE;
 
@@ -603,6 +656,10 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     int halfDepth = depth / 2;
     int seScore = negamax(pos, halfDepth, singularBeta - 1, singularBeta,
                           ply, state, prevPiece, prevTo, ttMove);
+    // The exclusion search runs at the same ply and may have set
+    // pvLength[ply] via collectPV.  Reset to prevent stale PV data
+    // from leaking into the main search's PV if no move raises alpha.
+    state.pvLength[ply] = 0;
     if (seScore < singularBeta) {
       singularExtension = 1;  // TT move is singular — extend it
       STAT_INC(singularExtensions);
@@ -949,11 +1006,13 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
 
   if (rootMoves.count == 0) return result;  // No legal moves
 
-  // If only one legal move, return it immediately
+  // If only one legal move, return it immediately.
+  // Emit info callback so the GUI receives a score line before bestmove.
   if (rootMoves.count == 1) {
     result.bestMove = rootMoves.moves[0];
     result.depth = 1;
     result.nodes = 1;
+    if (info) info(result);
     return result;
   }
 
@@ -1063,8 +1122,24 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
       break;
     }
 
-    // If stopped mid-iteration, discard partial results
-    if (state.stopped) break;
+    // If stopped mid-iteration, keep partial results when no completed
+    // iteration exists yet (prevents bestmove 0000 and ensures an info
+    // line is emitted to the GUI).
+    if (state.stopped) {
+      if (result.bestMove.isNull() && iterBestScore > -INF_SCORE) {
+        result.bestMove = iterBestMove;
+        result.score    = iterBestScore;
+        result.depth    = depth;
+        result.nodes    = state.nodes;
+        result.pvLength = std::max(0, std::min(
+            static_cast<int>(state.pvLength[0]), MAX_PV_LEN));
+        for (int i = 0; i < result.pvLength; ++i)
+          result.pv[i] = unpackMove(state.pv[0][i]);
+        validatePV(pos, result);
+        if (info) info(result);
+      }
+      break;
+    }
 
     // Commit completed iteration
     result.bestMove = iterBestMove;
@@ -1078,6 +1153,10 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
                                             MAX_PV_LEN));
     for (int i = 0; i < result.pvLength; ++i)
       result.pv[i] = unpackMove(state.pv[0][i]);
+
+    // Truncate PV at the first draw (twofold repetition / 50-move rule)
+    // so the UCI info line never extends past a game-ending condition.
+    validatePV(pos, result);
 
     // --- Root move reordering ---
     reorderRootMoves(rootMoves, iterBestMove);
@@ -1125,6 +1204,14 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
       uint32_t elapsed = state.timeFunc() - state.startTime;
       if (elapsed >= effectiveSoftTime) break;
     }
+  }
+
+  // Final safety net: if no iteration completed (e.g. stopped immediately),
+  // ensure we return a valid move — use the first root move.
+  if (result.bestMove.isNull() && rootMoves.count > 0) {
+    result.bestMove = rootMoves.moves[0];
+    result.depth = 0;
+    result.nodes = state.nodes;
   }
 
   result.nodes = state.nodes;

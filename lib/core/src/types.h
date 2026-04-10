@@ -139,10 +139,13 @@ struct PositionState {
   static PositionState initial() { return {}; }
 };
 
-// Fixed-capacity Zobrist hash history for threefold repetition detection.
-// Replaces the coupled (uint64_t*, int) parameter pattern.
+// Fixed-capacity Zobrist hash history for repetition detection.
+// Must be large enough to hold the longest plausible sequence of reversible
+// moves from both the game (halfmove clock up to ~200 in engine-vs-engine
+// testing without 50-move adjudication) and the search tree (MAX_PLY deep).
+// 256 entries = 2 KiB, handles halfmove clocks up to ~200 + search depth 48.
 struct HashHistory {
-  static constexpr int MAX_SIZE = 128;
+  static constexpr int MAX_SIZE = 256;
 
   uint64_t keys[MAX_SIZE];
   int count = 0;

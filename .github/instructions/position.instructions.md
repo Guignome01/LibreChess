@@ -17,7 +17,7 @@ Board representation and position-level chess logic — a pure position containe
 | 4 | `state_` | `PositionState` | Castling rights, EP target, halfmove/fullmove clocks |
 | 5 | `kingSquare_[2]` | `Square[]` | O(1) king location, public via `kingSq(c)` |
 | 6 | `hash_` | `uint64_t` | Incremental Zobrist hash (XOR deltas in `make()`) |
-| 7 | `hashHistory_` | `HashHistory` | Past position hashes for threefold detection |
+| 7 | `hashHistory_` | `HashHistory` | Past position hashes for repetition detection |
 | 8 | `mgPST_`, `egPST_`, `material_` | `int16_t` | White-relative MG/EG/material accumulators |
 | 9 | `epIsLegal_` | `bool` | Cached `hasLegalEnPassantCapture()` result |
 | 10 | `phase_` | `int8_t` | Game phase (N=1, B=1, R=2, Q=4; max 24) |
@@ -53,6 +53,8 @@ Board representation and position-level chess logic — a pure position containe
 - **Castling rook square derivation** — the `rank + kingSide → rookFrom/rookTo` pattern appears in `moveCastlingRook()`, `unmakeCastlingRook()`, and `updateAccumulators()`. Kept inline at each site (4 lines) to avoid a struct return in the hot path.
 - **1-deep UndoCache** — stores `Move` + `UndoInfo` + post-hash. Hash-validated O(1) hot path for `reverseMove()`; cold path falls back to manual reversal + `recomputeDerived()`. [CPW — Copy-Make](https://www.chessprogramming.org/Copy-Make)
 - **EP legality caching** — `epIsLegal_` avoids redundant movegen in Zobrist make/unmake hot path.
+- **Twofold vs threefold repetition** — a file-local `hasRepeated(hashes, halfmoveClock, minCount)` function is the single counting loop (walks same-side history bounded by `halfmoveClock`, early-exits at threshold). `isRepetition()` calls it with `minCount=2` (search: position seen before → draw is available). `isThreefoldRepetition(hashes, halfmoveClock)` calls it with `minCount=3` (FIDE game-end, used by `isDraw()`/`isGameOver()`). The `halfmoveClock` bound prevents scanning across irreversible moves and avoids false matches from stale entries left by the search’s make/unmake cycle. [CPW — Repetitions](https://www.chessprogramming.org/Repetitions)
+- **`recordPosition()` sliding window** — appends the current hash, and when the array is full, compacts by keeping only the last `halfmoveClock + 1` entries (the window reachable by `hasRepeated()`). This prevents silent drops in long games (265+ half-moves) that would break repetition detection. After compaction, `make()` and `makeNullMove()` detect the stale `UndoInfo.historyCount` (saved pre-compaction) and adjust it to `hashHistory_.count - 1`, ensuring `unmake()` restores a consistent count. Compaction only triggers during game-level move replay (not during search), since after compaction the array has `~halfmoveClock + 1` entries and search adds at most `MAX_PLY = 48`, well within `MAX_SIZE = 256`. `loadFEN()` still resets `count = 0` (no undo path). [CPW — Repetitions](https://www.chessprogramming.org/Repetitions)
 
 ## Testing
 

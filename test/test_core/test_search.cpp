@@ -350,17 +350,36 @@ static void test_tt_clear(void) {
   tt.free();
 }
 
-// Pack/unpack move roundtrip preserves from, to, and flags.
+// Pack/unpack move roundtrip preserves from, to, and flags for every
+// valid move type: quiet, capture, EP, castling, and all promotions.
 static void test_tt_pack_unpack_move(void) {
-  Move m;
-  m.from = 52;  // e7
-  m.to = 60;    // e8
-  m.flags = 0x0B;  // promotion + capture (example)
-  search::PackedMove pm = search::packMove(m);
-  Move result = search::unpackMove(pm);
-  TEST_ASSERT_EQUAL_INT(52, result.from);
-  TEST_ASSERT_EQUAL_INT(60, result.to);
-  TEST_ASSERT_EQUAL_INT(0x0B, result.flags);
+  struct TestCase { uint8_t from; uint8_t to; uint8_t flags; };
+  TestCase cases[] = {
+    // Quiet move (e2-e4)
+    {12, 28, 0},
+    // Normal capture (Nxe5)
+    {21, 36, MOVE_CAPTURE},
+    // En passant capture (exd6)
+    {36, 43, MOVE_CAPTURE | MOVE_EP},
+    // Castling (e1-g1)
+    { 4,  6, MOVE_CASTLING},
+    // Quiet promotions: Knight, Bishop, Rook, Queen (e7-e8)
+    {52, 60, Move::promoFlags(0)},
+    {52, 60, Move::promoFlags(1)},
+    {52, 60, Move::promoFlags(2)},
+    {52, 60, Move::promoFlags(3)},
+    // Capture promotions: Knight, Queen (exd8)
+    {52, 59, static_cast<uint8_t>(MOVE_CAPTURE | Move::promoFlags(0))},
+    {52, 59, static_cast<uint8_t>(MOVE_CAPTURE | Move::promoFlags(3))},
+  };
+  for (auto& tc : cases) {
+    Move m(tc.from, tc.to, tc.flags);
+    search::PackedMove pm = search::packMove(m);
+    Move got = search::unpackMove(pm);
+    TEST_ASSERT_EQUAL_INT(tc.from, got.from);
+    TEST_ASSERT_EQUAL_INT(tc.to, got.to);
+    TEST_ASSERT_EQUAL_INT(tc.flags, got.flags);
+  }
 }
 
 // TT with search reduces node count on repeated position.

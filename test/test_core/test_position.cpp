@@ -756,19 +756,23 @@ void test_position_threefold_different_castling_rights(void) {
   pos.makeMove(squareOf(7, 3), squareOf( 7, 4));
   MoveResult r = pos.makeMove(squareOf(0, 3), squareOf( 0, 4)); // occurrence 2 (not 3)
   TEST_ASSERT_ENUM_EQ(GameResult::IN_PROGRESS, r.gameResult);
-  TEST_ASSERT_FALSE(pos.isRepetition());
+  // isRepetition uses twofold detection (search heuristic); isDraw uses threefold (FIDE rule)
+  TEST_ASSERT_TRUE(pos.isRepetition());
+  TEST_ASSERT_FALSE(pos.isDraw());
 }
 
 void test_position_threefold_not_reached(void) {
   setUpPosition();
-  // Only 2 occurrences — not enough for threefold
+  // Only 2 occurrences — not enough for threefold (isDraw), but enough for
+  // twofold (isRepetition, the search heuristic)
   pos.loadFEN("4k3/4p3/8/8/8/8/4P3/4K3 w - - 0 1");
   pos.makeMove(squareOf(7, 4), squareOf( 7, 3));
   pos.makeMove(squareOf(0, 4), squareOf( 0, 3));
   pos.makeMove(squareOf(7, 3), squareOf( 7, 4));
   MoveResult r = pos.makeMove(squareOf(0, 3), squareOf( 0, 4)); // occurrence 2
   TEST_ASSERT_ENUM_EQ(GameResult::IN_PROGRESS, r.gameResult);
-  TEST_ASSERT_FALSE(pos.isRepetition());
+  TEST_ASSERT_TRUE(pos.isRepetition());
+  TEST_ASSERT_FALSE(pos.isDraw());
 }
 
 void test_position_threefold_query(void) {
@@ -795,7 +799,10 @@ void test_position_threefold_with_rook_moves(void) {
 
 void test_position_position_history_reset_on_pawn_move(void) {
   setUpPosition();
-  // Start with some moves to build position history, then a pawn move resets it
+  // Start with some moves to build position history, then a pawn move resets
+  // the halfmove clock.  isRepetition() limits its walk-back to the clock
+  // window, so prior positions become invisible even though they remain in
+  // the array.
   pos.loadFEN("4k3/4p3/8/8/8/8/4P3/4K3 w - - 0 1");
   pos.makeMove(squareOf(7, 4), squareOf( 7, 3)); // Ke1-d1
   pos.makeMove(squareOf(0, 4), squareOf( 0, 3)); // Ke8-d8
@@ -1118,7 +1125,36 @@ void test_hashhistory_add_and_read(void) {
 }
 
 void test_hashhistory_max_size(void) {
-  TEST_ASSERT_EQUAL_INT(128, HashHistory::MAX_SIZE);
+  TEST_ASSERT_EQUAL_INT(256, HashHistory::MAX_SIZE);
+}
+
+void test_hashhistory_sliding_window_overflow(void) {
+  // Fill HashHistory beyond MAX_SIZE with king shuttling (no pawn/capture
+  // resets) and verify that the sliding window compaction in recordPosition()
+  // keeps repetition detection working instead of silently dropping entries.
+  setUpPosition();
+  // KvK endgame — kings shuffle on two circuits, no captures or pawn moves,
+  // so halfmoveClock grows continuously.
+  pos.loadFEN("4k3/8/8/8/8/8/8/4K3 w - - 0 1");
+
+  // Build up history: alternate Ke1-d1-e1 / Ke8-d8-e8, each full cycle = 4 half-moves.
+  // Repeat enough times to exceed MAX_SIZE (256).
+  // After 4 half-moves per cycle, 70 cycles = 280 half-moves + 1 initial = 281 entries.
+  Square we1 = squareOf(7, 4), wd1 = squareOf(7, 3);
+  Square be8 = squareOf(0, 4), bd8 = squareOf(0, 3);
+  for (int i = 0; i < 70; ++i) {
+    pos.makeMove(we1, wd1);  // Ke1-d1
+    pos.makeMove(be8, bd8);  // Ke8-d8
+    pos.makeMove(wd1, we1);  // Kd1-e1
+    pos.makeMove(bd8, be8);  // Kd8-e8
+  }
+
+  // After 280 half-moves, the position is back to the start.
+  // isRepetition (twofold) must detect the repetition despite overflow.
+  TEST_ASSERT_TRUE(pos.isRepetition());
+
+  // isDraw should also detect it (threefold — positions repeated 70 times).
+  TEST_ASSERT_TRUE(pos.isDraw());
 }
 
 // ---------------------------------------------------------------------------
@@ -1152,17 +1188,16 @@ void test_position_load_fen_sets_clocks(void) {
 
 void test_position_isRepetition_query(void) {
   setUpPosition();
+  // isRepetition() uses twofold detection (search heuristic: position seen
+  // before → draw is available). Two occurrences suffice.
   pos.loadFEN("4k3/4p3/8/8/8/8/4P3/4K3 w - - 0 1");
-  // Repeat position 3 times
   pos.makeMove(squareOf(7, 4), squareOf( 7, 3));  // Ke1-d1
   pos.makeMove(squareOf(0, 4), squareOf( 0, 3));  // Ke8-d8
   pos.makeMove(squareOf(7, 3), squareOf( 7, 4));  // Kd1-e1
   pos.makeMove(squareOf(0, 3), squareOf( 0, 4));  // Kd8-e8 — 2nd occurrence
-  pos.makeMove(squareOf(7, 4), squareOf( 7, 3));  // Ke1-d1
-  pos.makeMove(squareOf(0, 4), squareOf( 0, 3));  // Ke8-d8
-  pos.makeMove(squareOf(7, 3), squareOf( 7, 4));  // Kd1-e1
-  pos.makeMove(squareOf(0, 3), squareOf( 0, 4));  // Kd8-e8 — 3rd occurrence
   TEST_ASSERT_TRUE(pos.isRepetition());
+  // Threefold not reached — game not drawn yet
+  TEST_ASSERT_FALSE(pos.isDraw());
 }
 
 void test_position_isRepetition_false(void) {
@@ -2141,7 +2176,8 @@ static void test_rules_isThreefoldRepetition_direct(void) {
   hh.keys[3] = 0x5678;
   hh.keys[4] = 0xABCD;
   hh.count = 5;
-  TEST_ASSERT_TRUE(Position::isThreefoldRepetition(hh));
+  // halfmoveClock = 4 covers the full window (5 entries, clock starts at 0)
+  TEST_ASSERT_TRUE(Position::isThreefoldRepetition(hh, 4));
 }
 
 static void test_rules_isThreefoldRepetition_not_reached(void) {
@@ -2150,7 +2186,7 @@ static void test_rules_isThreefoldRepetition_not_reached(void) {
   hh.keys[1] = 0x1234;
   hh.keys[2] = 0xABCD;
   hh.count = 3;
-  TEST_ASSERT_FALSE(Position::isThreefoldRepetition(hh));
+  TEST_ASSERT_FALSE(Position::isThreefoldRepetition(hh, 2));
 }
 
 // ===========================================================================
@@ -2584,6 +2620,7 @@ void register_position_tests() {
   RUN_TEST(test_hashhistory_initial_state);
   RUN_TEST(test_hashhistory_add_and_read);
   RUN_TEST(test_hashhistory_max_size);
+  RUN_TEST(test_hashhistory_sliding_window_overflow);
 
   // loadFEN edge cases
   RUN_TEST(test_position_load_fen_sets_castling_rights);

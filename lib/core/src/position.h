@@ -151,7 +151,8 @@ class Position {
                            Color colorToMove, const PositionState& state);
 
   static bool isInsufficientMaterial(const BitboardSet& bb);
-  static bool isThreefoldRepetition(const HashHistory& hashes);
+  static bool isThreefoldRepetition(const HashHistory& hashes,
+                                     int halfmoveClock);
   static bool isFiftyMoveRule(const PositionState& state);
 
   static bool isDraw(const BitboardSet& bb, const Piece mailbox[],
