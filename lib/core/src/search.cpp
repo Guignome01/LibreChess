@@ -786,6 +786,27 @@ int negamax(Position& pos, int depth, int alpha, int beta,
       }
     }
 
+    // --- SEE Capture Pruning ---
+    // At non-PV, non-check nodes, prune captures whose static exchange
+    // evaluation is deeply negative.  Bad captures are already deferred by
+    // MovePicker (searched last), but at shallow depths the make/unmake
+    // overhead is not worth it for clearly losing exchanges.
+    //
+    // Uses the cached SEE from MovePicker — good captures store SEE >= 0,
+    // bad captures store their negative SEE from reclassification.  The TT
+    // move may lack cached SEE, so fall back to a fresh computation.
+    //
+    // Reference: https://www.chessprogramming.org/Static_Exchange_Evaluation
+    if (canPrune && m.isCapture() && movesSearched > 0) {
+      int seeVal = picker.lastSee != SEE_NOT_COMPUTED
+                       ? picker.lastSee
+                       : attacks::see(pos.bitboards(), pos.mailbox(), m);
+      if (seeVal < -SEE_CAPTURE_PRUNE_MARGIN * depth) {
+        STAT_INC(seeCapPrunes);
+        continue;
+      }
+    }
+
     // Capture the moving piece identity before make() alters the mailbox.
     // Used to index the countermove table in child nodes.
     Piece movingPiece = pos.mailbox()[m.from];
@@ -988,12 +1009,25 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
 
   // Per-search reset — infrastructure fields (timeFunc, tt, pawnHash,
   // evalHash) are set by the caller and persist across calls.
+  //
+  // Heuristic tables (killers, history, captureHistory, countermoves)
+  // are NOT cleared between searches — they accumulate move ordering
+  // knowledge across moves within a game, improving ordering quality
+  // from the second move onward.  Callers clear them at game boundaries
+  // (e.g. ucinewgame, Game::newGame).  History gravity naturally ages
+  // stale entries as new bonuses/penalties are applied.
+  //
+  // Reference: https://www.chessprogramming.org/History_Heuristic
   state.nodes        = 0;
   state.stopped      = false;
   state.startTime    = state.timeFunc ? state.timeFunc() : 0;
   state.hardTimeMs   = limits.hardTimeMs;
   state.externalStop = limits.stop;
-  state.clearHeuristics();
+
+  // Per-search PV/eval state must still be reset (these are ply-indexed
+  // and would contain stale data from the previous search's tree).
+  std::memset(state.staticEvals, 0, sizeof(state.staticEvals));
+  std::memset(state.pvLength, 0, sizeof(state.pvLength));
 
   int maxDepth = limits.maxDepth;
   if (maxDepth <= 0) maxDepth = 1;

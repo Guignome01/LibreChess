@@ -13,7 +13,7 @@ Fail-soft negamax + alpha-beta + quiescence with iterative deepening. Stateless 
 |------|---------|
 | `search.h` | Public API, constants, `SearchLimits`, `SearchResult`, `SearchState`, `TTFlag`, `PackedMove` (lossless pack/unpack), `TTEntry`, `TranspositionTable` (inherits `HashTableBase<TTEntry>`) |
 | `search.cpp` | Search algorithm (negamax, quiescence, findBestMove), PV collection, root reordering |
-| `search_params.h` | Extracted search constants: pruning margins, reduction thresholds, constexpr LMR table, aspiration/futility/razor/LMP/RFP parameters, tempo bonus |
+| `search_params.h` | Extracted search constants: pruning margins, reduction thresholds, constexpr LMR table, aspiration/futility/razor/LMP/RFP/SEE capture parameters, tempo bonus |
 | `move_picker.h` | `MovePicker` struct (staged generation), MVV-LVA scoring, move validation, heuristic update functions (`updateKillers`, `updateHistory`, `updateCaptureCutoffHistory`, `updateQuietCutoffHeuristics`) |
 | `stats.h` | `SearchStats` struct, `STAT_INC` macro (active under `-DSTATS` only) |
 
@@ -56,9 +56,11 @@ Callers must own and pass a `SearchState&` to `findBestMove`. The `Engine` facad
 - `nodes`, `stopped` — reset at start
 - `startTime`, `hardTimeMs` — derived from limits + timeFunc
 - `externalStop` — set from `limits.stop`
-- `clearHeuristics()` — called internally by findBestMove (not part of public API)
+- `staticEvals`, `pvLength` — ply-indexed arrays reset each search (stale from previous tree)
 
-**Heuristic tables** (persist across calls for same instance):
+**Heuristic tables** (persist across searches within a game, cleared only at game boundaries via `clearHeuristics()`):
+- Cleared by `ucinewgame` (UCI path) and `Game::newGame()` (firmware path)
+- History gravity naturally ages stale entries between searches
 
 - `killers[MAX_PLY][2]` — PackedMove per ply
 - `history[2][6][64]` — `int16_t`, piece-to indexing `[color][pieceType-1][toSq]`
@@ -81,6 +83,7 @@ Also contains heuristic update functions: `updateKillers`, `updateHistory` (grav
 | LMR | `LMR_TABLE.data[depth][moveIndex]`, +1 hist<−500, −1 hist>1500, +1 non-improving, +1 non-PV |
 | LMP | Skip late quiets at shallow depths, threshold +2 when improving |
 | History pruning | Pre-make skip: hist < −HISTORY_PRUNE_THRESHOLD × depth |
+| SEE capture pruning | Prune captures with SEE < −SEE_CAPTURE_PRUNE_MARGIN × depth at non-PV, non-check nodes. Uses MovePicker's cached SEE. |
 | Reverse futility | staticEval − RFP_MARGIN × depth / (1+improving) ≥ beta, depth ≤ 6 |
 | Razoring | Drop to quiescence when eval far below alpha at shallow depth |
 | Aspiration windows | Gradual doubling on fail-low/fail-high |
@@ -121,7 +124,7 @@ When the search is stopped mid-iteration:
 
 ## `stats.h` — Search Statistics (`-DSTATS` only)
 
-- `SearchStats` struct — TT probes/hits, pruning counts, extension counts, node counts, cutoff stats
+- `SearchStats` struct — TT probes/hits, pruning counts (including SEE capture prunes), extension counts, node counts, cutoff stats
 - `STAT_INC(field)` — increment macro (no-op without `-DSTATS`)
 - `resetStats()`, `getStats()`
 

@@ -147,6 +147,15 @@ static constexpr int HISTORY_PRUNE_DEPTH     = 4;
 static constexpr int HISTORY_PRUNE_THRESHOLD = 1024;
 
 // ===========================================================================
+// SEE Capture Pruning (Main Search)
+// ===========================================================================
+
+// At non-PV, non-check nodes, prune captures with deeply negative SEE.
+// Threshold: SEE < -SEE_CAPTURE_PRUNE_MARGIN × depth.
+// Reference: https://www.chessprogramming.org/Static_Exchange_Evaluation
+static constexpr int SEE_CAPTURE_PRUNE_MARGIN = 20;
+
+// ===========================================================================
 // Razoring
 // ===========================================================================
 

@@ -43,6 +43,7 @@ struct SearchStats {
   uint64_t historyPrunes   = 0;  // Quiet moves skipped by history pruning
   uint64_t razoringPrunes  = 0;  // Fell back to QS via razoring
   uint64_t rfpPrunes       = 0;  // Static eval returned via RFP
+  uint64_t seeCapPrunes    = 0;  // Captures pruned by SEE in main search
 
   // --- Reductions ---
   uint64_t lmrSearches     = 0;  // Moves searched with LMR
