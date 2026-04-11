@@ -194,12 +194,6 @@ static void computeDisambiguation(const BitboardSet& bb, const Piece mailbox[],
 // Output — Standard Algebraic Notation
 // ---------------------------------------------------------------------------
 
-// Piece letter for SAN (uppercase, omit for pawns).
-static char sanPieceLetter(Piece piece) {
-  PieceType type = piece::pieceType(piece);
-  return (type == PieceType::PAWN) ? '\0' : piece::pieceTypeToChar(type);
-}
-
 std::string toSAN(const BitboardSet& bb, const Piece mailbox[],
                   const PositionState& state, const MoveEntry& move) {
   // Castling
@@ -209,7 +203,6 @@ std::string toSAN(const BitboardSet& bb, const Piece mailbox[],
 
   std::string result;
   PieceType type = piece::pieceType(move.piece);
-  Color color = piece::pieceColor(move.piece);
 
   if (type == PieceType::PAWN) {
     // Pawn moves

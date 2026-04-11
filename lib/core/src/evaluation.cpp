@@ -94,19 +94,6 @@ inline Bitboard forwardMask(Color c, Square sq) {
 namespace LibreChess {
 namespace eval {
 
-#ifdef TUNING
-// Indexed by piece type offset (PAWN=0 .. KING=5).
-// File-local PST pointer lookup tables — used only in TUNING builds
-// where buildPSQT() runtime-initializes the mutable flattened tables.
-static const PST_ELEM* const PST_MG[6] = {
-    PST_PAWN_MG, PST_KNIGHT_MG, PST_BISHOP_MG,
-    PST_ROOK_MG, PST_QUEEN_MG,  PST_KING_MG};
-
-static const PST_ELEM* const PST_EG[6] = {
-    PST_PAWN_EG, PST_KNIGHT_EG, PST_BISHOP_EG,
-    PST_ROOK_EG, PST_QUEEN_EG,  PST_KING_EG};
-#endif
-
 // ---------------------------------------------------------------------------
 // Flat PSQT lookup tables — pre-combined material + PST + color sign.
 //
@@ -116,37 +103,26 @@ static const PST_ELEM* const PST_EG[6] = {
 // Eliminates 3 conditional branches and pointer indirection per
 // pieceSquareMG/EG call.
 //
-// Production builds: constexpr struct placed in .rodata (Flash on ESP32),
-// freeing 3 KiB BSS (RAM).
-// TUNING builds: mutable arrays with buildPSQT()/invalidatePSQT() for
-// runtime parameter modification.
+// Production builds: constexpr tables placed in .rodata (Flash on ESP32),
+// freeing 3 KiB BSS (RAM).  pieceSquareMGEG() reads directly.
+// TUNING builds: no cached tables — pieceSquareMGEG() computes from
+// mutable eval params on each call, avoiding cache invalidation.
 //
 // Reference: https://www.chessprogramming.org/Piece-Square_Tables
 // ---------------------------------------------------------------------------
 
 #ifdef TUNING
 
-static int16_t PSQT_MG[12][64];
-static int16_t PSQT_EG[12][64];
-static bool psqtReady_ = false;
+// Direct-computation lookup tables — map piece type (0–5) to raw PST array.
+// Used by pieceSquareMGEG() under TUNING to compute from the mutable params
+// without a cached PSQT layer.  Eliminates buildPSQT/invalidatePSQT.
+static int* const PST_MG_PTRS[6] = {
+    PST_PAWN_MG, PST_KNIGHT_MG, PST_BISHOP_MG,
+    PST_ROOK_MG, PST_QUEEN_MG,  PST_KING_MG};
 
-static void buildPSQT() {
-  for (int type = 0; type < 6; ++type) {
-    for (Square sq = 0; sq < 64; ++sq) {
-      int mg =  (MATERIAL[type]    + PST_MG[type][sq]);
-      int eg =  (MATERIAL_EG[type] + PST_EG[type][sq]);
-      PSQT_MG[type][sq]     = static_cast<int16_t>( mg);
-      PSQT_EG[type][sq]     = static_cast<int16_t>( eg);
-      PSQT_MG[type + 6][sq] = static_cast<int16_t>(-(MATERIAL[type]    + PST_MG[type][sq ^ 56]));
-      PSQT_EG[type + 6][sq] = static_cast<int16_t>(-(MATERIAL_EG[type] + PST_EG[type][sq ^ 56]));
-    }
-  }
-  psqtReady_ = true;
-}
-
-static inline void ensurePSQT() {
-  if (!psqtReady_) buildPSQT();
-}
+static int* const PST_EG_PTRS[6] = {
+    PST_PAWN_EG, PST_KNIGHT_EG, PST_BISHOP_EG,
+    PST_ROOK_EG, PST_QUEEN_EG,  PST_KING_EG};
 
 #else  // Production: constexpr PSQT in .rodata
 
@@ -196,8 +172,6 @@ static constexpr int16_t PSQT_EG[12][64] = {
 #undef PSQT_N8_
 #undef PSQT_N64_
 
-static inline void ensurePSQT() {}  // No-op: tables are constexpr.
-
 #endif  // TUNING
 
 // ---------------------------------------------------------------------------
@@ -222,19 +196,29 @@ int materialValue(PieceType pt) {
 // ---------------------------------------------------------------------------
 
 PSQTPair pieceSquareMGEG(int pieceIdx, Square sq) {
-  ensurePSQT();
+#ifdef TUNING
+  // Direct computation from raw mutable arrays — no cached PSQT.
+  // Under TUNING, eval params change at runtime; recomputing per-call
+  // avoids cache invalidation and keeps evaluation.cpp tuning-logic-free.
+  bool isBlack = pieceIdx >= 6;
+  int type = isBlack ? pieceIdx - 6 : pieceIdx;
+  Square lookupSq = isBlack ? (sq ^ 56) : sq;
+  int mg = MATERIAL[type]    + PST_MG_PTRS[type][lookupSq];
+  int eg = MATERIAL_EG[type] + PST_EG_PTRS[type][lookupSq];
+  return isBlack ? PSQTPair{-mg, -eg} : PSQTPair{mg, eg};
+#else
   return {PSQT_MG[pieceIdx][sq], PSQT_EG[pieceIdx][sq]};
+#endif
 }
 
 PSQTPair computeMaterialPST(const BitboardSet& bb) {
-  ensurePSQT();
   int mg = 0, eg = 0;
   for (int i = 0; i < 12; ++i) {
     Bitboard pieces = bb.byPiece[i];
     while (pieces) {
-      Square sq = popLsb(pieces);
-      mg += PSQT_MG[i][sq];
-      eg += PSQT_EG[i][sq];
+      PSQTPair p = pieceSquareMGEG(i, popLsb(pieces));
+      mg += p.mg;
+      eg += p.eg;
     }
   }
   return {mg, eg};
@@ -493,7 +477,12 @@ static void evalRookOnSeventh(const BitboardSet& bb,
 }
 
 // ---------------------------------------------------------------------------
-// Mobility — per-piece attack count bonus.
+// Mobility — nonlinear per-piece lookup table, safe squares only.
+//
+// Safe mobility counts attacked squares excluding friendly pieces and
+// enemy pawn attacks.  Each piece type has a separate MG/EG table indexed
+// by attack count, reflecting diminishing returns from additional mobility.
+//
 // Reference: https://www.chessprogramming.org/Mobility
 // ---------------------------------------------------------------------------
 
@@ -502,25 +491,19 @@ static void evalMobility(const BitboardSet& bb,
                          int& mgScore, int& egScore) {
   for (int c = 0; c < 2; ++c) {
     int sign = SIDE_SIGN[c];
-    Bitboard friendly = bb.byColor[c];
+    Bitboard friendly    = bb.byColor[c];
+    Bitboard enemyPawnAtk = info.byPiece[1 - c][raw(PieceType::PAWN)];
+    Bitboard safeMask    = ~friendly & ~enemyPawnAtk;
 
-    int knightMob = popcount(info.byPiece[c][raw(PieceType::KNIGHT)] & ~friendly);
-    int bishopMob = popcount(info.byPiece[c][raw(PieceType::BISHOP)] & ~friendly);
-    int rookMob   = popcount(info.byPiece[c][raw(PieceType::ROOK)]   & ~friendly);
-    int queenMob  = popcount(info.byPiece[c][raw(PieceType::QUEEN)]  & ~friendly);
+    int nMob = popcount(info.byPiece[c][raw(PieceType::KNIGHT)] & safeMask);
+    int bMob = popcount(info.byPiece[c][raw(PieceType::BISHOP)] & safeMask);
+    int rMob = popcount(info.byPiece[c][raw(PieceType::ROOK)]   & safeMask);
+    int qMob = popcount(info.byPiece[c][raw(PieceType::QUEEN)]  & safeMask);
 
-    int mgBonus = knightMob * MOBILITY_KNIGHT_MG
-                + bishopMob * MOBILITY_BISHOP_MG
-                + rookMob   * MOBILITY_ROOK_MG
-                + queenMob  * MOBILITY_QUEEN_MG;
-
-    int egBonus = knightMob * MOBILITY_KNIGHT_EG
-                + bishopMob * MOBILITY_BISHOP_EG
-                + rookMob   * MOBILITY_ROOK_EG
-                + queenMob  * MOBILITY_QUEEN_EG;
-
-    mgScore += sign * mgBonus;
-    egScore += sign * egBonus;
+    mgScore += sign * (MOBILITY_KNIGHT_MG[nMob] + MOBILITY_BISHOP_MG[bMob]
+                     + MOBILITY_ROOK_MG[rMob]   + MOBILITY_QUEEN_MG[qMob]);
+    egScore += sign * (MOBILITY_KNIGHT_EG[nMob] + MOBILITY_BISHOP_EG[bMob]
+                     + MOBILITY_ROOK_EG[rMob]   + MOBILITY_QUEEN_EG[qMob]);
   }
 }
 
@@ -565,7 +548,6 @@ static bool selectShieldFiles(int kingFile, int shieldFiles[3]) {
 
 // Evaluate pawn shield for one side. Returns MG bonus (positive = good).
 static int evalShieldOneSide(const BitboardSet& bb, Color color) {
-  uint8_t c = raw(color);
   Square kingSq = 0;
 
   // Find king square
@@ -631,11 +613,8 @@ static void evalKingSafety(const BitboardSet& bb,
 // ---------------------------------------------------------------------------
 
 // Chebyshev distance between two LERF squares.
-#ifdef TUNING
+// Non-static: also called by the tuner's trace extraction (trace.cpp).
 int chebyshevDist(Square a, Square b) {
-#else
-static int chebyshevDist(Square a, Square b) {
-#endif
   int dr = rankOf(a) - rankOf(b);
   int df = fileOf(a) - fileOf(b);
   if (dr < 0) dr = -dr;
@@ -840,53 +819,6 @@ static void evalTrappedPieces(const BitboardSet& bb,
       if ((rooks & squareBB(t.rook)) && (king & t.kingMask))
         mgScore += sign * TRAPPED_ROOK_PENALTY;
     }
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Threats — bonus for lower-value pieces attacking higher-value enemy pieces.
-//
-// Uses the pre-computed AttackInfo to detect piece-level pressure: pawns
-// threatening minors/rooks/queens, minors threatening rooks/queens, and
-// rooks threatening queens.  Each attacker-victim pair has separate MG/EG
-// weights — threats are most valuable in the midgame when piece safety
-// dictates strategy.
-//
-// Reference: https://www.chessprogramming.org/Evaluation#Threats
-// ---------------------------------------------------------------------------
-
-static void evalThreats(const BitboardSet& bb,
-                        const attacks::AttackInfo& info,
-                        int& mgScore, int& /* egScore */) {
-  for (int c = 0; c < 2; ++c) {
-    int sign = SIDE_SIGN[c];
-    int enemy = 1 - c;
-
-    // Enemy piece bitboards.
-    Color enemyColor = COLORS[enemy];
-    Bitboard enemyMinors = bb.byPiece[pieceIndex(enemyColor, PieceType::KNIGHT)]
-                         | bb.byPiece[pieceIndex(enemyColor, PieceType::BISHOP)];
-    Bitboard enemyRooks  = bb.byPiece[pieceIndex(enemyColor, PieceType::ROOK)];
-    Bitboard enemyQueens = bb.byPiece[pieceIndex(enemyColor, PieceType::QUEEN)];
-
-    // Friendly pawn attacks (PieceType::PAWN = 1).
-    Bitboard pawnAtk = info.byPiece[c][1];
-    int mg = 0;
-
-    mg += popcount(pawnAtk & enemyMinors) * THREAT_PAWN_VS_MINOR_MG;
-    mg += popcount(pawnAtk & enemyRooks)  * THREAT_PAWN_VS_ROOK_MG;
-    mg += popcount(pawnAtk & enemyQueens) * THREAT_PAWN_VS_QUEEN_MG;
-
-    // Friendly minor attacks (KNIGHT=2, BISHOP=3).
-    Bitboard minorAtk = info.byPiece[c][2] | info.byPiece[c][3];
-    mg += popcount(minorAtk & enemyRooks)  * THREAT_MINOR_VS_ROOK_MG;
-    mg += popcount(minorAtk & enemyQueens) * THREAT_MINOR_VS_QUEEN_MG;
-
-    // Friendly rook attacks (PieceType::ROOK = 4).
-    Bitboard rookAtk = info.byPiece[c][4];
-    mg += popcount(rookAtk & enemyQueens) * THREAT_ROOK_VS_QUEEN_MG;
-
-    mgScore += sign * mg;
   }
 }
 
@@ -1169,7 +1101,7 @@ static int applyOCBScaling(int score, const BitboardSet& bb, int phase) {
 static int evaluateImpl(const BitboardSet& bb, int mgScore, int egScore,
                         PawnHashTable* pawnHash, int precomputedPhase = -1) {
   // Full attack computation first — shared by pawn structure, mobility,
-  // threats, king danger, knight outposts, and space evaluation.
+  // king danger, knight outposts, and space evaluation.
   // Attack tables are constexpr — no initialization required.
   attacks::AttackInfo info = attacks::computeAll(bb);
 
@@ -1194,7 +1126,6 @@ static int evaluateImpl(const BitboardSet& bb, int mgScore, int egScore,
   evalTrappedPieces(bb, mgScore, egScore);
 
   evalMobility(bb, info, mgScore, egScore);
-  evalThreats(bb, info, mgScore, egScore);
   evalKingDanger(bb, info, mgScore);
 
   int phase = (precomputedPhase >= 0) ? precomputedPhase
@@ -1208,31 +1139,14 @@ static int evaluateImpl(const BitboardSet& bb, int mgScore, int egScore,
 
 int evaluatePosition(const BitboardSet& bb,
                      PawnHashTable* pawnHash) {
-  ensurePSQT();
-
-  int mgScore = 0;
-  int egScore = 0;
-
-  for (int i = 0; i < 12; ++i) {
-    Bitboard pieces = bb.byPiece[i];
-    while (pieces) {
-      Square sq = popLsb(pieces);
-      mgScore += PSQT_MG[i][sq];
-      egScore += PSQT_EG[i][sq];
-    }
-  }
-
-  return evaluateImpl(bb, mgScore, egScore, pawnHash);
+  PSQTPair p = computeMaterialPST(bb);
+  return evaluateImpl(bb, p.mg, p.eg, pawnHash);
 }
 
 int evaluatePosition(const BitboardSet& bb, int mgMatPST, int egMatPST,
                      int phase, PawnHashTable* pawnHash) {
   return evaluateImpl(bb, mgMatPST, egMatPST, pawnHash, phase);
 }
-
-#ifdef TUNING
-void invalidatePSQT() { psqtReady_ = false; }
-#endif
 
 }  // namespace eval
 }  // namespace LibreChess

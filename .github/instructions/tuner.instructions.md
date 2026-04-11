@@ -23,7 +23,7 @@ corpus.epd ─┬─ loadCorpus()       → RawEntry[]  (bitboards + results)
              └─ printResults()     → C++ output  (copy-paste into evaluation.cpp)
 ```
 
-### Key Types (from `tools/tune/trace.h`)
+### Key Types (from `lib/core/src/trace.h`)
 
 | Type | Purpose |
 |------|---------|
@@ -31,14 +31,22 @@ corpus.epd ─┬─ loadCorpus()       → RawEntry[]  (bitboards + results)
 | `Trace` | Sparse vector of `TraceEntry` — dot product with params = position score |
 | `TrainingPosition` | `Trace` + game `result` (1.0 = white win, 0.5 = draw, 0.0 = black win) |
 
-### Registry (from `evaluation.cpp`, `#ifdef TUNING`)
+### Registry (descriptor-driven, `#ifdef TUNING`)
 
-| Component | Purpose |
-|-----------|---------|
-| `EVAL_CONST` macro | Expands to empty under `-DTUNING`, `constexpr` in production |
-| `TuneEntry` | `{name, ptr, defaultVal, min, max, step}` — one tunable parameter |
-| `buildRegistry()` | Constructs 843 entries: 91 scalar + 752 PST (12 tables × 64 squares minus 16 frozen pawn squares) |
-| `namespace tuning` | API: `paramCount()`, `getName(i)`, `getValue(i)`, `setValue(i, v)`, `getDefault(i)`, `getMin(i)`, `getMax(i)` |
+Param metadata (name, pointer, bounds) is owned by `lib/core/src/trace.h/cpp`
+via descriptor getters.  `buildRegistry()` iterates the descriptors.
+
+| Component | Location | Purpose |
+|-----------|----------|----------|
+| `EVAL_CONST` macro | `eval_params.h` | Expands to empty under `-DTUNING`, `constexpr` in production |
+| Descriptor structs | `trace.h` | `ScalarParam`, `MobilityTableDef`, `PstDef` — metadata types |
+| `scalarParams(count)` | `trace.cpp` | Returns array of 77 scalar descriptors (name, ptr, min, max, step) |
+| `mobilityDefs(count)` | `trace.cpp` | Returns array of 4 mobility table descriptors (prefix, MG/EG data, size, bounds) |
+| `pstDefs(count)` | `trace.cpp` | Returns array of 12 PST descriptors (prefix, data, isPawn, bounds) |
+| `TuneEntry` | `trace.cpp` | `{name, ptr, defaultVal, min, max, step}` — runtime registry entry |
+| `buildRegistry()` | `trace.cpp` | Iterates descriptor getters to build 953 entries: 77 scalar + 124 mobility + 752 PST |
+| `namespace tuning` | `trace.h` | API: `paramCount()`, `getName(i)`, `getValue(i)`, `setValue(i, v)`, `getDefault(i)`, `getMin(i)`, `getMax(i)` |
+| Param externs | `trace.h` | All 50+ `extern` declarations for eval params (needed for GCC 5.1 — inline variables would eliminate these) |
 
 ## Core Algorithm
 
@@ -121,14 +129,16 @@ make pipeline                      # Build + run in one step
 ### Output
 
 - **stderr**: Progress (epoch number, train/test MSE, learning rate), gradient validation results, K recalculation updates, early stopping notification
-- **stdout**: C++ formatted output for copy-paste into `evaluation.cpp`
+- **stdout**: Two sections:
+  1. *Changed parameter values* — summary of params that differ from defaults, with old/new values
+  2. *Copy-paste block* — complete `eval_params.h`-ready output: material arrays (`MAT_ELEM`), PST arrays (`PST_ELEM`), pawn structure arrays & scalars, piece bonuses, rook bonuses, mobility tables, king safety, king proximity, space — all with correct `EVAL_CONST` macros and variable names, organized by section
 - **tune.txt**: Machine-readable log of all parameter values (key=value format)
 
 ## Tuning Iteration Workflow
 
 1. Run the tuner on a labeled corpus
-2. Review the C++ output on stdout for sanity (changed values are listed with diffs)
-3. Copy-paste the C++ output into `evaluation.cpp`, replacing the corresponding `EVAL_CONST` definitions
+2. Review the changed parameter values (first stdout section) for sanity
+3. Copy-paste the formatted block (second stdout section) into `eval_params.h`, replacing the corresponding `EVAL_CONST` definitions between the `namespace eval {` opening and the final `EVAL_FIXED` declarations
 4. Rebuild the tuner (`make clean && make`) — defaults are now the new values
 5. Run again — the next iteration starts from updated defaults
 6. Repeat until MSE improvement plateaus
@@ -142,11 +152,14 @@ make pipeline                      # Build + run in one step
 
 ## Modifying the Tuner
 
-When adding new eval terms to `evaluation.cpp`:
-1. Add the `EVAL_CONST` parameter(s) to the eval code
-2. Register them in `buildRegistry()` with appropriate name, bounds, and step
-3. Add matching trace entries in `extractTrace()` (in `tools/tune/trace.cpp`) — coefficients must exactly mirror how `evaluatePosition()` uses the parameter
-4. Rebuild and run
+When adding new eval terms:
+1. Add `EVAL_CONST` parameter(s) in `eval_params.h`
+2. Add `extern` declaration(s) in `trace.h` (inside the extern block)
+3. Add descriptor entry to the appropriate getter in `trace.cpp` (`scalarParams`, `mobilityDefs`, or `pstDefs`) — this handles registration automatically
+4. Add trace logic in `extractTrace()` (in `lib/core/src/trace.cpp`) using `pIdx(&PARAM)` — coefficients must exactly mirror how `evaluatePosition()` uses the parameter
+5. Rebuild and run
+
+No changes to `buildRegistry()` or index initialization are needed — both auto-discover params via the descriptor getters and pointer-based index maps.
 
 When changing hyperparameters, adjust the constants at the top of `tune.cpp`. The learning rate (`ADAM_LR`) is the most sensitive — if MSE oscillates, lower it; if convergence is too slow, raise it.
 
@@ -155,5 +168,5 @@ When changing hyperparameters, adjust the constants at the top of `tune.cpp`. Th
 | File | Relationship |
 |------|--------------|
 | `trace.instructions.md` | `TraceEntry`, `Trace`, `TrainingPosition` types — trace is the primary input |
-| `evaluation.instructions.md` | Tuner modifies eval parameters; `buildRegistry()` wraps eval constants |
+| `evaluation.instructions.md` | Tuner reads/writes eval parameters defined in `eval_params.h` |
 | `epd.instructions.md` | Corpus format uses EPD parser types |

@@ -705,21 +705,22 @@ static void test_eval_hash_overwrite(void) {
 
 // Own king near a passed pawn should improve endgame eval vs king far away.
 static void test_eval_passed_pawn_king_distance(void) {
-  // Position A: white king near the white passed pawn.
-  placePiece(bb, mailbox, Piece::W_KING, "d5");
+  // Position A: enemy king near the white passed pawn (can blockade/capture).
+  placePiece(bb, mailbox, Piece::W_KING, "a1");
   placePiece(bb, mailbox, Piece::W_PAWN, "e5");
-  placePiece(bb, mailbox, Piece::B_KING, "a1");
-  int evalNear = eval::evaluatePosition(bb);
+  placePiece(bb, mailbox, Piece::B_KING, "e6");
+  int evalEnemyNear = eval::evaluatePosition(bb);
 
-  // Position B: white king far from the white passed pawn.
+  // Position B: enemy king far from the white passed pawn.
   clearBoard(bb, mailbox);
   placePiece(bb, mailbox, Piece::W_KING, "a1");
   placePiece(bb, mailbox, Piece::W_PAWN, "e5");
-  placePiece(bb, mailbox, Piece::B_KING, "h8");
-  int evalFar = eval::evaluatePosition(bb);
+  placePiece(bb, mailbox, Piece::B_KING, "a8");
+  int evalEnemyFar = eval::evaluatePosition(bb);
 
-  // King near the passer should be better for white.
-  TEST_ASSERT_TRUE(evalNear > evalFar);
+  // Enemy king far from the passer should be better for white
+  // (PASSER_ENEMY_KING bonus scales with distance).
+  TEST_ASSERT_TRUE(evalEnemyFar > evalEnemyNear);
 }
 
 // ===========================================================================

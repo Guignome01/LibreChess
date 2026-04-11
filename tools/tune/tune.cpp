@@ -24,8 +24,8 @@
 //   5. Adam gradient descent with float accumulators (~500 epochs)
 //   6. Round final params to int, clamp to bounds, output C++ code
 //
-// After tuning, copy the C++ output (printed to stdout) into
-// evaluation.cpp, replacing the existing EVAL_CONST definitions.
+// After tuning, copy the formatted block from stdout into
+// eval_params.h, replacing the existing EVAL_CONST definitions.
 // Rebuild the tuner to start the next iteration from updated defaults.
 //
 // Usage: tune <corpus.epd> [epochs=500]
@@ -495,90 +495,148 @@ static void writeTunedValues(const char* filename) {
   fprintf(stderr, "Wrote %s (%d params)\n", filename, n);
 }
 
-/// Print changed parameters and C++-formatted output for copy-paste.
-static void printResults() {
-  int n = eval::tuning::paramCount();
+// ---------------------------------------------------------------------------
+// Output helpers — format tuned values for copy-paste into eval_params.h.
+// ---------------------------------------------------------------------------
 
-  // --- Pre-build index maps (one-time O(n) lookups) ---
-  // Material MG indices (in MATERIAL[] order: pawn, knight, bishop, rook, queen).
-  const char* matMgNames[5] = {"MAT_PAWN_MG", "MAT_KNIGHT_MG", "MAT_BISHOP_MG", "MAT_ROOK_MG", "MAT_QUEEN_MG"};
-  int matMgIdx[5];
-  for (int i = 0; i < 5; ++i) matMgIdx[i] = eval::findParam(matMgNames[i]);
-
-  // Material EG indices (in MATERIAL_EG[] order: pawn, knight, bishop, rook, queen).
-  const char* matEgNames[5] = {"MAT_PAWN_EG", "MAT_KNIGHT_EG", "MAT_BISHOP_EG", "MAT_ROOK_EG", "MAT_QUEEN_EG"};
-  int matEgIdx[5];
-  for (int i = 0; i < 5; ++i) matEgIdx[i] = eval::findParam(matEgNames[i]);
-
-  // PST indices (12 tables × 64 squares).
-  const char* pstNames[12] = {
-    "PST_PAWN_MG", "PST_KNIGHT_MG", "PST_BISHOP_MG",
-    "PST_ROOK_MG", "PST_QUEEN_MG",  "PST_KING_MG",
-    "PST_PAWN_EG", "PST_KNIGHT_EG", "PST_BISHOP_EG",
-    "PST_ROOK_EG", "PST_QUEEN_EG",  "PST_KING_EG",
-  };
-  int pstIdx[12][64];
-  for (int tbl = 0; tbl < 12; ++tbl) {
-    for (int sq = 0; sq < 64; ++sq) {
-      char paramName[32];
-      std::snprintf(paramName, sizeof(paramName), "%s_%d", pstNames[tbl], sq);
-      pstIdx[tbl][sq] = eval::findParam(paramName);
-    }
+/// Print a 64-element PST array formatted as 8 rows of 8 values.
+static void printPST(const char* name, const int* data) {
+  printf("EVAL_CONST PST_ELEM %s[64] = {\n", name);
+  for (int sq = 0; sq < 64; ++sq) {
+    if (sq % 8 == 0) printf("    ");
+    printf("%4d", data[sq]);
+    if (sq < 63) printf(",");
+    if (sq % 8 == 7) printf("\n");
   }
+  printf("};\n");
+}
+
+/// Print a flat int array on a single line (e.g. MATERIAL, mobility tables).
+static void printArray(const char* type, const char* name,
+                       const int* data, int size) {
+  printf("EVAL_CONST %s %s[] = {", type, name);
+  for (int i = 0; i < size; ++i) {
+    if (i > 0) printf(", ");
+    printf("%d", data[i]);
+  }
+  printf("};\n");
+}
+
+/// Print changed parameters summary and eval_params.h copy-paste block.
+static void printResults() {
+  using namespace eval;
+  int n = tuning::paramCount();
 
   // --- Changed values ---
   printf("\n// --- Changed parameter values ---\n\n");
   int changed = 0;
   for (int i = 0; i < n; ++i) {
-    int val = eval::tuning::getValue(i);
-    int def = eval::tuning::getDefault(i);
+    int val = tuning::getValue(i);
+    int def = tuning::getDefault(i);
     if (val != def) {
-      printf("%-28s = %5d  (was %d)\n",
-             eval::tuning::getName(i), val, def);
+      printf("%-28s = %5d  (was %d)\n", tuning::getName(i), val, def);
       ++changed;
     }
   }
-  printf("\n// %d parameters changed out of %d total.\n\n", changed, n);
+  printf("\n// %d parameters changed out of %d total.\n", changed, n);
 
-  // --- C++ formatted MATERIAL array (MG) ---
-  printf("// --- C++ Material arrays ---\n");
-  printf("EVAL_CONST MAT_ELEM MATERIAL[] = {");
-  for (int i = 0; i < 5; ++i) {
-    if (i > 0) printf(", ");
-    printf("%d", eval::tuning::getValue(matMgIdx[i]));
-  }
-  printf(", 0};\n");
+  // =====================================================================
+  // Copy-paste block — replace values between the namespace opening
+  // and namespace closing in eval_params.h.
+  // =====================================================================
+  printf("\n// ===========================================================================\n");
+  printf("// Copy-paste block for eval_params.h\n");
+  printf("// ===========================================================================\n\n");
 
-  // --- C++ formatted MATERIAL_EG array ---
-  printf("EVAL_CONST MAT_ELEM MATERIAL_EG[] = {");
-  for (int i = 0; i < 5; ++i) {
-    if (i > 0) printf(", ");
-    printf("%d", eval::tuning::getValue(matEgIdx[i]));
-  }
-  printf(", 0};\n\n");
+  // --- Material ---
+  printArray("MAT_ELEM", "MATERIAL", MATERIAL, 6);
+  printArray("MAT_ELEM", "MATERIAL_EG", MATERIAL_EG, 6);
 
-  // --- C++ formatted PST arrays ---
-  for (int tbl = 0; tbl < 12; ++tbl) {
-    printf("// --- %s ---\n", pstNames[tbl]);
-    printf("EVAL_CONST PST_ELEM %s[64] = {\n", pstNames[tbl]);
-    for (int sq = 0; sq < 64; ++sq) {
-      int val = (pstIdx[tbl][sq] >= 0) ? eval::tuning::getValue(pstIdx[tbl][sq]) : 0;
-      if (sq % 8 == 0) printf("  ");
-      printf("%4d", val);
-      if (sq < 63) printf(",");
-      if (sq % 8 == 7) printf("\n");
-    }
-    printf("};\n\n");
-  }
+  // --- PSTs ---
+  printf("\n// clang-format off\n");
 
-  // --- C++ formatted scalar constants ---
-  printf("// --- Scalar constants ---\n");
-  for (int i = 0; i < n; ++i) {
-    const char* name = eval::tuning::getName(i);
-    if (strncmp(name, "PST_", 4) == 0) continue;
-    if (strncmp(name, "MAT_", 4) == 0) continue;
-    printf("EVAL_CONST int %-28s = %d;\n", name, eval::tuning::getValue(i));
-  }
+  printf("\n// --- Midgame PSTs ---\n\n");
+  printPST("PST_PAWN_MG", PST_PAWN_MG);     printf("\n");
+  printPST("PST_KNIGHT_MG", PST_KNIGHT_MG);  printf("\n");
+  printPST("PST_BISHOP_MG", PST_BISHOP_MG);  printf("\n");
+  printPST("PST_ROOK_MG", PST_ROOK_MG);      printf("\n");
+  printPST("PST_QUEEN_MG", PST_QUEEN_MG);    printf("\n");
+  printPST("PST_KING_MG", PST_KING_MG);
+
+  printf("\n// --- Endgame PSTs ---\n\n");
+  printPST("PST_PAWN_EG", PST_PAWN_EG);      printf("\n");
+  printPST("PST_KNIGHT_EG", PST_KNIGHT_EG);  printf("\n");
+  printPST("PST_BISHOP_EG", PST_BISHOP_EG);  printf("\n");
+  printPST("PST_ROOK_EG", PST_ROOK_EG);      printf("\n");
+  printPST("PST_QUEEN_EG", PST_QUEEN_EG);    printf("\n");
+  printPST("PST_KING_EG", PST_KING_EG);
+
+  printf("\n// clang-format on\n");
+
+  // --- Pawn structure ---
+  printf("\n");
+  printArray("int", "PASSED_RANK_BONUS_MG", PASSED_RANK_BONUS_MG, 8);
+  printArray("int", "PASSED_RANK_BONUS_EG", PASSED_RANK_BONUS_EG, 8);
+  printf("EVAL_CONST int CONNECTED_PASSED_MG = %3d;\n", CONNECTED_PASSED_MG);
+  printf("EVAL_CONST int CONNECTED_PASSED_EG = %3d;\n", CONNECTED_PASSED_EG);
+  printf("EVAL_CONST int ISOLATED_PENALTY_MG = %3d;\n", ISOLATED_PENALTY_MG);
+  printf("EVAL_CONST int ISOLATED_PENALTY_EG = %3d;\n", ISOLATED_PENALTY_EG);
+  printf("EVAL_CONST int DOUBLED_PENALTY_MG  = %3d;\n", DOUBLED_PENALTY_MG);
+  printf("EVAL_CONST int DOUBLED_PENALTY_EG  = %3d;\n", DOUBLED_PENALTY_EG);
+  printf("EVAL_CONST int BACKWARD_PENALTY_MG = %3d;\n", BACKWARD_PENALTY_MG);
+  printf("EVAL_CONST int BACKWARD_PENALTY_EG = %3d;\n", BACKWARD_PENALTY_EG);
+  printf("EVAL_CONST int PROTECTED_PASSER_MG = %3d;\n", PROTECTED_PASSER_MG);
+
+  // --- Piece bonuses ---
+  printf("\n");
+  printf("EVAL_CONST int BISHOP_PAIR_MG = %3d;\n", BISHOP_PAIR_MG);
+  printf("EVAL_CONST int BISHOP_PAIR_EG = %3d;\n", BISHOP_PAIR_EG);
+  printf("EVAL_CONST int BAD_BISHOP_MG  = %3d;\n", BAD_BISHOP_MG);
+  printf("EVAL_CONST int BAD_BISHOP_EG  = %3d;\n", BAD_BISHOP_EG);
+  printf("EVAL_CONST int OUTPOST_BONUS_MG = %3d;\n", OUTPOST_BONUS_MG);
+  printf("EVAL_CONST int OUTPOST_BONUS_EG = %3d;\n", OUTPOST_BONUS_EG);
+  printf("EVAL_CONST int TRAPPED_BISHOP_PENALTY = %3d;\n", TRAPPED_BISHOP_PENALTY);
+  printf("EVAL_CONST int TRAPPED_ROOK_PENALTY   = %3d;\n", TRAPPED_ROOK_PENALTY);
+
+  // --- Rook bonuses ---
+  printf("\n");
+  printf("EVAL_CONST int ROOK_OPEN_FILE_MG      = %3d;\n", ROOK_OPEN_FILE_MG);
+  printf("EVAL_CONST int ROOK_OPEN_FILE_EG      = %3d;\n", ROOK_OPEN_FILE_EG);
+  printf("EVAL_CONST int ROOK_SEMI_OPEN_FILE_MG = %3d;\n", ROOK_SEMI_OPEN_FILE_MG);
+  printf("EVAL_CONST int ROOK_SEMI_OPEN_FILE_EG = %3d;\n", ROOK_SEMI_OPEN_FILE_EG);
+  printf("EVAL_CONST int ROOK_7TH_MG = %3d;\n", ROOK_7TH_MG);
+  printf("EVAL_CONST int ROOK_7TH_EG = %3d;\n", ROOK_7TH_EG);
+  printf("EVAL_CONST int ROOK_BEHIND_OWN_PASSER_EG  = %3d;\n", ROOK_BEHIND_OWN_PASSER_EG);
+  printf("EVAL_CONST int ROOK_BEHIND_ENEMY_PASSER_EG = %3d;\n", ROOK_BEHIND_ENEMY_PASSER_EG);
+
+  // --- Mobility ---
+  printf("\n// clang-format off\n");
+  printArray("int", "MOBILITY_KNIGHT_MG", MOBILITY_KNIGHT_MG, MOBILITY_KNIGHT_SIZE);
+  printArray("int", "MOBILITY_KNIGHT_EG", MOBILITY_KNIGHT_EG, MOBILITY_KNIGHT_SIZE);
+  printArray("int", "MOBILITY_BISHOP_MG", MOBILITY_BISHOP_MG, MOBILITY_BISHOP_SIZE);
+  printArray("int", "MOBILITY_BISHOP_EG", MOBILITY_BISHOP_EG, MOBILITY_BISHOP_SIZE);
+  printArray("int", "MOBILITY_ROOK_MG",   MOBILITY_ROOK_MG,   MOBILITY_ROOK_SIZE);
+  printArray("int", "MOBILITY_ROOK_EG",   MOBILITY_ROOK_EG,   MOBILITY_ROOK_SIZE);
+  printArray("int", "MOBILITY_QUEEN_MG",  MOBILITY_QUEEN_MG,  MOBILITY_QUEEN_SIZE);
+  printArray("int", "MOBILITY_QUEEN_EG",  MOBILITY_QUEEN_EG,  MOBILITY_QUEEN_SIZE);
+  printf("// clang-format on\n");
+
+  // --- King safety ---
+  printf("\n");
+  printf("EVAL_CONST int SHIELD_MISSING_PAWN  = %3d;\n", SHIELD_MISSING_PAWN);
+  printf("EVAL_CONST int SHIELD_ADV_RANK3     = %3d;\n", SHIELD_ADV_RANK3);
+  printf("EVAL_CONST int SHIELD_ADV_RANK4PLUS = %3d;\n", SHIELD_ADV_RANK4PLUS);
+  printf("EVAL_CONST int SHIELD_OPEN_FILE     = %3d;\n", SHIELD_OPEN_FILE);
+  printArray("int", "KING_DANGER_TABLE", KING_DANGER_TABLE, KING_DANGER_TABLE_SIZE);
+
+  // --- Passed pawn king proximity ---
+  printf("\n");
+  printf("EVAL_CONST int PASSER_OWN_KING   = %3d;\n", PASSER_OWN_KING);
+  printf("EVAL_CONST int PASSER_ENEMY_KING = %3d;\n", PASSER_ENEMY_KING);
+
+  // --- Space ---
+  printf("\n");
+  printf("EVAL_CONST int SPACE_BONUS_MG = %3d;\n", SPACE_BONUS_MG);
 }
 
 // ===========================================================================

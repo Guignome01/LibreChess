@@ -23,7 +23,7 @@ Detailed API, design decisions, and patterns for each module live in dedicated f
 | `fen.instructions.md` | `fen` — parse/serialize/validate |
 | `zobrist.instructions.md` | `zobrist` — constexpr key gen, incremental hashing |
 | `epd.instructions.md` | `epd` — EPD parser |
-| `trace.instructions.md` | `trace` — tuning trace extraction (now in `tools/tune/`, not `lib/core/`) |
+| `trace.instructions.md` | `trace` — tuning infrastructure (`#ifdef TUNING`, compiles to nothing in production) |
 | `core-headers.instructions.md` | `piece.h`, `utils.h`, `bitboard.h`, `types.h`, `move.h`, `logger.h`, `hash_table.h` |
 | `search.instructions.md` | `search.h/cpp`, `move_picker.h`, `stats.h` — search algorithm, TT, MovePicker |
 | `uci.instructions.md` | `uci.h/cpp` — UCI protocol handler, UCIState resource bundle |
@@ -35,7 +35,7 @@ Detailed API, design decisions, and patterns for each module live in dedicated f
 
 - **Position has no lifecycle state** — `gameOver_`, `gameResult_`, `winnerColor_` live in `Game`, not `Position`. Position is a replayable position container.
 
-- **Stateless namespaces** — `movegen`, `notation`, `eval`, `attacks`, `zobrist`, `fen`, `epd` are all stateless. All context passed as parameters. Safe to call from any context. (Trace extraction moved to `tools/tune/`.)
+- **Stateless namespaces** — `movegen`, `notation`, `eval`, `attacks`, `zobrist`, `fen`, `epd` are all stateless. All context passed as parameters. Safe to call from any context. (`trace.h/cpp` is also in the `eval` namespace but guarded by `#ifdef TUNING` — compiles to nothing in production.)
 
 - **Standalone hash tables** — `TranspositionTable`, `PawnHashTable`, and `EvalHashTable` inherit `HashTableBase<Entry>` from `hash_table.h` for common `resize`/`free`/`clear`. Each adds its own `probe`/`store` and any extra state (e.g. TT adds `generation`). Three instances with shared base, specialized behavior.
 
@@ -81,7 +81,7 @@ Every change to `lib/core/` MUST include:
 | `fen.instructions.md` | Per-file — FEN parse/serialize |
 | `zobrist.instructions.md` | Per-file — Zobrist hashing |
 | `epd.instructions.md` | Per-file — EPD parser |
-| `trace.instructions.md` | Per-file — tuning trace extraction (moved to `tools/tune/`) |
+| `trace.instructions.md` | Per-file — tuning trace extraction + registry (`#ifdef TUNING`) |
 | `core-headers.instructions.md` | Per-file — piece, utils, bitboard, types, move, logger, hash_table |
 | `search.instructions.md` | Per-file — search algorithm, MovePicker, SearchState |
 | `uci.instructions.md` | Per-file — UCI protocol handler |

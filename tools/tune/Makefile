@@ -14,7 +14,7 @@ TUNE_LIB_OBJS := $(patsubst $(CORE_DIR)/%.cpp, obj/tune_core_%.o, $(CORE_SRCS))
 # Targets
 all: tune
 
-tune: obj/tune.o obj/trace.o $(TUNE_LIB_OBJS)
+tune: obj/tune.o $(TUNE_LIB_OBJS)
 	$(CXX) $(CXXFLAGS) -pthread -o $@ $^
 
 # Full pipeline: build tuner, then run on quiet-labeled corpus
@@ -25,9 +25,6 @@ pipeline: tune
 # --- Tune object rules (compiled with -DTUNING) ---
 
 obj/tune.o: tune.cpp | obj
-	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTUNING -c $< -o $@
-
-obj/trace.o: trace.cpp | obj
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -DTUNING -c $< -o $@
 
 obj/tune_core_%.o: $(CORE_DIR)/%.cpp | obj

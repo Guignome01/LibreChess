@@ -4,14 +4,11 @@
 // ---------------------------------------------------------------------------
 // Evaluation parameters — all tunable constants for the evaluation function.
 //
-// This header is an implementation detail of evaluation.cpp, not a public API.
-// It isolates parameter data (values, tables) from evaluation logic (functions,
-// hashing, phase interpolation), making parameters easy to find, review, and
-// tune in one place.
-//
 // Under TUNING, parameters have external linkage (mutable at runtime) so the
 // offline tuner can read/write them.  Production builds keep them static
-// constexpr for full compiler optimisation.
+// constexpr for full compiler optimisation.  trace.h re-declares them as
+// extern for multi-TU access (inline variables would be cleaner but require
+// GCC 7+; the tuner toolchain is GCC 5.1).
 //
 // Reference: https://www.chessprogramming.org/Evaluation
 // ---------------------------------------------------------------------------
@@ -22,7 +19,7 @@
 // Tuning macros — control linkage and element types for all eval constants.
 //
 //   EVAL_CONST  — tunable parameters (mutable in tuning builds).
-//   EVAL_FIXED  — non-tunable constants that trace.cpp must see.
+//   EVAL_FIXED  — non-tunable constants (const in tuning builds).
 //   PST_ELEM    — element type for piece-square tables (int8_t or int).
 //   MAT_ELEM    — element type for material arrays (int16_t or int).
 // ===========================================================================
@@ -44,6 +41,14 @@
 namespace LibreChess {
 namespace eval {
 
+#ifdef TUNING
+// Force external linkage for EVAL_FIXED symbols — `const` at namespace scope
+// has internal linkage by default in C++.  trace.h re-declares these as
+// extern so that trace.cpp and tune.cpp can reference them.
+extern const int KING_DANGER_WEIGHT[];
+extern const Bitboard WHITE_SPACE_ZONE, BLACK_SPACE_ZONE;
+#endif
+
 // ===========================================================================
 // Material values
 // ===========================================================================
@@ -54,8 +59,8 @@ namespace eval {
 // unit (PAWN MG = 100 fixed).  materialValue() returns MATERIAL[idx] for
 // SEE, lazy eval, delta pruning.
 // Reference: https://www.chessprogramming.org/Material
-EVAL_CONST MAT_ELEM MATERIAL[]    = {87, 386, 419, 549, 1093, 0};
-EVAL_CONST MAT_ELEM MATERIAL_EG[] = {80, 230, 250, 468,  956, 0};
+EVAL_CONST MAT_ELEM MATERIAL[] = {80, 384, 400, 502, 1079, 0};
+EVAL_CONST MAT_ELEM MATERIAL_EG[] = {80, 233, 258, 455, 850, 0};
 
 // ===========================================================================
 // Piece-square tables — centipawns, LERF order (a1=0, h8=63).
@@ -74,137 +79,137 @@ EVAL_CONST MAT_ELEM MATERIAL_EG[] = {80, 230, 250, 468,  956, 0};
 // --- Midgame PSTs ---
 
 EVAL_CONST PST_ELEM PST_PAWN_MG[64] = {
-     0,   0,   0,   0,   0,   0,   0,   0,
-    -4,  -5,  -6,   0,   2,  18,  15,   4,
-    -3,  -9,   3,   0,   8,  -4,   6,   0,
-    -7,  -9,  -4,   4,   3,  -2, -11, -13,
-     2,   0,  -1,   1,   5,   2,   0,  -1,
-     1,   0,   1,  -1,   0,   2,   0,   0,
-     0,   0,   0,   0,   0,   0,   0,   0,
-     0,   0,   0,   0,   0,   0,   0,   0
+       0,   0,   0,   0,   0,   0,   0,   0,
+      -4,  -4,  -4,  -1,   2,  19,  15,   4,
+      -4,  -8,   1,  -1,   7,  -5,   6,  -1,
+      -7,  -9,  -4,   3,   2,  -1, -11, -14,
+       2,  -1,  -2,   2,   6,   2,  -1,  -1,
+       1,   0,   1,  -1,   0,   3,   0,   0,
+       0,   0,   0,   0,   0,   0,   0,   0,
+       0,   0,   0,   0,   0,   0,   0,   0
 };
 
 EVAL_CONST PST_ELEM PST_KNIGHT_MG[64] = {
-     0,  -8,  -1,  -1,  -2,   0,  -8,   0,
-    -1,   0,   0,   7,   6,   0,   0,   0,
-    -5,  -1,   3,   2,   2,   9,   2,  -3,
-    -3,   0,   2,   0,   5,   1,   0,  -4,
-     0,   2,  -1,   4,  -3,   1,  -4,   0,
-     0,   0,   0,   1,   1,   1,   0,   0,
-    -2,  -1,   1,   0,   0,   0,   0,  -1,
-    -2,   0,   0,   0,   0,  -1,   0,  -1
+       0, -13,  -2,  -2,  -3,   0, -12,   0,
+      -1,  -1,  -1,   5,   4,   0,   0,   0,
+      -5,  -2,   6,   2,   3,   7,   3,  -4,
+      -3,   0,   4,   3,   7,   3,   0,  -4,
+       0,   2,   0,   7,   0,   1,  -5,   0,
+       0,   0,   1,   1,   1,   1,   0,   0,
+      -2,  -1,   2,   0,   1,   1,   0,  -1,
+      -2,   0,   0,   0,   0,  -1,   0,  -1
 };
 
 EVAL_CONST PST_ELEM PST_BISHOP_MG[64] = {
-     0,  -1,  -3,  -1,   0, -13,   0,  -1,
-     0,   9,   0,   1,   4,   1,  19,   0,
-     0,   1,   3,  -2,   3,   4,   1,  -1,
-    -1,  -1,  -3,   2,   2,  -3,   0,  -2,
-    -1,  -4,  -1,   0,   1,  -1,  -1,  -1,
-    -1,   0,   0,   0,   1,   1,   0,   0,
-    -2,  -2,  -1,   0,  -1,   0,  -1,  -2,
-    -1,   0,   0,   0,   0,   0,   0,   0
+       0,  -1,  -5,  -2,  -1, -14,   0,  -1,
+      -1,   8,   0,   2,   4,   1,  17,   0,
+       0,   1,   3,   1,   5,   3,   1,  -1,
+      -1,  -1,  -1,   2,   3,   0,   0,  -2,
+      -2,  -4,  -1,   1,   2,  -1,  -1,  -2,
+      -2,   0,   1,   0,   1,   1,   0,  -1,
+      -2,  -2,  -1,   0,   0,   0,  -1,  -2,
+      -1,   0,   0,   0,   0,   0,   0,   0
 };
 
 EVAL_CONST PST_ELEM PST_ROOK_MG[64] = {
-     0,   1,   3,   5,   6,  15,  -5,  -8,
-    -2,  -1,  -1,  -1,  -1,   0,   0,  -2,
-    -2,   0,  -1,   0,   0,   0,   0,   0,
-    -1,  -1,  -1,  -1,  -1,   0,   0,   0,
-    -1,   0,   0,   0,   0,   0,   0,   0,
-     0,   0,   0,   0,   0,   0,   0,   0,
-    -1,  -2,   0,   0,  -1,   0,   0,   0,
-     0,   0,   0,   0,   0,   0,   0,   0
+       0,   0,   3,   4,   6,  14,  -5,  -7,
+      -2,  -1,  -1,  -1,  -1,   0,   0,  -2,
+      -2,   0,  -1,   0,   0,   0,   0,   0,
+      -1,  -1,  -1,  -1,  -1,   0,   0,   0,
+      -1,   0,   0,   0,   0,   0,   0,   0,
+       0,   0,   0,   0,   0,   0,   0,   0,
+      -1,  -2,   0,   0,  -1,   0,   0,   0,
+       1,   0,   1,   0,   0,   0,   0,   0
 };
 
 EVAL_CONST PST_ELEM PST_QUEEN_MG[64] = {
-     0,  -1,   0,  13,   1,  -1,   0,   0,
-    -1,   0,   3,   6,   8,   1,   0,   0,
-    -2,   0,   0,   1,   1,   2,   1,  -1,
-    -5,  -1,  -2,  -2,   0,   0,   0,   0,
-    -1,  -2,  -1,  -3,  -1,   0,  -1,  -2,
-    -1,  -1,   0,   0,   1,   1,   1,   2,
-    -2,  -7,  -1,   0,  -1,   1,   0,   1,
-    -1,   0,   0,   0,   0,   0,   0,   0
+       0,  -2,  -1,  10,   0,  -1,   0,   0,
+      -1,   0,   2,   6,   8,   1,   0,   0,
+      -2,   1,   0,   1,   1,   2,   1,  -1,
+      -4,  -1,  -1,  -1,   0,   0,   1,   0,
+      -1,  -1,  -1,  -3,   0,   0,  -1,  -2,
+      -2,  -1,   0,   0,   1,   1,   1,   2,
+      -3,  -8,  -1,   0,  -1,   1,   0,   1,
+      -1,   0,   0,   0,   0,   0,   0,   0
 };
 
 EVAL_CONST PST_ELEM PST_KING_MG[64] = {
-    -1,   2,   1,  -8,  -8,  -1,  19,  -1,
-     0,   0,   0,  -5,  -6,  -1,   4,   2,
-     0,   0,   0,  -1,  -1,   1,   1,   0,
-     0,   0,   0,   0,   0,   0,   0,   0,
-     0,   0,   0,   0,   0,   0,   0,   0,
-     0,   0,   0,   0,   0,   0,   1,   0,
-     0,   0,   0,   0,   0,   0,   0,   0,
-     0,   0,   0,   0,   0,   0,   0,   0
+      -1,   2,   1,  -8,  -8,  -2,  17,  -1,
+       0,   0,   0,  -6,  -6,   0,   4,   2,
+       0,   0,   0,  -1,  -1,   1,   1,  -1,
+       0,   0,   1,   0,   0,   1,   0,   0,
+       0,   0,   0,   0,   0,   1,   0,   0,
+       0,   0,   0,   0,   0,   0,   1,   0,
+       0,   0,   0,   0,   0,   0,   0,   0,
+       0,   0,   0,   0,   0,   0,   0,   0
 };
 
 // --- Endgame PSTs ---
 
 EVAL_CONST PST_ELEM PST_PAWN_EG[64] = {
-     0,   0,   0,   0,   0,   0,   0,   0,
-    -2,  -1,   2,   0,   1,   3,  -2,  -6,
-    -5,  -3,  -1,   0,   2,   0,  -3,  -5,
-     1,   1,  -2,  -2,  -1,  -2,   0,  -2,
-     6,   3,   1,  -3,  -1,   0,   2,   2,
-     5,   2,   1,  -2,  -2,   0,   0,   1,
-     1,   1,   0,  -1,  -1,  -1,   0,   0,
-     0,   0,   0,   0,   0,   0,   0,   0
+       0,   0,   0,   0,   0,   0,   0,   0,
+      -3,  -2,   2,  -1,   1,   2,  -3,  -7,
+      -5,  -3,  -2,   0,   1,  -1,  -4,  -6,
+       0,   1,  -3,  -3,  -2,  -3,  -1,  -2,
+       5,   3,   1,  -4,  -2,   0,   2,   2,
+       5,   2,   1,  -2,  -2,   0,   0,   1,
+       1,   1,   0,  -1,  -1,  -1,   0,   0,
+       0,   0,   0,   0,   0,   0,   0,   0
 };
 
 EVAL_CONST PST_ELEM PST_KNIGHT_EG[64] = {
-     0,  -1,   0,   0,   0,   0,  -2,   0,
-     0,   0,  -1,   1,   1,   0,   0,   0,
-    -1,   0,  -1,   1,   1,  -1,   0,  -1,
-    -1,   0,   2,   1,   3,   0,   0,  -1,
-     0,   1,   1,   2,   1,   1,   0,   0,
-     0,   0,   1,   1,   0,   0,   0,   0,
-    -1,  -1,   0,   0,   0,   0,   0,  -1,
-    -1,   0,   0,   0,   0,  -1,   0,  -1
+       0,  -2,  -1,   0,  -1,   0,  -3,   0,
+       0,   0,  -1,   1,   1,   0,   0,   0,
+      -1,   0,   0,   1,   1,   0,   0,  -1,
+       0,   0,   2,   2,   3,   1,   0,   0,
+       0,   1,   1,   3,   2,   1,   0,   0,
+       0,  -1,   1,   1,   0,   0,   0,   0,
+      -1,  -1,   0,   0,   0,   0,   0,  -1,
+      -1,   0,   0,   0,   0,  -1,   0,  -1
 };
 
 EVAL_CONST PST_ELEM PST_BISHOP_EG[64] = {
-    -1,   0,  -2,   0,   0,  -2,   0,  -1,
-     0,   0,  -1,   1,   1,   0,   2,   0,
-     0,   1,   1,   1,   3,   1,   0,   0,
-     0,   0,   0,   0,   0,   1,   0,  -1,
-     0,   0,   0,   0,   0,  -1,   0,  -1,
-     0,   0,   0,   0,   0,   1,   0,   0,
-    -1,  -1,  -1,   0,   0,   0,   0,  -1,
-     0,   0,   0,   0,   0,   0,   0,   0
+      -1,  -1,  -3,  -1,   0,  -3,   0,  -1,
+       0,   0,  -1,   1,   1,   0,   1,  -1,
+       0,   1,   2,   2,   4,   1,   0,   0,
+       0,   0,   1,   1,   1,   2,   0,  -1,
+       0,   1,   0,   1,   1,   0,   0,  -1,
+       0,   0,   1,   1,   0,   1,   0,   0,
+      -1,  -1,  -1,   0,   0,   0,   0,  -1,
+       0,  -1,   0,   0,  -1,   0,   0,   0
 };
 
 EVAL_CONST PST_ELEM PST_ROOK_EG[64] = {
-     2,   1,   1,   2,   1,   4,  -1,  -3,
-    -1,   0,   0,   0,   0,   0,   0,  -1,
-    -1,   0,  -1,   0,   0,   0,   0,   0,
-     0,   0,   0,   0,   0,   0,   0,  -1,
-     0,   0,   1,   0,   0,   0,   0,   0,
-     1,   1,   0,   0,   0,   0,   0,  -1,
-    -1,   0,   0,   0,  -1,   0,   0,  -1,
-     1,   1,   1,   0,   0,   0,   0,   0
+       1,   1,   1,   2,   1,   2,  -1,  -4,
+      -1,  -1,   0,  -1,  -1,   0,   0,  -1,
+      -1,   0,  -1,   0,   0,   0,   0,  -1,
+       0,   0,   0,   0,   0,   0,   0,  -1,
+       0,   0,   1,   1,   0,   0,   0,   0,
+       1,   1,   0,   1,   0,   0,   1,  -1,
+      -1,   0,   0,   0,  -1,   0,   0,  -1,
+       2,   1,   2,   1,   0,   0,   0,   0
 };
 
 EVAL_CONST PST_ELEM PST_QUEEN_EG[64] = {
-     0,   0,   0,  -1,   0,   0,   0,   0,
-     0,   0,   0,   1,   1,   0,   0,   0,
-    -1,  -1,   0,   0,   0,   1,   1,   0,
-    -1,   0,   0,   0,   0,   0,   0,   0,
-    -1,   0,   0,   0,   0,   0,   0,   0,
-    -1,   0,   0,   0,   1,   0,   1,   1,
-    -1,  -1,   0,   0,   0,   1,   0,   0,
-     0,   0,   0,   0,   0,   0,   0,   0
+       0,  -1,   0,  -1,   0,   0,   0,   0,
+       0,   0,   0,   1,   2,   0,   0,   0,
+      -1,  -1,   0,   0,   1,   1,   1,   0,
+      -1,   0,   0,   0,   0,   0,   0,   0,
+      -1,   0,  -1,   0,   0,   0,   0,   0,
+      -1,   0,   0,   0,   1,   1,   1,   1,
+      -1,  -1,   0,   0,   0,   1,   0,   0,
+      -1,   0,   0,   0,   0,   0,   0,   0
 };
 
 EVAL_CONST PST_ELEM PST_KING_EG[64] = {
-    -1,   0,   0,  -5,  -5,  -2,  -5,  -7,
-    -1,   0,   1,  -1,   0,   5,   4,  -2,
-    -1,   0,   2,   0,   1,   5,   2,  -1,
-    -1,   0,   1,   0,   1,   3,   1,  -1,
-    -1,   0,   1,   0,   0,   3,   2,   0,
-     0,   1,   1,   0,   0,   2,   2,   0,
-     0,   0,   0,  -1,   0,   1,   1,   0,
-     0,   0,   0,   0,   0,   0,   0,   0
+      -1,  -1,   0,  -6,  -5,  -2,  -6,  -7,
+      -1,   0,   1,   0,   0,   5,   4,  -2,
+      -1,   0,   2,   1,   1,   6,   2,  -1,
+      -2,   0,   2,   0,   1,   4,   1,  -2,
+      -1,   0,   1,   0,   0,   3,   2,   0,
+      -1,   1,   1,   0,   0,   2,   3,   0,
+       0,   0,   0,  -1,   0,   1,   1,   0,
+       0,   0,   0,   0,  -1,   0,   0,   0
 };
 
 // clang-format on
@@ -217,20 +222,20 @@ EVAL_CONST PST_ELEM PST_KING_EG[64] = {
 // worth dramatically more.  Indexed by LERF rank (0=rank1, 7=rank8).
 // Indices 0 and 7 unused (pawns can't occupy rank 1 or rank 8).
 // Reference: https://www.chessprogramming.org/Passed_Pawn
-EVAL_CONST int PASSED_RANK_BONUS_MG[] = {0, 0, 0, 0, 5, 10, 20, 0};
-EVAL_CONST int PASSED_RANK_BONUS_EG[] = {0, 0, 0, 8, 43, 117, 187, 0};
-EVAL_CONST int CONNECTED_PASSED_MG =   0;  // tuned to 0 — kept as tuning placeholder
-EVAL_CONST int CONNECTED_PASSED_EG =   0;  // tuned to 0 — kept as tuning placeholder
-EVAL_CONST int ISOLATED_PENALTY_MG = -19;
-EVAL_CONST int ISOLATED_PENALTY_EG =  -8;
-EVAL_CONST int DOUBLED_PENALTY_MG  =  -1;
-EVAL_CONST int DOUBLED_PENALTY_EG  = -10;
-EVAL_CONST int BACKWARD_PENALTY_MG =  -5;
-EVAL_CONST int BACKWARD_PENALTY_EG =  -1;
+EVAL_CONST int PASSED_RANK_BONUS_MG[] = {0, 0, 0, 0, 5, 10, 23, 0};
+EVAL_CONST int PASSED_RANK_BONUS_EG[] = {0, 0, 0, 4, 34, 99, 160, 0};
+EVAL_CONST int CONNECTED_PASSED_MG =   0;
+EVAL_CONST int CONNECTED_PASSED_EG =   0;
+EVAL_CONST int ISOLATED_PENALTY_MG = -17;
+EVAL_CONST int ISOLATED_PENALTY_EG =  -6;
+EVAL_CONST int DOUBLED_PENALTY_MG  =   0;
+EVAL_CONST int DOUBLED_PENALTY_EG  = -14;
+EVAL_CONST int BACKWARD_PENALTY_MG =  -4;
+EVAL_CONST int BACKWARD_PENALTY_EG =  -3;
 
 // Protected passed pawn — extra bonus when a passer is defended by a pawn.
 // Reference: https://www.chessprogramming.org/Passed_Pawn#Protected
-EVAL_CONST int PROTECTED_PASSER_MG = 7;
+EVAL_CONST int PROTECTED_PASSER_MG = 8;
 
 // ===========================================================================
 // Piece bonuses
@@ -238,24 +243,24 @@ EVAL_CONST int PROTECTED_PASSER_MG = 7;
 
 // Bishop pair — bonus when a side has both bishops.
 // Reference: https://www.chessprogramming.org/Bishop_Pair
-EVAL_CONST int BISHOP_PAIR_MG = 33;
-EVAL_CONST int BISHOP_PAIR_EG = 46;
+EVAL_CONST int BISHOP_PAIR_MG =  37;
+EVAL_CONST int BISHOP_PAIR_EG =  32;
 
 // Bad bishop — penalty for bishops blocked by own pawns on same color.
 // Reference: https://www.chessprogramming.org/Bad_Bishop
 EVAL_CONST int BAD_BISHOP_MG = -5;
-EVAL_CONST int BAD_BISHOP_EG = -3;
+EVAL_CONST int BAD_BISHOP_EG = -5;
 
 // Knight outposts — bonus for knights on pawn-protected, unattackable
 // squares.  Central outposts (d4/d5/e4/e5) receive double the bonus.
 // Reference: https://www.chessprogramming.org/Outposts
-EVAL_CONST int OUTPOST_BONUS_MG = 15;
-EVAL_CONST int OUTPOST_BONUS_EG = 14;
+EVAL_CONST int OUTPOST_BONUS_MG =  18;
+EVAL_CONST int OUTPOST_BONUS_EG =  14;
 
 // Trapped pieces — penalty for pieces stuck where pawns block retreat.
 // Reference: https://www.chessprogramming.org/Trapped_Pieces
 EVAL_CONST int TRAPPED_BISHOP_PENALTY = -120;
-EVAL_CONST int TRAPPED_ROOK_PENALTY   =  -34;
+EVAL_CONST int TRAPPED_ROOK_PENALTY   = -31;
 
 // ===========================================================================
 // Rook bonuses
@@ -263,35 +268,48 @@ EVAL_CONST int TRAPPED_ROOK_PENALTY   =  -34;
 
 // Rook on open/semi-open file.
 // Reference: https://www.chessprogramming.org/Rook_on_Open_File
-EVAL_CONST int ROOK_OPEN_FILE_MG      = 41;
-EVAL_CONST int ROOK_OPEN_FILE_EG      =  0;
-EVAL_CONST int ROOK_SEMI_OPEN_FILE_MG = 17;
-EVAL_CONST int ROOK_SEMI_OPEN_FILE_EG =  4;
+EVAL_CONST int ROOK_OPEN_FILE_MG      =  45;
+EVAL_CONST int ROOK_OPEN_FILE_EG      =   0;
+EVAL_CONST int ROOK_SEMI_OPEN_FILE_MG =  16;
+EVAL_CONST int ROOK_SEMI_OPEN_FILE_EG =  17;
 
 // Rook on 7th rank — bonus when rook is on opponent's second rank and
 // enemy king is on back rank.
 // Reference: https://www.chessprogramming.org/Rook_on_Seventh
-EVAL_CONST int ROOK_7TH_MG = 5;
-EVAL_CONST int ROOK_7TH_EG = 26;
+EVAL_CONST int ROOK_7TH_MG =   5;
+EVAL_CONST int ROOK_7TH_EG =  26;
 
 // Rook behind passed pawn (Tarrasch Rule) — EG only.
 // Reference: https://www.chessprogramming.org/Tarrasch_Rule
-EVAL_CONST int ROOK_BEHIND_OWN_PASSER_EG   =  5;
-EVAL_CONST int ROOK_BEHIND_ENEMY_PASSER_EG  = -40;
+EVAL_CONST int ROOK_BEHIND_OWN_PASSER_EG  =  19;
+EVAL_CONST int ROOK_BEHIND_ENEMY_PASSER_EG =   10;
 
 // ===========================================================================
-// Mobility — per-piece attack count bonus.
+// Mobility — nonlinear per-piece lookup tables indexed by safe attack count.
+//
+// Safe mobility = attacked squares excluding friendly pieces and enemy pawn
+// attacks.  Tables initialized to linear (count × prior weight) to match
+// prior eval; the tuner optimizes to a diminishing-returns shape.
+//
+// Table sizes: max possible attack count per piece type + 1.
+//   Knight: max 8, Bishop: max 13, Rook: max 14, Queen: max 27.
+//
 // Reference: https://www.chessprogramming.org/Mobility
 // ===========================================================================
 
-EVAL_CONST int MOBILITY_KNIGHT_MG = 7;
-EVAL_CONST int MOBILITY_KNIGHT_EG = 5;
-EVAL_CONST int MOBILITY_BISHOP_MG = 4;
-EVAL_CONST int MOBILITY_BISHOP_EG = 4;
-EVAL_CONST int MOBILITY_ROOK_MG   = 2;
-EVAL_CONST int MOBILITY_ROOK_EG   = 3;
-EVAL_CONST int MOBILITY_QUEEN_MG  = 1;
-EVAL_CONST int MOBILITY_QUEEN_EG  = 4;
+// clang-format off
+EVAL_CONST int MOBILITY_KNIGHT_MG[] = {0, -29, -12, -6, 0, 4, 7, 9, 14};
+EVAL_CONST int MOBILITY_KNIGHT_EG[] = {0, -30, -27, -17, -9, 8, 6, 13, 0};
+
+EVAL_CONST int MOBILITY_BISHOP_MG[] = {0, 1, 8, 12, 17, 19, 22, 26, 32, 33, 34, 40, 42, 47};
+EVAL_CONST int MOBILITY_BISHOP_EG[] = {0, -15, -21, -17, -13, -10, -3, -8, 1, -4, 5, 0, 10, 3};
+
+EVAL_CONST int MOBILITY_ROOK_MG[] = {0, 12, 15, 17, 17, 20, 19, 21, 21, 24, 24, 28, 26, 26, 43};
+EVAL_CONST int MOBILITY_ROOK_EG[] = {0, -48, -40, -36, -28, -27, -26, -23, -19, -18, -16, -13, -7, -5, -12};
+
+EVAL_CONST int MOBILITY_QUEEN_MG[] = {0, 7, 10, 12, 13, 16, 17, 14, 15, 14, 9, 8, 8, 4, 5, 3, -7, 0, -2, 5, 21, 10, 17, 52, 27, -16, 38, 20};
+EVAL_CONST int MOBILITY_QUEEN_EG[] = {0, -47, -76, -80, -80, -65, -57, -30, -22, -4, 8, 16, 15, 28, 34, 34, 51, 45, 58, 53, 50, 54, 50, 31, 56, 79, 75, 69};
+// clang-format on
 
 // ===========================================================================
 // King safety
@@ -299,10 +317,10 @@ EVAL_CONST int MOBILITY_QUEEN_EG  = 4;
 
 // Pawn shield — penalty for missing or advanced shield pawns.
 // Reference: https://www.chessprogramming.org/King_Safety#Pawn_Shield
-EVAL_CONST int SHIELD_MISSING_PAWN  = -24;
-EVAL_CONST int SHIELD_ADV_RANK3     =   0;  // tuned to 0 — kept as tuning placeholder
-EVAL_CONST int SHIELD_ADV_RANK4PLUS =  -9;
-EVAL_CONST int SHIELD_OPEN_FILE     = -42;
+EVAL_CONST int SHIELD_MISSING_PAWN  = -20;
+EVAL_CONST int SHIELD_ADV_RANK3     =   0;
+EVAL_CONST int SHIELD_ADV_RANK4PLUS =  -8;
+EVAL_CONST int SHIELD_OPEN_FILE     = -40;
 
 // King danger — nonlinear penalty based on coordinated attacker weight.
 // KING_DANGER_WEIGHT: per-piece-type zone attack weight (N=0, B=1, R=2, Q=3).
@@ -312,7 +330,7 @@ EVAL_FIXED int KING_DANGER_WEIGHT[] = {2, 2, 3, 5};
 
 // Nonlinear danger table — maps total attacker weight to MG penalty (cp).
 // TABLE[0] stays fixed at 0; entries 1..12 are tunable.
-EVAL_CONST int KING_DANGER_TABLE[] = {0, 0, 8, 8, 11, 11, 26, 40, 60, 105, 167, 167, 231};
+EVAL_CONST int KING_DANGER_TABLE[] = {0, 0, 12, 12, 18, 18, 31, 41, 60, 105, 164, 164, 228};
 
 // ===========================================================================
 // Passed pawn king proximity (EG only)
@@ -320,8 +338,8 @@ EVAL_CONST int KING_DANGER_TABLE[] = {0, 0, 8, 8, 11, 11, 26, 40, 60, 105, 167, 
 
 // Bonus for own king near passer / enemy king far from passer.
 // Reference: https://www.chessprogramming.org/King_Distance#Passed_Pawn
-EVAL_CONST int PASSER_OWN_KING   = 0;  // tuned to 0 — kept as tuning placeholder
-EVAL_CONST int PASSER_ENEMY_KING = 7;
+EVAL_CONST int PASSER_OWN_KING   = 0;
+EVAL_CONST int PASSER_ENEMY_KING = 5;
 
 // ===========================================================================
 // Space
@@ -329,7 +347,7 @@ EVAL_CONST int PASSER_ENEMY_KING = 7;
 
 // Bonus per safe square on files c–f behind own pawn chain.
 // Reference: https://www.chessprogramming.org/Space
-EVAL_CONST int SPACE_BONUS_MG = 8;
+EVAL_CONST int SPACE_BONUS_MG = 5;
 
 // Space zones — files c–f, ranks 2–4 (White) / ranks 5–7 (Black).
 EVAL_FIXED Bitboard WHITE_SPACE_ZONE =
@@ -337,18 +355,6 @@ EVAL_FIXED Bitboard WHITE_SPACE_ZONE =
 
 EVAL_FIXED Bitboard BLACK_SPACE_ZONE =
     (FILE_C | FILE_D | FILE_E | FILE_F) & (RANK_5 | RANK_6 | RANK_7);
-
-// ===========================================================================
-// Threats — bonus for lower-value pieces attacking higher-value enemy pieces.
-// Reference: https://www.chessprogramming.org/Evaluation#Threats
-// ===========================================================================
-
-EVAL_CONST int THREAT_PAWN_VS_MINOR_MG  = 23;
-EVAL_CONST int THREAT_PAWN_VS_ROOK_MG   = 13;
-EVAL_CONST int THREAT_PAWN_VS_QUEEN_MG  = 15;
-EVAL_CONST int THREAT_MINOR_VS_ROOK_MG  = 22;
-EVAL_CONST int THREAT_MINOR_VS_QUEEN_MG = 13;
-EVAL_CONST int THREAT_ROOK_VS_QUEEN_MG  = 24;
 
 }  // namespace eval
 }  // namespace LibreChess

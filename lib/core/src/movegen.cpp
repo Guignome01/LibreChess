@@ -120,8 +120,7 @@ static void applyMoveBB(BitboardSet& bb, Square from, Square to,
 // ---------------------------------------------------------------------------
 
 static bool leavesInCheck(const BitboardSet& bb, const Piece mailbox[],
-                          Square from, Square to,
-                          const PositionState& state, Square kingSq) {
+                          Square from, Square to, Square kingSq) {
   Piece movingPiece = mailbox[from];
   Color movingColor = piece::pieceColor(movingPiece);
 
@@ -196,7 +195,7 @@ static bool filterPieceMoves(const BitboardSet& bb, const Piece mailbox[],
       bool capture = squareBB(to) & enemy;
       if (filterMode == FilterMode::CAPTURES_PROMOS && !capture) continue;
       if (filterMode == FilterMode::QUIETS && capture) continue;
-      if (!leavesInCheck(bb, mailbox, sq, to, state, to))
+      if (!leavesInCheck(bb, mailbox, sq, to, to))
         if (handler(Move(from8, static_cast<uint8_t>(to),
                          capture ? MOVE_CAPTURE : uint8_t(0))))
           return true;
@@ -219,7 +218,7 @@ static bool filterPieceMoves(const BitboardSet& bb, const Piece mailbox[],
               mailbox[h] == rookPiece)
             if (!attacks::isSquareUnderAttack(bb, f, color) &&
                 !attacks::isSquareUnderAttack(bb, g, color))
-              if (!leavesInCheck(bb, mailbox, sq, g, state, g))
+              if (!leavesInCheck(bb, mailbox, sq, g, g))
                 if (handler(Move(from8, static_cast<uint8_t>(g), MOVE_CASTLING)))
                   return true;
         }
@@ -233,7 +232,7 @@ static bool filterPieceMoves(const BitboardSet& bb, const Piece mailbox[],
               mailbox[b] == Piece::NONE && mailbox[a] == rookPiece)
             if (!attacks::isSquareUnderAttack(bb, d, color) &&
                 !attacks::isSquareUnderAttack(bb, c, color))
-              if (!leavesInCheck(bb, mailbox, sq, c, state, c))
+              if (!leavesInCheck(bb, mailbox, sq, c, c))
                 if (handler(Move(from8, static_cast<uint8_t>(c), MOVE_CASTLING)))
                   return true;
         }
@@ -299,7 +298,7 @@ static bool filterPieceMoves(const BitboardSet& bb, const Piece mailbox[],
     if (filterMode != FilterMode::QUIETS && state.epSquare != SQ_NONE) {
       if (rankOf(sq) == rankOf(state.epSquare) - forward / 8) {
         if (attacks::PAWN[piece::raw(color)][sq] & squareBB(state.epSquare))
-          if (!leavesInCheck(bb, mailbox, sq, state.epSquare, state, ctx.kingSq))
+          if (!leavesInCheck(bb, mailbox, sq, state.epSquare, ctx.kingSq))
             if (handler(Move(from8, static_cast<uint8_t>(state.epSquare),
                              MOVE_CAPTURE | MOVE_EP)))
               return true;
@@ -512,7 +511,7 @@ bool hasLegalEnPassantCapture(const BitboardSet& bb, const Piece mailbox[],
   Bitboard capturers = attacks::PAWN[piece::raw(~sideToMove)][epSq] & bb.byPiece[pawnIdx];
   while (capturers) {
     Square from = popLsb(capturers);
-    if (!leavesInCheck(bb, mailbox, from, epSq, state, kingSq))
+    if (!leavesInCheck(bb, mailbox, from, epSq, kingSq))
       return true;
   }
   return false;
