@@ -471,16 +471,23 @@ static void test_eval_knight_outpost(void) {
 // ===========================================================================
 
 static void test_eval_king_danger_close_piece(void) {
-  // White queen close to black king vs far from black king.
-  // Close queen attacks king zone AND is nearby (proximity amplifier).
+  // White queen + rooks close to black king vs far from black king.
+  // King danger is scaled by opponent material fraction (oppPhase / 12),
+  // so sufficient material is needed for meaningful danger difference.
+  // The "far" queen must be truly distant — off king-zone diagonals/files
+  // and beyond Chebyshev distance 3 — to avoid zone attack overlap.
   placePiece(bb, mailbox, Piece::W_KING, "a1");
-  placePiece(bb, mailbox, Piece::W_QUEEN, "f7");  // 1 square from e8
+  placePiece(bb, mailbox, Piece::W_QUEEN, "f7");  // attacks e8 king zone + close
+  placePiece(bb, mailbox, Piece::W_ROOK, "a7");
+  placePiece(bb, mailbox, Piece::W_ROOK, "b1");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   int close = eval::evaluatePosition(bb);
 
   clearBoard(bb, mailbox);
   placePiece(bb, mailbox, Piece::W_KING, "a1");
-  placePiece(bb, mailbox, Piece::W_QUEEN, "a2");  // far from e8
+  placePiece(bb, mailbox, Piece::W_QUEEN, "a2");  // far, no zone overlap
+  placePiece(bb, mailbox, Piece::W_ROOK, "b1");
+  placePiece(bb, mailbox, Piece::W_ROOK, "c1");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   int far = eval::evaluatePosition(bb);
 

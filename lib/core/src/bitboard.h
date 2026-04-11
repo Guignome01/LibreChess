@@ -134,6 +134,23 @@ inline Square popLsb(Bitboard& bb) {
   return sq;
 }
 
+// Index of most significant set bit. Undefined if bb == 0.
+inline Square msb(Bitboard bb) {
+#if defined(__GNUC__) || defined(__clang__)
+  return 63 - __builtin_clzll(bb);
+#else
+  // Portable fallback — scan downward via lsb of isolated MSB.
+  Square result = 0;
+  if (bb > 0xFFFFFFFFULL) { bb >>= 32; result = 32; }
+  if (bb > 0xFFFF)        { bb >>= 16; result += 16; }
+  if (bb > 0xFF)          { bb >>=  8; result +=  8; }
+  if (bb > 0xF)           { bb >>=  4; result +=  4; }
+  if (bb > 0x3)           { bb >>=  2; result +=  2; }
+  if (bb > 0x1)           {            result +=  1; }
+  return result;
+#endif
+}
+
 // Vertical mirror — reverses byte order, swapping ranks (rank 1↔8, 2↔7, etc.).
 // Used by Hyperbola Quintessence (attacks) and pawn mask mirroring (evaluation).
 inline uint64_t byteSwap64(uint64_t v) {

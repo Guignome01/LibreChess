@@ -601,10 +601,56 @@ static int evalShieldOneSide(const BitboardSet& bb, Color color) {
   return score;
 }
 
+// ---------------------------------------------------------------------------
+// Pawn storm — penalty for enemy pawns advancing toward our castled king.
+//
+// For each shield file, finds the most advanced (closest to defender) enemy
+// pawn and applies a rank-indexed penalty from PAWN_STORM[].  Uses the same
+// shield-file selection as evalShieldOneSide.
+//
+// "If the enemy pawns are near to the king, there might be a threat of
+//  opening a file, even if the pawn shield is intact."
+//
+// Reference: https://www.chessprogramming.org/King_Safety#Pawn_Storm
+// ---------------------------------------------------------------------------
+
+static int evalStormOneSide(const BitboardSet& bb, Color color) {
+  Bitboard king = bb.byPiece[pieceIndex(color, PieceType::KING)];
+  if (!king) return 0;
+  Square kingSq = lsb(king);
+  int kingFile = fileOf(kingSq);
+
+  int shieldFiles[3];
+  if (!selectShieldFiles(kingFile, shieldFiles)) return 0;
+
+  Color enemy = (color == Color::WHITE) ? Color::BLACK : Color::WHITE;
+  Bitboard enemyPawns = bb.byPiece[pieceIndex(enemy, PieceType::PAWN)];
+
+  int score = 0;
+
+  for (int i = 0; i < 3; ++i) {
+    int f = shieldFiles[i];
+    Bitboard filePawns = enemyPawns & fileBB(f);
+    if (!filePawns) continue;
+
+    // Find the most advanced enemy pawn on this file (closest to our king).
+    // White defending: black pawns advance downward → lsb = lowest rank.
+    // Black defending: white pawns advance upward  → msb = highest rank.
+    Square sq = (color == Color::WHITE) ? lsb(filePawns) : msb(filePawns);
+    int rank = rankOf(sq);
+    int relRank = (color == Color::WHITE) ? rank : (7 - rank);
+    score += PAWN_STORM[relRank];
+  }
+
+  return score;
+}
+
 static void evalKingSafety(const BitboardSet& bb,
                            int& mgScore, int& /* egScore */) {
   mgScore += evalShieldOneSide(bb, Color::WHITE);
   mgScore -= evalShieldOneSide(bb, Color::BLACK);
+  mgScore += evalStormOneSide(bb, Color::WHITE);
+  mgScore -= evalStormOneSide(bb, Color::BLACK);
 }
 
 // ---------------------------------------------------------------------------
@@ -897,6 +943,7 @@ static void evalKingDanger(const BitboardSet& bb,
     int sign = SIDE_SIGN[c];
     int enemy = 1 - c;
     Color color = COLORS[c];
+    Color enemyColor = COLORS[enemy];
 
     // Locate king.
     int kingIdx = pieceIndex(color, PieceType::KING);
@@ -914,7 +961,20 @@ static void evalKingDanger(const BitboardSet& bb,
     int idx = totalWeight < KING_DANGER_TABLE_SIZE
             ? totalWeight
             : KING_DANGER_TABLE_SIZE - 1;
-    mgScore -= sign * KING_DANGER_TABLE[idx];
+    int danger = KING_DANGER_TABLE[idx];
+
+    // Scale danger by opponent's non-pawn material fraction.
+    // When the opponent has fewer attacking pieces, the danger is reduced
+    // proportionally — prevents overvaluation of broken shields in endgames.
+    // Reference: https://www.chessprogramming.org/King_Safety#Scaling
+    int oppPhase =
+        popcount(bb.byPiece[pieceIndex(enemyColor, PieceType::KNIGHT)]) * PHASE_KNIGHT
+      + popcount(bb.byPiece[pieceIndex(enemyColor, PieceType::BISHOP)]) * PHASE_BISHOP
+      + popcount(bb.byPiece[pieceIndex(enemyColor, PieceType::ROOK)])   * PHASE_ROOK
+      + popcount(bb.byPiece[pieceIndex(enemyColor, PieceType::QUEEN)])  * PHASE_QUEEN;
+    danger = danger * oppPhase / STARTING_PHASE_ONE_SIDE;
+
+    mgScore -= sign * danger;
   }
 }
 

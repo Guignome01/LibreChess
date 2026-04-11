@@ -50,7 +50,7 @@ Header-only foundations shared by all core modules.
 
 - `Bitboard = uint64_t`, `Square = uint8_t`
 - Coordinate: `rankOf(sq)`, `fileOf(sq)`, `makeSquare(rank, file)`, `squareBB(sq)`
-- Bit ops: `popcount`, `lsb`, `popLsb`
+- Bit ops: `popcount`, `lsb`, `msb`, `popLsb`
 - Masks: file/rank, `DARK_SQUARES`, `LIGHT_SQUARES`
 - Shifts: compass rose (NORTH, SOUTH, EAST, WEST, diagonals)
 - Named squares: `SQ_E1`, `SQ_G1`, etc.

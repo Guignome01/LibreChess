@@ -513,6 +513,52 @@ Trace extractTrace(const BitboardSet& bb) {
   }
 
   // -----------------------------------------------------------------------
+  // Pawn storm (MG only).
+  // -----------------------------------------------------------------------
+  {
+    // Per-relRank coefficients for the PAWN_STORM[8] table.
+    float stormCoeff[PAWN_STORM_SIZE] = {};
+
+    auto stormSide = [&](int color, int sign) {
+      Bitboard kingBB_st = bb.byPiece[pieceIndex(static_cast<Color>(color), PieceType::KING)];
+      if (!kingBB_st) return;
+      Square kingSq = lsb(kingBB_st);
+      int kingFile = fileOf(kingSq);
+
+      if (kingFile >= 3 && kingFile <= 4) return;
+
+      int shieldFiles[3];
+      if (kingFile <= 2) {
+        shieldFiles[0] = 0; shieldFiles[1] = 1; shieldFiles[2] = 2;
+      } else {
+        shieldFiles[0] = 5; shieldFiles[1] = 6; shieldFiles[2] = 7;
+      }
+
+      int enemyColor = 1 - color;
+      Bitboard enemyPawns = bb.byPiece[pieceIndex(static_cast<Color>(enemyColor), PieceType::PAWN)];
+
+      for (int i = 0; i < 3; ++i) {
+        int f = shieldFiles[i];
+        Bitboard filePawns = enemyPawns & fileBB(f);
+        if (!filePawns) continue;
+
+        Square sq = (color == 0) ? lsb(filePawns) : msb(filePawns);
+        int rank = rankOf(sq);
+        int relRank = (color == 0) ? rank : (7 - rank);
+        stormCoeff[relRank] += sign;
+      }
+    };
+
+    stormSide(0, 1);
+    stormSide(1, -1);
+
+    for (int r = 0; r < PAWN_STORM_SIZE; ++r) {
+      if (stormCoeff[r] != 0.0f)
+        t.add(pIdx(&PAWN_STORM[r]), stormCoeff[r] * mgW);
+    }
+  }
+
+  // -----------------------------------------------------------------------
   // Space (separate MG/EG).
   // -----------------------------------------------------------------------
   {
@@ -596,7 +642,7 @@ Trace extractTrace(const BitboardSet& bb) {
   }
 
   // -----------------------------------------------------------------------
-  // King danger table (MG only).
+  // King danger table (MG only, scaled by opponent material).
   // -----------------------------------------------------------------------
   for (int c = 0; c < 2; ++c) {
     int sign = (c == 0) ? -1 : 1;
@@ -625,10 +671,25 @@ Trace extractTrace(const BitboardSet& bb) {
       }
     }
 
+    // Opponent material scaling — must match evaluation's integer arithmetic
+    // exactly: danger = KING_DANGER_TABLE[idx] * oppPhase / STARTING_PHASE_ONE_SIDE.
+    // Derive the coefficient from the truncated integer result to avoid
+    // float vs integer-division mismatch.
+    int oppPhase =
+        popcount(bb.byPiece[pieceIndex(static_cast<Color>(enemy), PieceType::KNIGHT)]) * PHASE_KNIGHT
+      + popcount(bb.byPiece[pieceIndex(static_cast<Color>(enemy), PieceType::BISHOP)]) * PHASE_BISHOP
+      + popcount(bb.byPiece[pieceIndex(static_cast<Color>(enemy), PieceType::ROOK)])   * PHASE_ROOK
+      + popcount(bb.byPiece[pieceIndex(static_cast<Color>(enemy), PieceType::QUEEN)])  * PHASE_QUEEN;
+
     int idx = (totalWeight < KING_DANGER_TABLE_SIZE)
             ? totalWeight
             : KING_DANGER_TABLE_SIZE - 1;
-    t.add(pIdx(&KING_DANGER_TABLE[idx]), static_cast<float>(sign) * mgW);
+    int dangerVal = KING_DANGER_TABLE[idx];
+    if (dangerVal != 0) {
+      int scaledDanger = dangerVal * oppPhase / STARTING_PHASE_ONE_SIDE;
+      float coeff = static_cast<float>(scaledDanger) / static_cast<float>(dangerVal);
+      t.add(pIdx(&KING_DANGER_TABLE[idx]), static_cast<float>(sign) * coeff * mgW);
+    }
   }
 
   return t;
@@ -708,6 +769,11 @@ const tuning::ScalarParam* tuning::scalarParams(int& count) {
     {"SHIELD_ADV_RANK3",        &SHIELD_ADV_RANK3,          -30,    0,  5},
     {"SHIELD_ADV_RANK4PLUS",    &SHIELD_ADV_RANK4PLUS,      -30,    0,  5},
     {"SHIELD_OPEN_FILE",        &SHIELD_OPEN_FILE,          -50,    0,  5},
+    // --- Pawn storm (6 active entries: relRank 2–5 meaningful) ---
+    {"STORM_RANK2",             &PAWN_STORM[2],             -40,    0,  5},
+    {"STORM_RANK3",             &PAWN_STORM[3],             -30,    0,  5},
+    {"STORM_RANK4",             &PAWN_STORM[4],             -20,    0,  5},
+    {"STORM_RANK5",             &PAWN_STORM[5],             -15,    0,  5},
     // --- King danger table (12) ---
     {"KD_TABLE_1",              &KING_DANGER_TABLE[1],        0,   20,  5},
     {"KD_TABLE_2",              &KING_DANGER_TABLE[2],        0,   30,  5},

@@ -152,6 +152,9 @@ int computeGamePhase(const BitboardSet& bb);
 // King danger table size (entries in KING_DANGER_TABLE[]).
 constexpr int KING_DANGER_TABLE_SIZE = 13;
 
+// Pawn storm table size (8 entries, indexed by relative rank 0–7).
+constexpr int PAWN_STORM_SIZE = 8;
+
 // Mobility table sizes (max possible attack count per piece type + 1).
 constexpr int MOBILITY_KNIGHT_SIZE =  9;
 constexpr int MOBILITY_BISHOP_SIZE = 14;

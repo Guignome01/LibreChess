@@ -47,8 +47,8 @@ All tuning metadata (descriptors, param externs, accessor API) lives in `lib/cor
 | Rook on 7th rank | Enemy king on back rank or enemy pawns on starting rank |
 | Rook behind passer | Tarrasch Rule, EG only |
 | Mobility | Nonlinear per-piece tables indexed by safe attack count (excludes friendly + enemy pawn attacks), computed from `AttackInfo` |
-| King safety | Pawn shield rank-indexed (`SHIELD_ADV_RANK3`, `SHIELD_ADV_RANK4PLUS`) |
-| King danger | Unified zone attack counting, nonlinear `KING_DANGER_TABLE[13]`, MG only |
+| King safety | Pawn shield (rank-indexed: `SHIELD_ADV_RANK3`, `SHIELD_ADV_RANK4PLUS`, `SHIELD_OPEN_FILE`) + pawn storm (`PAWN_STORM[8]` rank-indexed enemy advance penalty). Both MG only. |
+| King danger | Unified zone attack counting, nonlinear `KING_DANGER_TABLE[13]`, MG only. Scaled by opponent material fraction (`oppPhase / STARTING_PHASE_ONE_SIDE`) to prevent overvaluation in endgames. |
 | Knight outposts | MG/EG split |
 | Space | MG only (`SPACE_BONUS_MG`) |
 | Trapped pieces | Penalty for trapped bishops/rooks |
@@ -63,6 +63,8 @@ All tuning metadata (descriptors, param externs, accessor API) lives in `lib/cor
 - **Passed pawns cached in pawn hash** — `PawnEntry` stores `Bitboard passedPawns[2]` alongside MG/EG scores. `evalPawnStructure` builds the bitboards during its pawn loop and stores them in the hash. On pawn hash hit, bitboards are retrieved without re-scanning. Shared by `evalPassedPawnKingDist()` and `evalRookBehindPasser()`.
 - **Trapped pieces — 2D color-indexed trap arrays** — `BISHOP_TRAPS[2][4]` and `ROOK_TRAPS[2][2]` store per-color trap patterns. A single color loop handles both colors, using `pieceIndex(color, type)` for piece lookups. Bishop traps check own bishops blocked by enemy pawns; rook traps check own rooks hemmed by own king.
 - **King danger sign convention** — `evalKingDanger` uses the standard `SIDE_SIGN[c]` with `mgScore -= sign * penalty` (subtraction makes the penalty semantics explicit). Other eval terms use `mgScore += sign * bonus`.
+- **King safety architecture** — `evalKingSafety` computes both pawn shield and pawn storm in a single function, adding both for white and subtracting both for black. Shield evaluates defensive pawn positions near own king; storm evaluates enemy pawn advances toward own king. Both use the same shield-file selection via `selectShieldFiles()` (files a-c for kingside, f-h for queenside, skip center kings). Storm finds the most advanced enemy pawn per file (`lsb` for white defending, `msb` for black defending) and indexes `PAWN_STORM[relRank]`.
+- **King danger scaling** — `evalKingDanger` multiplies the danger table output by `oppPhase / STARTING_PHASE_ONE_SIDE` (opponent's non-pawn material phase weight / 12). This prevents overvaluation of broken pawn shields and zone attacks when the opponent lacks sufficient material to exploit them. CPW: "Even TSCP uses the pawn shield and pawn storm score, scaled by the opponent's material."
 - **Tempo bonus** — applied in search layer, not in eval.
 
 ## Testing

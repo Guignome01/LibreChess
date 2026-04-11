@@ -627,6 +627,7 @@ static void printResults() {
   printf("EVAL_CONST int SHIELD_ADV_RANK3     = %3d;\n", SHIELD_ADV_RANK3);
   printf("EVAL_CONST int SHIELD_ADV_RANK4PLUS = %3d;\n", SHIELD_ADV_RANK4PLUS);
   printf("EVAL_CONST int SHIELD_OPEN_FILE     = %3d;\n", SHIELD_OPEN_FILE);
+  printArray("int", "PAWN_STORM", PAWN_STORM, PAWN_STORM_SIZE);
   printArray("int", "KING_DANGER_TABLE", KING_DANGER_TABLE, KING_DANGER_TABLE_SIZE);
 
   // --- Passed pawn king proximity ---

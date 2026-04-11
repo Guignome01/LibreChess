@@ -172,8 +172,10 @@ extern int MOBILITY_QUEEN_MG[], MOBILITY_QUEEN_EG[];
 
 // King safety.
 extern int SHIELD_MISSING_PAWN, SHIELD_ADV_RANK3, SHIELD_ADV_RANK4PLUS, SHIELD_OPEN_FILE;
+extern int PAWN_STORM[8];
 extern int KING_DANGER_TABLE[13];
 extern const int KING_DANGER_WEIGHT[4];
+extern const int STARTING_PHASE_ONE_SIDE;
 
 // Space, king distance.
 extern int SPACE_BONUS_MG;
