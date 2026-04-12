@@ -1,9 +1,3 @@
-// Tuner files are always compiled with -DTUNING (see Makefile).
-// Self-define here so IntelliSense also sees the tuning-guarded externs.
-#ifndef TUNING
-#define TUNING
-#endif
-
 // ---------------------------------------------------------------------------
 // Tuning — Adam gradient-descent optimizer for evaluation parameters.
 //
@@ -12,9 +6,10 @@
 // the coefficients for every nonzero tunable parameter in one position.
 // The score is the dot product: score = Σ θ[i] × trace[i].coeff
 //
-// All parameters are linear in the evaluation function.  King danger table
-// entries are tuned directly (weights are constexpr), so analytical
-// gradients are exact.
+// All parameters are linear in the evaluation function.  Non-linear
+// dependencies (e.g. safe check → KING_SAFETY_TABLE S-curve) are linearized
+// at the operating point during trace extraction, so gradients are approximate
+// but accurate near current values.
 //
 // Workflow:
 //   1. Load corpus (EPD format with c9 "result" opcode)
@@ -22,7 +17,7 @@
 //   3. Extract traces for all positions (one-time, O(N))
 //   4. Find optimal sigmoid scaling constant K (ternary search)
 //   5. Adam gradient descent with float accumulators (~500 epochs)
-//   6. Round final params to int, clamp to bounds, output C++ code
+//   6. Round final params to int, output C++ code
 //
 // After tuning, copy the formatted block from stdout into
 // eval_params.h, replacing the existing EVAL_CONST definitions.
@@ -51,7 +46,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
-#include <numeric>
 #include <random>
 #include <string>
 #include <thread>
@@ -68,6 +62,13 @@ static constexpr double ADAM_LR    = 0.1;
 static constexpr double ADAM_BETA1 = 0.9;
 static constexpr double ADAM_BETA2 = 0.999;
 static constexpr double ADAM_EPS   = 1e-8;
+
+// Mobility table sizes — mirrors EVAL_FIXED values in eval_params.h.
+// (EVAL_FIXED = const under TUNING → internal linkage, not accessible here.)
+static constexpr int MOB_KNIGHT_SIZE = 9;
+static constexpr int MOB_BISHOP_SIZE = 14;
+static constexpr int MOB_ROOK_SIZE   = 15;
+static constexpr int MOB_QUEEN_SIZE  = 28;
 
 // L2 regularization strength for PST parameters.
 static constexpr double L2_LAMBDA = 1e-7;
@@ -137,10 +138,15 @@ static double sigmoid(double score, double K) {
 
 /// Compute the score from a trace using float parameter values.
 /// Includes the fixed bias (non-tunable contributions like pawn material).
-static double traceScore(const eval::Trace& t, const double* params) {
-  double score = static_cast<double>(t.bias);
+/// OCB scaling is applied post-hoc to match evaluatePosition()'s order:
+/// taper first, then scale by 3/4.  Pass applyOCB=false for integer-exact
+/// validation (which applies *3/4 as a separate integer step).
+static double traceScore(const eval::Trace& t, const double* params,
+                         bool applyOCB = true) {
+  double score = t.bias;
   for (const auto& e : t.entries)
-    score += params[e.idx] * static_cast<double>(e.coeff);
+    score += params[e.idx] * e.coeff;
+  if (applyOCB && t.hasOCB) score *= 0.75;
   return score;
 }
 
@@ -201,8 +207,8 @@ static double findOptimalK(const std::vector<eval::TrainingPosition>& positions,
 // Computes analytical gradient for a single parameter and compares against
 // central finite-difference approximation.  Catches chain-rule bugs in the
 // gradient computation before wasting time on training.
-//
-// Reference: https://www.chessprogramming.org/Texel%27s_Tuning_Method
+// Standard ML technique ("gradient checking") — not part of the Texel method
+// itself, but essential for verifying chain-rule correctness in the gradient.
 
 /// Compute the analytical gradient for a single parameter.
 static double analyticalGradient(
@@ -215,6 +221,7 @@ static double analyticalGradient(
     double sig = sigmoid(score, K);
     double factor = 2.0 * (sig - data[i].result)
                    * sig * (1.0 - sig) * (K * log(10.0) / 400.0);
+    if (data[i].trace.hasOCB) factor *= 0.75;
     for (const auto& e : data[i].trace.entries) {
       if (e.idx == paramIdx)
         grad += factor * e.coeff;
@@ -291,29 +298,9 @@ static std::vector<bool> buildPstFlags() {
   return isPst;
 }
 
-/// Collect ordered indices of KD_TABLE_1 .. KD_TABLE_12 for monotonicity
-/// enforcement.  Returns indices sorted by table slot (1..12).
-/// Reference: https://www.chessprogramming.org/King_Safety#Attacking_King_Zone
-static std::vector<int> buildKdTableIndices() {
-  int n = eval::tuning::paramCount();
-  std::vector<int> indices;
-  for (int i = 0; i < n; ++i) {
-    if (strncmp(eval::tuning::getName(i), "KD_TABLE_", 9) == 0)
-      indices.push_back(i);
-  }
-  // Indices are already in registry order (slot 1..12), but sort by slot
-  // number to be safe.
-  std::sort(indices.begin(), indices.end(), [](int a, int b) {
-    int slotA = atoi(eval::tuning::getName(a) + 9);
-    int slotB = atoi(eval::tuning::getName(b) + 9);
-    return slotA < slotB;
-  });
-  return indices;
-}
-
 static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
                          const std::vector<eval::TrainingPosition>& testSet,
-                         double& K, int maxEpochs) {
+                         double K, int maxEpochs) {
   const int N = static_cast<int>(trainSet.size());
   const int nParams = eval::tuning::paramCount();
   const int nThreads = std::max(1,
@@ -321,7 +308,6 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
   const int chunkSize = (N + nThreads - 1) / nThreads;
 
   std::vector<bool> isPst = buildPstFlags();
-  std::vector<int> kdIndices = buildKdTableIndices();
 
   // Float accumulators — accumulate Adam updates in double precision.
   // Parameters are only rounded to int at the very end after all epochs,
@@ -339,16 +325,10 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
   std::vector<std::vector<double>> threadGrads(nThreads,
       std::vector<double>(nParams, 0.0));
 
-  // --- K recalculation interval ---
-  // As parameters drift during training, the optimal sigmoid scaling
-  // constant K shifts.  Recalculate every 50 epochs.
-  // Reference: https://www.chessprogramming.org/Texel%27s_Tuning_Method
-  constexpr int K_RECALC_INTERVAL = 50;
-
   // --- Early stopping ---
   // Track best test MSE and stop if no improvement for 50 epochs.
   // Saves the best parameters (lowest test MSE).
-  // Reference: https://www.chessprogramming.org/Texel%27s_Tuning_Method
+  // Standard ML technique — prevents overfitting on ~960 parameters.
   constexpr int PATIENCE = 50;
   double bestTestMSE = 1e30;
   int epochsSinceImprove = 0;
@@ -365,12 +345,6 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
     // with Warm Restarts", 2017.
     double lr = ADAM_LR * std::max(0.01, 0.5 * (1.0 + cos(M_PI * epoch / maxEpochs)));
 
-    // --- K recalculation ---
-    if (epoch > 1 && (epoch % K_RECALC_INTERVAL) == 0) {
-      K = findOptimalK(trainSet, params.data());
-      fprintf(stderr, "  Recalculated K = %.6f at epoch %d\n", K, epoch);
-    }
-
     // ----- Compute gradient (multi-threaded) -----
     for (auto& g : threadGrads) std::fill(g.begin(), g.end(), 0.0);
 
@@ -384,6 +358,7 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
         double sig = sigmoid(score, K);
         double factor = 2.0 * (sig - trainSet[i].result)
                        * sig * (1.0 - sig) * (K * log(10.0) / 400.0);
+        if (trainSet[i].trace.hasOCB) factor *= 0.75;
         for (const auto& e : trainSet[i].trace.entries)
           grad[e.idx] += factor * e.coeff;
       }
@@ -419,30 +394,6 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
       params[i] -= lr * mHat / (sqrt(vHat) + ADAM_EPS);
     }
 
-    // --- King danger table monotonicity enforcement ---
-    // The king danger table must be non-decreasing: more attackers should
-    // never produce less danger.  After each Adam step, clamp any dip up
-    // to the previous slot's value.  TABLE[0] = 0 is fixed (not tuned).
-    // Reference: https://www.chessprogramming.org/King_Safety#Attacking_King_Zone
-    for (size_t k = 1; k < kdIndices.size(); ++k) {
-      if (params[kdIndices[k]] < params[kdIndices[k - 1]])
-        params[kdIndices[k]] = params[kdIndices[k - 1]];
-    }
-
-    // --- Per-epoch bounds clamping ---
-    // Without this, parameters drift outside [min, max] during training
-    // and only get clamped at the very end.  Combined with min=0 bounds,
-    // parameters that oscillate slightly negative accumulate Adam momentum
-    // toward 0 and get locked there by final-epoch clamping.  Per-epoch
-    // clamping keeps every parameter within its physical bounds at all
-    // times, preventing this convergence failure.
-    for (int i = 0; i < nParams; ++i) {
-      double lo = static_cast<double>(eval::tuning::getMin(i));
-      double hi = static_cast<double>(eval::tuning::getMax(i));
-      if (params[i] < lo) params[i] = lo;
-      if (params[i] > hi) params[i] = hi;
-    }
-
     // ----- Report + early stopping -----
     if (epoch == 1 || epoch % 5 == 0 || epoch == maxEpochs) {
       double trainErr = computeError(trainSet, K, params.data());
@@ -468,31 +419,11 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
   // Use the best parameters found (lowest test MSE).
   params = bestParams;
 
-  // ----- Finalize: round to int, clamp to bounds, write to registry -----
+  // ----- Finalize: round to int, write to registry -----
   for (int i = 0; i < nParams; ++i) {
     int rounded = static_cast<int>(std::round(params[i]));
-    rounded = std::max(rounded, eval::tuning::getMin(i));
-    rounded = std::min(rounded, eval::tuning::getMax(i));
     eval::tuning::setValue(i, rounded);
   }
-}
-
-// ===========================================================================
-// Results output
-// ===========================================================================
-
-/// Write tune.txt — machine-readable log of all tuned parameter values.
-static void writeTunedValues(const char* filename) {
-  FILE* f = fopen(filename, "w");
-  if (!f) {
-    fprintf(stderr, "Error: cannot write %s\n", filename);
-    return;
-  }
-  int n = eval::tuning::paramCount();
-  for (int i = 0; i < n; ++i)
-    fprintf(f, "%s=%d\n", eval::tuning::getName(i), eval::tuning::getValue(i));
-  fclose(f);
-  fprintf(stderr, "Wrote %s (%d params)\n", filename, n);
 }
 
 // ---------------------------------------------------------------------------
@@ -553,7 +484,6 @@ static void printResults() {
   printArray("MAT_ELEM", "MATERIAL_EG", MATERIAL_EG, 6);
 
   // --- PSTs ---
-  printf("\n// clang-format off\n");
 
   printf("\n// --- Midgame PSTs ---\n\n");
   printPST("PST_PAWN_MG", PST_PAWN_MG);     printf("\n");
@@ -571,21 +501,23 @@ static void printResults() {
   printPST("PST_QUEEN_EG", PST_QUEEN_EG);    printf("\n");
   printPST("PST_KING_EG", PST_KING_EG);
 
-  printf("\n// clang-format on\n");
-
   // --- Pawn structure ---
   printf("\n");
   printArray("int", "PASSED_RANK_BONUS_MG", PASSED_RANK_BONUS_MG, 8);
   printArray("int", "PASSED_RANK_BONUS_EG", PASSED_RANK_BONUS_EG, 8);
-  printf("EVAL_CONST int CONNECTED_PASSED_MG = %3d;\n", CONNECTED_PASSED_MG);
-  printf("EVAL_CONST int CONNECTED_PASSED_EG = %3d;\n", CONNECTED_PASSED_EG);
   printf("EVAL_CONST int ISOLATED_PENALTY_MG = %3d;\n", ISOLATED_PENALTY_MG);
   printf("EVAL_CONST int ISOLATED_PENALTY_EG = %3d;\n", ISOLATED_PENALTY_EG);
-  printf("EVAL_CONST int DOUBLED_PENALTY_MG  = %3d;\n", DOUBLED_PENALTY_MG);
   printf("EVAL_CONST int DOUBLED_PENALTY_EG  = %3d;\n", DOUBLED_PENALTY_EG);
   printf("EVAL_CONST int BACKWARD_PENALTY_MG = %3d;\n", BACKWARD_PENALTY_MG);
   printf("EVAL_CONST int BACKWARD_PENALTY_EG = %3d;\n", BACKWARD_PENALTY_EG);
+  printArray("int", "CONNECTED_BONUS_MG", CONNECTED_BONUS_MG, 8);
+  printArray("int", "CONNECTED_BONUS_EG", CONNECTED_BONUS_EG, 8);
+  printArray("int", "CANDIDATE_PASSED_MG", CANDIDATE_PASSED_MG, 8);
+  printArray("int", "CANDIDATE_PASSED_EG", CANDIDATE_PASSED_EG, 8);
   printf("EVAL_CONST int PROTECTED_PASSER_MG = %3d;\n", PROTECTED_PASSER_MG);
+  printf("EVAL_CONST int PROTECTED_PASSER_EG = %3d;\n", PROTECTED_PASSER_EG);
+  printf("EVAL_CONST int PASSER_OWN_KING_DIST_EG   = %3d;\n", PASSER_OWN_KING_DIST_EG);
+  printf("EVAL_CONST int PASSER_ENEMY_KING_DIST_EG =  %3d;\n", PASSER_ENEMY_KING_DIST_EG);
 
   // --- Piece bonuses ---
   printf("\n");
@@ -595,8 +527,8 @@ static void printResults() {
   printf("EVAL_CONST int BAD_BISHOP_EG  = %3d;\n", BAD_BISHOP_EG);
   printf("EVAL_CONST int OUTPOST_BONUS_MG = %3d;\n", OUTPOST_BONUS_MG);
   printf("EVAL_CONST int OUTPOST_BONUS_EG = %3d;\n", OUTPOST_BONUS_EG);
-  printf("EVAL_CONST int TRAPPED_BISHOP_PENALTY = %3d;\n", TRAPPED_BISHOP_PENALTY);
-  printf("EVAL_CONST int TRAPPED_ROOK_PENALTY   = %3d;\n", TRAPPED_ROOK_PENALTY);
+  printf("EVAL_CONST int BISHOP_OUTPOST_MG = %3d;\n", BISHOP_OUTPOST_MG);
+  printf("EVAL_CONST int BISHOP_OUTPOST_EG = %3d;\n", BISHOP_OUTPOST_EG);
 
   // --- Rook bonuses ---
   printf("\n");
@@ -610,34 +542,40 @@ static void printResults() {
   printf("EVAL_CONST int ROOK_BEHIND_ENEMY_PASSER_EG = %3d;\n", ROOK_BEHIND_ENEMY_PASSER_EG);
 
   // --- Mobility ---
-  printf("\n// clang-format off\n");
-  printArray("int", "MOBILITY_KNIGHT_MG", MOBILITY_KNIGHT_MG, MOBILITY_KNIGHT_SIZE);
-  printArray("int", "MOBILITY_KNIGHT_EG", MOBILITY_KNIGHT_EG, MOBILITY_KNIGHT_SIZE);
-  printArray("int", "MOBILITY_BISHOP_MG", MOBILITY_BISHOP_MG, MOBILITY_BISHOP_SIZE);
-  printArray("int", "MOBILITY_BISHOP_EG", MOBILITY_BISHOP_EG, MOBILITY_BISHOP_SIZE);
-  printArray("int", "MOBILITY_ROOK_MG",   MOBILITY_ROOK_MG,   MOBILITY_ROOK_SIZE);
-  printArray("int", "MOBILITY_ROOK_EG",   MOBILITY_ROOK_EG,   MOBILITY_ROOK_SIZE);
-  printArray("int", "MOBILITY_QUEEN_MG",  MOBILITY_QUEEN_MG,  MOBILITY_QUEEN_SIZE);
-  printArray("int", "MOBILITY_QUEEN_EG",  MOBILITY_QUEEN_EG,  MOBILITY_QUEEN_SIZE);
-  printf("// clang-format on\n");
+  printf("\n");
+  printArray("int", "MOB_KNIGHT_MG", MOB_KNIGHT_MG, MOB_KNIGHT_SIZE);
+  printArray("int", "MOB_KNIGHT_EG", MOB_KNIGHT_EG, MOB_KNIGHT_SIZE); printf("\n");
+  printArray("int", "MOB_BISHOP_MG", MOB_BISHOP_MG, MOB_BISHOP_SIZE);
+  printArray("int", "MOB_BISHOP_EG", MOB_BISHOP_EG, MOB_BISHOP_SIZE); printf("\n");
+  printArray("int", "MOB_ROOK_MG", MOB_ROOK_MG, MOB_ROOK_SIZE);
+  printArray("int", "MOB_ROOK_EG", MOB_ROOK_EG, MOB_ROOK_SIZE); printf("\n");
+  printArray("int", "MOB_QUEEN_MG", MOB_QUEEN_MG, MOB_QUEEN_SIZE);
+  printArray("int", "MOB_QUEEN_EG", MOB_QUEEN_EG, MOB_QUEEN_SIZE);
 
   // --- King safety ---
   printf("\n");
-  printf("EVAL_CONST int SHIELD_MISSING_PAWN  = %3d;\n", SHIELD_MISSING_PAWN);
-  printf("EVAL_CONST int SHIELD_ADV_RANK3     = %3d;\n", SHIELD_ADV_RANK3);
-  printf("EVAL_CONST int SHIELD_ADV_RANK4PLUS = %3d;\n", SHIELD_ADV_RANK4PLUS);
+  printArray("int", "SHIELD_RANK", SHIELD_RANK, 4);
   printf("EVAL_CONST int SHIELD_OPEN_FILE     = %3d;\n", SHIELD_OPEN_FILE);
-  printArray("int", "PAWN_STORM", PAWN_STORM, PAWN_STORM_SIZE);
-  printArray("int", "KING_DANGER_TABLE", KING_DANGER_TABLE, KING_DANGER_TABLE_SIZE);
+  printArray("int", "PAWN_STORM", PAWN_STORM, 8);
+  printf("EVAL_CONST int SAFE_CHECK_KNIGHT = %3d;\n", SAFE_CHECK_KNIGHT);
+  printf("EVAL_CONST int SAFE_CHECK_BISHOP = %3d;\n", SAFE_CHECK_BISHOP);
+  printf("EVAL_CONST int SAFE_CHECK_ROOK   = %3d;\n", SAFE_CHECK_ROOK);
+  printf("EVAL_CONST int SAFE_CHECK_QUEEN  = %3d;\n", SAFE_CHECK_QUEEN);
 
-  // --- Passed pawn king proximity ---
+  // --- Threats ---
   printf("\n");
-  printf("EVAL_CONST int PASSER_OWN_KING   = %3d;\n", PASSER_OWN_KING);
-  printf("EVAL_CONST int PASSER_ENEMY_KING = %3d;\n", PASSER_ENEMY_KING);
+  printf("EVAL_CONST int THREAT_BY_PAWN_MG  = %3d;\n", THREAT_BY_PAWN_MG);
+  printf("EVAL_CONST int THREAT_BY_PAWN_EG  = %3d;\n", THREAT_BY_PAWN_EG);
+  printf("EVAL_CONST int THREAT_BY_MINOR_MG = %3d;\n", THREAT_BY_MINOR_MG);
+  printf("EVAL_CONST int THREAT_BY_MINOR_EG = %3d;\n", THREAT_BY_MINOR_EG);
+  printf("EVAL_CONST int THREAT_BY_ROOK_MG  = %3d;\n", THREAT_BY_ROOK_MG);
+  printf("EVAL_CONST int THREAT_BY_ROOK_EG  = %3d;\n", THREAT_BY_ROOK_EG);
+  printf("EVAL_CONST int THREAT_HANGING_MG  = %3d;\n", THREAT_HANGING_MG);
+  printf("EVAL_CONST int THREAT_HANGING_EG  = %3d;\n", THREAT_HANGING_EG);
 
   // --- Space ---
   printf("\n");
-  printf("EVAL_CONST int SPACE_BONUS_MG = %3d;\n", SPACE_BONUS_MG);
+  printf("EVAL_CONST int SPACE_WEIGHT = %3d;\n", SPACE_WEIGHT);
 }
 
 // ===========================================================================
@@ -646,13 +584,17 @@ static void printResults() {
 
 int main(int argc, char* argv[]) {
   if (argc < 2) {
-    fprintf(stderr, "Usage: tune <corpus.epd> [epochs=500]\n");
+    fprintf(stderr, "Usage: tune <corpus.epd> [epochs=500] [K]\n");
+    fprintf(stderr, "  K: sigmoid scaling constant (if omitted, found via ternary search)\n");
     return 1;
   }
 
   int maxEpochs = 500;
   if (argc >= 3) maxEpochs = std::atoi(argv[2]);
   if (maxEpochs < 1) maxEpochs = 500;
+
+  double providedK = -1.0;
+  if (argc >= 4) providedK = std::atof(argv[3]);
 
   // Build name→index map for trace extraction.
   eval::buildParamMap();
@@ -702,9 +644,14 @@ int main(int argc, char* argv[]) {
       int evalScore = eval::evaluatePosition(rawEntries[i].bb);
       const auto& tp = (i < splitIdx) ? trainSet[i]
                                       : testSet[i - splitIdx];
-      double traceVal = traceScore(tp.trace, params.data());
-      int tracei = static_cast<int>(std::round(traceVal));
-      if (std::abs(evalScore - tracei) > 1) {
+      // Reconstruct the integer eval from the trace, matching the eval's
+      // truncation order: (1) taper via rounding to nearest integer
+      // (double precision is close enough that round() gives the correct
+      // integer from the distributed sum), (2) OCB *3/4 as integer.
+      double rawVal = traceScore(tp.trace, params.data(), false);
+      int tracei = static_cast<int>(std::lround(rawVal));
+      if (tp.trace.hasOCB) tracei = tracei * 3 / 4;
+      if (std::abs(evalScore - tracei) > 4) {
         if (mismatches < 10)
           fprintf(stderr,
                   "  MISMATCH pos %d: eval=%d trace=%d (diff=%d)\n",
@@ -728,14 +675,20 @@ int main(int argc, char* argv[]) {
           static_cast<int>(trainSet.size()),
           static_cast<int>(testSet.size()));
 
-  // Find optimal K.
-  fprintf(stderr, "Finding optimal K...\n");
+  // Find optimal K (or use provided value).
   // Initialize float param snapshot from registry defaults for K search.
   std::vector<double> initParams(eval::tuning::paramCount());
   for (int i = 0; i < eval::tuning::paramCount(); ++i)
     initParams[i] = static_cast<double>(eval::tuning::getValue(i));
-  double K = findOptimalK(trainSet, initParams.data());
-  fprintf(stderr, "Optimal K = %.6f\n", K);
+  double K;
+  if (providedK > 0.0) {
+    K = providedK;
+    fprintf(stderr, "Using provided K = %.6f\n", K);
+  } else {
+    fprintf(stderr, "Finding optimal K...\n");
+    K = findOptimalK(trainSet, initParams.data());
+    fprintf(stderr, "Optimal K = %.6f\n", K);
+  }
 
   // Validate analytical gradients before training.
   validateGradients(trainSet, initParams.data(),
@@ -764,7 +717,6 @@ int main(int argc, char* argv[]) {
           finalTestErr, initTestErr - finalTestErr);
 
   // Write results.
-  writeTunedValues("tune.txt");
   printResults();
 
   return 0;

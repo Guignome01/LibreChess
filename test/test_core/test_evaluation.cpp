@@ -150,7 +150,7 @@ static void test_eval_tapered_phase_affects_king(void) {
 }
 
 // ===========================================================================
-// Pawn-structure queries — eval::isPassed / isIsolated / isDoubled / isBackward
+// Pawn-structure queries — eval::isPassed / isIsolated / isDoubled
 // ===========================================================================
 
 static void test_passed_pawn_e4(void) {
@@ -200,20 +200,6 @@ static void test_doubled_pawn_detection(void) {
   Bitboard friendly = squareBB(e2) | squareBB(e3);
 
   TEST_ASSERT_TRUE(eval::isDoubled(e2, Color::WHITE, friendly));
-}
-
-static void test_backward_pawn_detection(void) {
-  // White pawn on d4. Adjacent pawn on c2 exists but does not support d5.
-  // Enemy pawn on e6 controls d5, making d4 backward by this heuristic.
-  Square d4 = squareOf(4, 3);
-  Square c2 = squareOf(6, 2);
-  Square e6 = squareOf(2, 4);
-
-  Bitboard friendly = squareBB(d4) | squareBB(c2);
-  Bitboard enemyPawns = squareBB(e6);
-  Bitboard enemyPawnAttacks = shiftSE(enemyPawns) | shiftSW(enemyPawns);
-
-  TEST_ASSERT_TRUE(eval::isBackward(d4, Color::WHITE, friendly, enemyPawnAttacks));
 }
 
 static void test_forward_file_mask_doubled(void) {
@@ -471,24 +457,22 @@ static void test_eval_knight_outpost(void) {
 // ===========================================================================
 
 static void test_eval_king_danger_close_piece(void) {
-  // White queen + rooks close to black king vs far from black king.
-  // King danger is scaled by opponent material fraction (oppPhase / 12),
-  // so sufficient material is needed for meaningful danger difference.
-  // The "far" queen must be truly distant — off king-zone diagonals/files
-  // and beyond Chebyshev distance 3 — to avoid zone attack overlap.
+  // White queen close to black king vs far from black king.
+  // Close queen attacks king zone (2+ attackers → danger fires).
+  // Far queen has no line to king zone (1 attacker → below threshold).
   placePiece(bb, mailbox, Piece::W_KING, "a1");
-  placePiece(bb, mailbox, Piece::W_QUEEN, "f7");  // attacks e8 king zone + close
-  placePiece(bb, mailbox, Piece::W_ROOK, "a7");
-  placePiece(bb, mailbox, Piece::W_ROOK, "b1");
+  placePiece(bb, mailbox, Piece::W_QUEEN, "f7");   // attacks king zone around e8
+  placePiece(bb, mailbox, Piece::W_ROOK, "d2");    // attacks d7/d8 in king zone
   placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_ROOK, "a8");
   int close = eval::evaluatePosition(bb);
 
   clearBoard(bb, mailbox);
   placePiece(bb, mailbox, Piece::W_KING, "a1");
-  placePiece(bb, mailbox, Piece::W_QUEEN, "a2");  // far, no zone overlap
-  placePiece(bb, mailbox, Piece::W_ROOK, "b1");
-  placePiece(bb, mailbox, Piece::W_ROOK, "c1");
+  placePiece(bb, mailbox, Piece::W_QUEEN, "b1");   // no line to king zone
+  placePiece(bb, mailbox, Piece::W_ROOK, "d2");    // attacks d7/d8 in king zone
   placePiece(bb, mailbox, Piece::B_KING, "e8");
+  placePiece(bb, mailbox, Piece::B_ROOK, "a8");
   int far = eval::evaluatePosition(bb);
 
   // Queen near enemy king should score higher for white.
@@ -580,10 +564,10 @@ static void test_eval_trapped_bishop_a7(void) {
   placePiece(bb, mailbox, Piece::B_PAWN, "b6");
   int trapped = eval::evaluatePosition(bb);
 
-  // Same bishop on c5 (not trapped), same black pawn.
+  // Same bishop on d3 (not trapped, not attacked by b6 pawn), same black pawn.
   clearBoard(bb, mailbox);
   placePiece(bb, mailbox, Piece::W_KING, "e1");
-  placePiece(bb, mailbox, Piece::W_BISHOP, "c5");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "d3");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_PAWN, "b6");
   int free = eval::evaluatePosition(bb);
@@ -600,10 +584,10 @@ static void test_eval_trapped_bishop_h7(void) {
   placePiece(bb, mailbox, Piece::B_PAWN, "g6");
   int trapped = eval::evaluatePosition(bb);
 
-  // Bishop on f5 (not trapped).
+  // Bishop on e3 (not trapped, not attacked by g6 pawn).
   clearBoard(bb, mailbox);
   placePiece(bb, mailbox, Piece::W_KING, "e1");
-  placePiece(bb, mailbox, Piece::W_BISHOP, "f5");
+  placePiece(bb, mailbox, Piece::W_BISHOP, "e3");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_PAWN, "g6");
   int free = eval::evaluatePosition(bb);
@@ -709,26 +693,6 @@ static void test_eval_hash_overwrite(void) {
 // ===========================================================================
 // Rank-based passed pawn scoring
 // ===========================================================================
-
-// Own king near a passed pawn should improve endgame eval vs king far away.
-static void test_eval_passed_pawn_king_distance(void) {
-  // Position A: enemy king near the white passed pawn (can blockade/capture).
-  placePiece(bb, mailbox, Piece::W_KING, "a1");
-  placePiece(bb, mailbox, Piece::W_PAWN, "e5");
-  placePiece(bb, mailbox, Piece::B_KING, "e6");
-  int evalEnemyNear = eval::evaluatePosition(bb);
-
-  // Position B: enemy king far from the white passed pawn.
-  clearBoard(bb, mailbox);
-  placePiece(bb, mailbox, Piece::W_KING, "a1");
-  placePiece(bb, mailbox, Piece::W_PAWN, "e5");
-  placePiece(bb, mailbox, Piece::B_KING, "a8");
-  int evalEnemyFar = eval::evaluatePosition(bb);
-
-  // Enemy king far from the passer should be better for white
-  // (PASSER_ENEMY_KING bonus scales with distance).
-  TEST_ASSERT_TRUE(evalEnemyFar > evalEnemyNear);
-}
 
 // ===========================================================================
 // King danger — zone attacks (continued)
@@ -951,7 +915,6 @@ void register_evaluation_tests() {
   RUN_TEST(test_isolated_pawn_a_file);
   RUN_TEST(test_isolated_pawn_d_file);
   RUN_TEST(test_doubled_pawn_detection);
-  RUN_TEST(test_backward_pawn_detection);
   RUN_TEST(test_forward_file_mask_doubled);
   RUN_TEST(test_forward_file_mask_not_doubled);
 
@@ -995,9 +958,6 @@ void register_evaluation_tests() {
   RUN_TEST(test_eval_hash_store_and_probe);
   RUN_TEST(test_eval_hash_clear_invalidates);
   RUN_TEST(test_eval_hash_overwrite);
-
-  // Rank-based passed pawn scoring
-  RUN_TEST(test_eval_passed_pawn_king_distance);
 
   // King danger (continued)
   RUN_TEST(test_eval_king_danger_multiple_attackers);

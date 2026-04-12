@@ -42,7 +42,8 @@ struct TraceEntry {
 
 struct Trace {
   std::vector<TraceEntry> entries;
-  float bias = 0.0f;  // Fixed (non-tunable) score offset (e.g. pawn material).
+  float bias = 0.0f;   // Fixed (non-tunable) score offset (e.g. pawn material).
+  bool  hasOCB = false; // Opposite-color bishop scaling (applied post-hoc).
 
   void add(int idx, float coeff) {
     if (idx < 0 || coeff == 0.0f) return;
@@ -87,16 +88,6 @@ namespace tuning {
 struct ScalarParam {
   const char* name;
   int* ptr;
-  int min, max, step;
-};
-
-/// Nonlinear mobility table pair (MG + EG).  Entry [0] is always fixed at 0.
-struct MobilityTableDef {
-  const char* prefix;   // e.g. "MOB_KNIGHT"
-  int* mgData;
-  int* egData;
-  int size;             // table length (= max mobility + 1)
-  int min, max, step;   // tuning bounds for entries [1..size-1]
 };
 
 /// Piece-square table descriptor.
@@ -104,12 +95,10 @@ struct PstDef {
   const char* prefix;   // e.g. "PST_PAWN_MG"
   int* data;
   bool isPawn;          // skip rank-1 and rank-8 squares
-  int min, max, step;
 };
 
 // Parameter descriptor getters — return static arrays of descriptors.
 const ScalarParam* scalarParams(int& count);
-const MobilityTableDef* mobilityDefs(int& count);
 const PstDef* pstDefs(int& count);
 
 // Index-based accessor functions — thin wrappers around the runtime registry.
@@ -118,9 +107,6 @@ const char* getName(int idx);
 int getValue(int idx);
 void setValue(int idx, int val);
 int getDefault(int idx);
-int getMin(int idx);
-int getMax(int idx);
-int getStep(int idx);
 
 }  // namespace tuning
 
@@ -148,11 +134,13 @@ extern int PST_ROOK_EG[64],   PST_QUEEN_EG[64],   PST_KING_EG[64];
 extern int PASSED_RANK_BONUS_MG[8], PASSED_RANK_BONUS_EG[8];
 
 // Pawn structure (separate MG/EG).
-extern int CONNECTED_PASSED_MG, CONNECTED_PASSED_EG;
 extern int ISOLATED_PENALTY_MG, ISOLATED_PENALTY_EG;
-extern int DOUBLED_PENALTY_MG, DOUBLED_PENALTY_EG;
+extern int DOUBLED_PENALTY_EG;
 extern int BACKWARD_PENALTY_MG, BACKWARD_PENALTY_EG;
-extern int PROTECTED_PASSER_MG;
+extern int CONNECTED_BONUS_MG[8], CONNECTED_BONUS_EG[8];
+extern int CANDIDATE_PASSED_MG[8], CANDIDATE_PASSED_EG[8];
+extern int PROTECTED_PASSER_MG, PROTECTED_PASSER_EG;
+extern int PASSER_OWN_KING_DIST_EG, PASSER_ENEMY_KING_DIST_EG;
 
 // Piece bonuses.
 extern int BISHOP_PAIR_MG, BISHOP_PAIR_EG;
@@ -162,27 +150,27 @@ extern int ROOK_7TH_MG, ROOK_7TH_EG;
 extern int ROOK_BEHIND_OWN_PASSER_EG, ROOK_BEHIND_ENEMY_PASSER_EG;
 extern int BAD_BISHOP_MG, BAD_BISHOP_EG;
 extern int OUTPOST_BONUS_MG, OUTPOST_BONUS_EG;
-extern int TRAPPED_BISHOP_PENALTY, TRAPPED_ROOK_PENALTY;
+extern int BISHOP_OUTPOST_MG, BISHOP_OUTPOST_EG;
 
-// Mobility — nonlinear tables indexed by safe attack count.
-extern int MOBILITY_KNIGHT_MG[], MOBILITY_KNIGHT_EG[];
-extern int MOBILITY_BISHOP_MG[], MOBILITY_BISHOP_EG[];
-extern int MOBILITY_ROOK_MG[], MOBILITY_ROOK_EG[];
-extern int MOBILITY_QUEEN_MG[], MOBILITY_QUEEN_EG[];
+// Threats.
+extern int THREAT_BY_PAWN_MG, THREAT_BY_PAWN_EG;
+extern int THREAT_BY_MINOR_MG, THREAT_BY_MINOR_EG;
+extern int THREAT_BY_ROOK_MG, THREAT_BY_ROOK_EG;
+extern int THREAT_HANGING_MG, THREAT_HANGING_EG;
+
+// Mobility — nonlinear lookup tables.
+extern int MOB_KNIGHT_MG[9],  MOB_KNIGHT_EG[9];
+extern int MOB_BISHOP_MG[14], MOB_BISHOP_EG[14];
+extern int MOB_ROOK_MG[15],   MOB_ROOK_EG[15];
+extern int MOB_QUEEN_MG[28],  MOB_QUEEN_EG[28];
 
 // King safety.
-extern int SHIELD_MISSING_PAWN, SHIELD_ADV_RANK3, SHIELD_ADV_RANK4PLUS, SHIELD_OPEN_FILE;
+extern int SHIELD_RANK[4], SHIELD_OPEN_FILE;
 extern int PAWN_STORM[8];
-extern int KING_DANGER_TABLE[13];
-extern const int KING_DANGER_WEIGHT[4];
-extern const int STARTING_PHASE_ONE_SIDE;
+extern int SAFE_CHECK_KNIGHT, SAFE_CHECK_BISHOP, SAFE_CHECK_ROOK, SAFE_CHECK_QUEEN;
 
-// Space, king distance.
-extern int SPACE_BONUS_MG;
-extern int PASSER_OWN_KING, PASSER_ENEMY_KING;
-
-// Non-tunable constants.
-extern const Bitboard WHITE_SPACE_ZONE, BLACK_SPACE_ZONE;
+// Space.
+extern int SPACE_WEIGHT;
 
 }  // namespace eval
 }  // namespace LibreChess

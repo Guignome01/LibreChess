@@ -9,11 +9,9 @@ void tearDown(void) {}
 
 // Registration functions defined in other translation units
 void register_timing_tests();
-void register_regression_tests();
 
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   register_timing_tests();
-  register_regression_tests();
   return UNITY_END();
 }

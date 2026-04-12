@@ -13,6 +13,10 @@
 #include "hash_table.h"
 
 namespace LibreChess {
+
+// Forward declaration — avoids #include "attacks.h" in the eval header.
+namespace attacks { struct AttackInfo; }
+
 namespace eval {
 
 // ---------------------------------------------------------------------------
@@ -124,7 +128,27 @@ int materialValue(PieceType pt);
 bool isPassed(Square sq, Color color, Bitboard enemyPawns);
 bool isIsolated(Square sq, Bitboard friendlyPawns);
 bool isDoubled(Square sq, Color color, Bitboard friendlyPawns);
-bool isBackward(Square sq, Color color, Bitboard friendlyPawns, Bitboard enemyPawnAttacks);
+bool isBackward(Square sq, Color color, Bitboard friendlyPawns,
+                Bitboard enemyPawns);
+
+// Tempo bonus applied by search (sideTomove * tempoBonus).
+// Accessor avoids exposing eval_params.h (which has TUNING ODR constraints).
+int tempoBonus();
+
+// King danger table lookup — clamps weight to [0, KING_SAFETY_TABLE_SIZE-1]
+// and returns the corresponding penalty.  Used by trace extraction to add the
+// non-tunable S-curve penalty to bias without including eval_params.h.
+int kingDangerScore(int weight);
+
+// Chebyshev distance (king distance metric) between two squares.
+// Used by passed pawn king proximity evaluation.
+inline int chebyshevDistance(Square a, Square b) {
+  int dr = rankOf(a) - rankOf(b);
+  int df = fileOf(a) - fileOf(b);
+  if (dr < 0) dr = -dr;
+  if (df < 0) df = -df;
+  return dr > df ? dr : df;
+}
 
 // ---------------------------------------------------------------------------
 // Evaluation Constants
@@ -149,20 +173,60 @@ constexpr int PHASE_WEIGHT[] = {0, 0, PHASE_KNIGHT, PHASE_BISHOP,
 // phase accumulator in Position to avoid 4 popcounts per eval.
 int computeGamePhase(const BitboardSet& bb);
 
-// King danger table size (entries in KING_DANGER_TABLE[]).
-constexpr int KING_DANGER_TABLE_SIZE = 13;
+// King safety table size (entries in KING_SAFETY_TABLE[]).
+constexpr int KING_SAFETY_TABLE_SIZE = 100;
 
-// Pawn storm table size (8 entries, indexed by relative rank 0–7).
-constexpr int PAWN_STORM_SIZE = 8;
+// ---------------------------------------------------------------------------
+// Feature extraction helpers — shared between evaluation and trace.
+//
+// Each function computes intermediate values for an eval term without
+// applying parameter weights or accumulating scores.  This eliminates
+// logic duplication between evaluatePosition() (which computes a scalar)
+// and extractTrace() (which extracts gradient coefficients).
+//
+// All functions are per-side: `c` is the color index (0=WHITE, 1=BLACK).
+// ---------------------------------------------------------------------------
 
-// Mobility table sizes (max possible attack count per piece type + 1).
-constexpr int MOBILITY_KNIGHT_SIZE =  9;
-constexpr int MOBILITY_BISHOP_SIZE = 14;
-constexpr int MOBILITY_ROOK_SIZE   = 15;
-constexpr int MOBILITY_QUEEN_SIZE  = 28;
+// Threat counts for one side.
+struct ThreatCounts {
+  int byPawn;    // pawn attacks on enemy minors/rooks/queens
+  int byMinor;   // minor attacks on enemy rooks/queens
+  int byRook;    // rook attacks on enemy queens
+  int hanging;   // attacked enemy pieces with no defender
+};
+ThreatCounts computeThreats(const BitboardSet& bb,
+                            const attacks::AttackInfo& info, int c);
 
-// Chebyshev (king) distance between two LERF squares.
-int chebyshevDist(Square a, Square b);
+// Safe mobility counts for one side (clamped to table bounds).
+struct MobilityCounts {
+  int knight, bishop, rook, queen;
+};
+MobilityCounts computeMobility(const BitboardSet& bb,
+                               const attacks::AttackInfo& info, int c);
+
+// King danger intermediate values for one side (the side being attacked).
+struct KingDangerInfo {
+  int attackWeight;
+  int attackerCount;
+  bool hasQueen;
+  bool knightSafeCheck, bishopSafeCheck, rookSafeCheck, queenSafeCheck;
+};
+KingDangerInfo computeKingDanger(const BitboardSet& bb,
+                                 const attacks::AttackInfo& info, int c);
+
+// Space intermediate values for one side.
+struct SpaceInfo {
+  int bonus;   // safe squares + behind-pawn double count
+  int weight;  // pieceCount - 2*openFiles, clamped >= 0
+};
+SpaceInfo computeSpace(const BitboardSet& bb, int c, int openFiles);
+
+// Count open files (files with no pawns at all).
+int countOpenFiles(const BitboardSet& bb);
+
+// Outpost detection: tests whether a piece on `sq` is an outpost for `c`.
+bool isOutpostSquare(Square sq, int c, Bitboard friendlyPawnAtk,
+                     Bitboard enemyPawns);
 
 }  // namespace eval
 }  // namespace LibreChess

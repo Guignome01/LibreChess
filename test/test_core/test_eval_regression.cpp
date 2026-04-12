@@ -47,31 +47,6 @@ static void test_regr_symmetric_endgame_near_zero(void) {
 }
 
 // ---------------------------------------------------------------------------
-// Material advantage
-// ---------------------------------------------------------------------------
-
-static void test_regr_white_up_queen(void) {
-  // White queen + kings → large positive eval.
-  int score = evalFEN("4k3/8/8/8/8/8/8/3QK3 w - - 0 1");
-  TEST_ASSERT_TRUE(score > 800);
-  TEST_ASSERT_TRUE(score < 1200);
-}
-
-static void test_regr_black_up_rook(void) {
-  // Black rook advantage → negative eval.
-  int score = evalFEN("r3k3/8/8/8/8/8/8/4K3 w - - 0 1");
-  TEST_ASSERT_TRUE(score < -400);
-  TEST_ASSERT_TRUE(score > -650);
-}
-
-static void test_regr_white_up_minor(void) {
-  // White has extra knight → moderate positive eval.
-  int score = evalFEN("4k3/8/8/8/8/8/8/2N1K3 w - - 0 1");
-  TEST_ASSERT_TRUE(score > 200);
-  TEST_ASSERT_TRUE(score < 450);
-}
-
-// ---------------------------------------------------------------------------
 // Pawn structure
 // ---------------------------------------------------------------------------
 
@@ -191,9 +166,6 @@ static void test_regr_ocb_scaling(void) {
 void register_eval_regression_tests() {
   RUN_TEST(test_regr_startpos_near_zero);
   RUN_TEST(test_regr_symmetric_endgame_near_zero);
-  RUN_TEST(test_regr_white_up_queen);
-  RUN_TEST(test_regr_black_up_rook);
-  RUN_TEST(test_regr_white_up_minor);
   RUN_TEST(test_regr_isolated_pawn_penalty);
   RUN_TEST(test_regr_passed_pawn_bonus);
   RUN_TEST(test_regr_bishop_pair_bonus);

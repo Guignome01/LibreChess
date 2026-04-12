@@ -21,38 +21,48 @@ Tapered evaluation returning centipawns (`int`), white-relative. Interpolates MG
 - `computeMaterial(bb)` — white-relative material balance
 - `materialValue(PieceType)` — single piece centipawn value (king = 20000 sentinel)
 - `computeGamePhase(bb)` — N=1, B=1, R=2, Q=4; max 24
-- `chebyshevDist(a, b)` — Chebyshev (king) distance between two LERF squares
+
+**Feature extraction helpers** — shared between `evaluatePosition()` and `extractTrace()`:
+- `computeThreats(bb, info, c) → ThreatCounts` — pawn/minor/rook/hanging counts
+- `computeMobility(bb, info, c) → MobilityCounts` — knight/bishop/rook/queen safe move counts (clamped to table bounds)
+- `computeKingDanger(bb, info, c) → KingDangerInfo` — attacker weight/count, safe check booleans
+- `computeSpace(bb, c, openFiles) → SpaceInfo` — bonus + weight intermediate values
+- `countOpenFiles(bb) → int` — files with no pawns at all
+- `isOutpostSquare(sq, c, friendlyPawnAtk, enemyPawns) → bool` — outpost detection (promoted from file-static)
+
+Each eval function (`evalThreats`, `evalMobility`, `evalKingDanger`, `evalSpace`) calls its compute helper, then applies parameter weights to accumulate scores. `extractTrace()` calls the same helpers, then emits gradient coefficients.  This eliminates ~200 lines of duplicated intermediate computation.
+
+**Accessors** — `tempoBonus()` returns `TEMPO_BONUS`, `kingDangerScore(weight)` clamps and looks up `KING_SAFETY_TABLE[weight]`.  Both avoid exposing `eval_params.h` (prevents TUNING ODR violations when other TUs need these values).  `kingDangerScore()` is used by trace extraction to add the non-tunable S-curve penalty to bias.
 
 **Tuning isolation** — evaluation.h has zero `#ifdef TUNING`. evaluation.cpp has two minimal `#ifdef TUNING` regions:
 1. **Data definitions** — TUNING: PST pointer tables for direct computation from mutable params. Production: `static constexpr PSQT_MG/EG[12][64]`.
 2. **pieceSquareMGEG** — TUNING: computes `MATERIAL[type] + PST[type][sq]` on each call (no caching). Production: reads constexpr PSQT.
 
-All tuning metadata (descriptors, param externs, accessor API) lives in `lib/core/src/trace.h/cpp` (`#ifdef TUNING` — compiles to nothing in production). EVAL_FIXED extern linkage declarations live in `eval_params.h`.
+All tuning metadata (descriptors, param externs, accessor API) lives in `lib/core/src/trace.h/cpp` (`#ifdef TUNING` — compiles to nothing in production).  Only `evaluation.cpp` includes `eval_params.h` (EVAL_CONST vars have external linkage under TUNING — exactly one definition per program).  EVAL_FIXED params have `const` → internal linkage → inaccessible via extern from other TUs.
 
 **Hash tables** (both inherit `HashTableBase` from `hash_table.h`):
-- `PawnHashTable` — caches pawn structure MG/EG + `passedPawns[2]` bitboards, keyed by `computePawnHash()`. Default 256 entries × 24B = 6 KiB. ~92%+ hit rate. Passed pawn bitboards are cached to avoid re-scanning pawns for king distance and rook-behind-passer evaluation.
+- `PawnHashTable` — caches pawn structure MG/EG + `passedPawns[2]` bitboards, keyed by `computePawnHash()`. Default 256 entries × 24B = 6 KiB. ~92%+ hit rate. Passed pawn bitboards are cached to avoid re-scanning pawns for rook-behind-passer evaluation.
 - `EvalHashTable` — caches full evaluation keyed by position Zobrist hash. Default 1024 entries × 4B = 4 KiB. Compact `EvalEntry` layout: `uint16_t key` + `int16_t score` = 4B. The 16-bit key combined with the index mask provides ~26 effective bits of collision resistance — sufficient for a soft cache.
 
 ## Evaluation Terms
 
 | Category | Terms |
 |----------|-------|
-| Material | `MATERIAL[]` (MG), `MATERIAL_EG[]` (EG), pawn MG fixed at 100cp |
-| PSTs | Per-piece-type MG/EG tables, pre-combined into `PSQT_MG/EG[12][64]` (material + PST + color sign) |
-| Pawn structure | Passed (rank-based exponential `PASSED_RANK_BONUS_MG/EG[8]`), isolated, doubled, backward, connected passers, protected passer (MG only) |
-| Passed pawn king dist | EG only, not pawn-hashed: own king proximity bonus, enemy king proximity penalty |
+| Material | `MATERIAL[]` (MG), `MATERIAL_EG[]` (EG), pawn pinned at 100cp (excluded from tuning to prevent K/param scale degeneracy). Starting values: CPW Simplified Evaluation Function (Michniewski). |
+| PSTs | Per-piece-type MG/EG tables, pre-combined into `PSQT_MG/EG[12][64]` (material + PST + color sign). MG tables: CPW Michniewski (LERF-converted). EG tables: king from CPW, others zeroed (tuner discovers them). |
+| Pawn structure | Passed (rank-based exponential `PASSED_RANK_BONUS_MG/EG[8]`), isolated, doubled (EG only), backward (not isolated, stop square enemy-controlled), connected (chain/phalanx, rank-indexed), candidate passer (helpers ≥ sentries), protected passer (passed + own-pawn-defended) |
+| Passed pawn king proximity | Chebyshev distance to own/enemy king, EG only, not cached in pawn hash |
 | Bishop pair | MG/EG bonus |
 | Bad bishop | Penalty per own pawn on same color complex (MG/EG) |
 | Rook on open/semi-open | MG/EG split |
 | Rook on 7th rank | Enemy king on back rank or enemy pawns on starting rank |
 | Rook behind passer | Tarrasch Rule, EG only |
-| Mobility | Nonlinear per-piece tables indexed by safe attack count (excludes friendly + enemy pawn attacks), computed from `AttackInfo` |
-| King safety | Pawn shield (rank-indexed: `SHIELD_ADV_RANK3`, `SHIELD_ADV_RANK4PLUS`, `SHIELD_OPEN_FILE`) + pawn storm (`PAWN_STORM[8]` rank-indexed enemy advance penalty). Both MG only. |
-| King danger | Unified zone attack counting, nonlinear `KING_DANGER_TABLE[13]`, MG only. Scaled by opponent material fraction (`oppPhase / STARTING_PHASE_ONE_SIDE`) to prevent overvaluation in endgames. |
-| Knight outposts | MG/EG split |
-| Space | MG only (`SPACE_BONUS_MG`) |
-| Trapped pieces | Penalty for trapped bishops/rooks |
-
+| Mobility | Nonlinear per-piece lookup tables (`MOB_KNIGHT_MG/EG[9]`, `MOB_BISHOP_MG/EG[14]`, `MOB_ROOK_MG/EG[15]`, `MOB_QUEEN_MG/EG[28]`), indexed by safe attack count (excludes friendly + enemy pawn attacks), computed from `AttackInfo`. Clamped to table bounds. |
+| Threats | Four categories using `AttackInfo`: ThreatByPawn (pawn attacks enemy minor/rook/queen), ThreatByMinor (minor attacks enemy rook/queen), ThreatByRook (rook attacks enemy queen), Hanging (attacked & not defended). MG/EG split. |
+| King safety | Pawn shield: rank-indexed `SHIELD_RANK[4]` (home/1up/2up/missing) + open file penalty per shield file. Pawn storm: `PAWN_STORM[8]` rank-indexed penalty for close enemy pawns on shield files. |
+| King danger | Per-piece zone attack counting (individual piece iteration, not binary per-type), attacker threshold gate (≥2 attackers AND queen), safe check bonuses (N/B/R/Q), nonlinear `KING_SAFETY_TABLE[100]` (S-curve, capped 500cp), MG only |
+| Outposts | Knight outposts (MG/EG, center bonus) + bishop outposts (enemy half only, MG/EG) |
+| Space | Stockfish-style: safe squares on c-f files, ranks 2-4 (white) / 5-7 (black), behind-own-pawn double-counted. Scaled by `SPACE_WEIGHT * bonus * weight² / 16` where weight = piece_count - 2*open_files. MG only. |
 | OCB scaling | Opposite-color bishop scaling (3/4), EG only, phase ≤ 6. Constants are internal to evaluation.cpp |
 
 ## Key Patterns
@@ -60,12 +70,9 @@ All tuning metadata (descriptors, param externs, accessor API) lives in `lib/cor
 - **Color-parameterized loops**: `for (int c = 0; c < 2; ++c)` with file-scope `SIDE_SIGN[c]` and `COLORS[c]` constexpr lookup tables (anonymous namespace).  `SIDE_SIGN[] = {1, -1}` maps color index to white-relative sign; `COLORS[] = {Color::WHITE, Color::BLACK}` maps index to enum.  All bilateral eval terms use these — never duplicate white/black code or use raw ternaries for sign/color.
 - **Flat PSQT lookup** — `PSQT_MG/EG[12][64]` combine material + PST + color sign. Production: `static constexpr` arrays in rodata via macro-based aggregate initializers (`PSQT_R64_`, `PSQT_N64_`); `pieceSquareMGEG()` reads directly. TUNING: no cached tables — `pieceSquareMGEG()` computes from mutable eval params via `PST_MG_PTRS/PST_EG_PTRS[6]` pointer tables, avoiding cache invalidation.
 - **Pawn-structure masks** — `static constexpr PawnMasks` struct in anonymous namespace, containing `passed[64]` and `forward[64]` arrays (white-only, placed in .rodata; black derived via `byteSwap64(mask[sq^56])`). `adjacentFilesMask()` inline for isolated detection (also reused by `isOutpostSquare`).
-- **Passed pawns cached in pawn hash** — `PawnEntry` stores `Bitboard passedPawns[2]` alongside MG/EG scores. `evalPawnStructure` builds the bitboards during its pawn loop and stores them in the hash. On pawn hash hit, bitboards are retrieved without re-scanning. Shared by `evalPassedPawnKingDist()` and `evalRookBehindPasser()`.
-- **Trapped pieces — 2D color-indexed trap arrays** — `BISHOP_TRAPS[2][4]` and `ROOK_TRAPS[2][2]` store per-color trap patterns. A single color loop handles both colors, using `pieceIndex(color, type)` for piece lookups. Bishop traps check own bishops blocked by enemy pawns; rook traps check own rooks hemmed by own king.
+- **Passed pawns cached in pawn hash** — `PawnEntry` stores `Bitboard passedPawns[2]` alongside MG/EG scores. `evalPawnStructure` builds the bitboards during its pawn loop and stores them in the hash. On pawn hash hit, bitboards are retrieved without re-scanning. Used by `evalRookBehindPasser()` and `evalPassedPawnKingDist()`. All pawn structure terms (passed, isolated, doubled, backward, connected, candidate, protected passer) are cached. King proximity is NOT cached (depends on king positions).
 - **King danger sign convention** — `evalKingDanger` uses the standard `SIDE_SIGN[c]` with `mgScore -= sign * penalty` (subtraction makes the penalty semantics explicit). Other eval terms use `mgScore += sign * bonus`.
-- **King safety architecture** — `evalKingSafety` computes both pawn shield and pawn storm in a single function, adding both for white and subtracting both for black. Shield evaluates defensive pawn positions near own king; storm evaluates enemy pawn advances toward own king. Both use the same shield-file selection via `selectShieldFiles()` (files a-c for kingside, f-h for queenside, skip center kings). Storm finds the most advanced enemy pawn per file (`lsb` for white defending, `msb` for black defending) and indexes `PAWN_STORM[relRank]`.
-- **King danger scaling** — `evalKingDanger` multiplies the danger table output by `oppPhase / STARTING_PHASE_ONE_SIDE` (opponent's non-pawn material phase weight / 12). This prevents overvaluation of broken pawn shields and zone attacks when the opponent lacks sufficient material to exploit them. CPW: "Even TSCP uses the pawn shield and pawn storm score, scaled by the opponent's material."
-- **Tempo bonus** — applied in search layer, not in eval.
+- **Tempo bonus** — `TEMPO_BONUS` defined in `eval_params.h` (EVAL_CONST, tunable), applied in search layer's `evaluate()` function (where STM is known), not in `evaluatePosition()`. Not in trace extraction (extractTrace has no STM context), so not Texel-tunable — optimize via SPRT.
 
 ## Testing
 

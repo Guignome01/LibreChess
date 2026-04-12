@@ -16,7 +16,7 @@ Detailed API, design decisions, and patterns for each module live in dedicated f
 | File | Covers |
 |------|--------|
 | `position.instructions.md` | `Position` — state, move execution, game-end detection, incremental tracking |
-| `evaluation.instructions.md` | `eval` — tapered evaluation, PSTs, pawn hash, eval hash |
+| `evaluation.instructions.md` | `eval` — tapered evaluation, PSTs, pawn hash, eval hash, shared feature extraction helpers |
 | `movegen.instructions.md` | `movegen` — staged generation, LegalityContext, pin-aware filtering |
 | `attacks.instructions.md` | `attacks` — leaper tables, HQ sliders, AttackInfo, SEE |
 | `notation.instructions.md` | `notation` — SAN/LAN/coordinate conversion |

@@ -261,7 +261,7 @@ int evaluate(const Position& pos, SearchState& state) {
   int score = eval::evaluatePosition(pos.bitboards(), pos.mgPST(), pos.egPST(),
                                      pos.phase(), state.pawnHash);
   int stm = (pos.sideToMove() == Color::WHITE) ? score : -score;
-  int result = stm + TEMPO_BONUS;
+  int result = stm + eval::tempoBonus();
 
   // --- Eval hash store ---
   if (state.evalHash) {

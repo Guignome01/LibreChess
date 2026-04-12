@@ -20,7 +20,7 @@ tune: obj/tune.o $(TUNE_LIB_OBJS)
 # Full pipeline: build tuner, then run on quiet-labeled corpus
 pipeline: tune
 	@echo "=== Running tuner ==="
-	./tune quiet-labeled.epd > tune.txt
+	./tune quiet-labeled.epd
 
 # --- Tune object rules (compiled with -DTUNING) ---
 
@@ -45,4 +45,8 @@ else
 	rm -rf obj tune
 endif
 
-.PHONY: all clean pipeline
+# Iterative tuning: build -> tune -> patch eval_params.h -> repeat
+iterate: tune
+	python autotune.py quiet-labeled.epd --iterations 10 --K 0.989836
+
+.PHONY: all clean pipeline iterate

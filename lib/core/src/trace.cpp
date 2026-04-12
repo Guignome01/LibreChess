@@ -22,7 +22,6 @@
 #include "evaluation.h"
 #include "piece.h"
 
-#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <unordered_map>
@@ -48,7 +47,6 @@ struct TuneEntry {
   const char* name;
   int* ptr;
   int defaultVal;  // Snapshot of *ptr at registration time (single source of truth).
-  int min, max, step;
 };
 
 static std::vector<TuneEntry>& buildRegistry();  // forward decl
@@ -96,7 +94,7 @@ static int* const PST_DATA[12] = {
 
 Trace extractTrace(const BitboardSet& bb) {
   Trace t;
-  t.entries.reserve(40);
+  t.entries.reserve(128);
 
   // -----------------------------------------------------------------------
   // Phase computation (must happen first for tapering).
@@ -111,29 +109,26 @@ Trace extractTrace(const BitboardSet& bb) {
                      | bb.byPiece[pieceIndex('q')]) * PHASE_QUEEN;
   if (phase > MAX_PHASE) phase = MAX_PHASE;
 
-  float mgWeight = static_cast<float>(phase) / MAX_PHASE;
-  float egWeight = static_cast<float>(MAX_PHASE - phase) / MAX_PHASE;
+  float mgW = static_cast<float>(phase) / MAX_PHASE;
+  float egW = static_cast<float>(MAX_PHASE - phase) / MAX_PHASE;
 
   // -----------------------------------------------------------------------
-  // OCB scaling detection — applies to the full tapered score.
+  // OCB scaling detection — flag stored for post-hoc application.
   //
   // evaluatePosition() applies OCB as: score = score * 3/4 after tapering.
-  // To match, scale BOTH MG and EG weights by ocbScale so every trace
-  // coefficient receives the same uniform scaling.
+  // The trace stores OCB as a flag; traceScore applies it as a final
+  // multiplication so that integer truncation in the eval's *3/4 is
+  // replicated rather than distributed across individual coefficients.
   // -----------------------------------------------------------------------
-  float ocbScale = 1.0f;
   if (phase <= 6) {
     Bitboard wb = bb.byPiece[pieceIndex('B')];
     Bitboard bbish = bb.byPiece[pieceIndex('b')];
     if (popcount(wb) == 1 && popcount(bbish) == 1) {
       bool whiteDark = (wb & DARK_SQUARES) != 0;
       bool blackDark = (bbish & DARK_SQUARES) != 0;
-      if (whiteDark != blackDark) ocbScale = 0.75f;
+      if (whiteDark != blackDark) t.hasOCB = true;
     }
   }
-
-  float mgW = mgWeight * ocbScale;
-  float egW = egWeight * ocbScale;
 
   // -----------------------------------------------------------------------
   // Material (P, N, B, R, Q) — all tunable, separate MG and EG.
@@ -171,11 +166,14 @@ Trace extractTrace(const BitboardSet& bb) {
 
   // -----------------------------------------------------------------------
   // Pawn structure — uses the core eval helpers (isPassed, isIsolated, etc.)
+  // Mirrors evalPawnStructure() in evaluation.cpp.
   // -----------------------------------------------------------------------
   Bitboard whitePawns = bb.byPiece[pieceIndex('P')];
   Bitboard blackPawns = bb.byPiece[pieceIndex('p')];
   Bitboard whitePawnAttacks = shiftNE(whitePawns) | shiftNW(whitePawns);
   Bitboard blackPawnAttacks = shiftSE(blackPawns) | shiftSW(blackPawns);
+  Bitboard pawnAtks[2] = {whitePawnAttacks, blackPawnAttacks};
+  Bitboard pawnsArr[2] = {whitePawns, blackPawns};
 
   // Accumulate pawn coefficients (multiple pawns may contribute to the same
   // parameter, e.g. two pawns on the same rank for passed bonus).
@@ -184,102 +182,124 @@ Trace extractTrace(const BitboardSet& bb) {
     if (idx >= 0 && c != 0.0f) pawnCoeffs[idx] += c;
   };
 
-  uint8_t whitePassedFiles = 0, blackPassedFiles = 0;
+  // Track passed pawns for king proximity trace (below).
+  Bitboard passedPawns[2] = {0, 0};
 
-  Bitboard wp = whitePawns;
-  while (wp) {
-    Square sq = popLsb(wp);
-    int rank = rankOf(sq);
+  for (int c = 0; c < 2; ++c) {
+    float sign = (c == 0) ? 1.0f : -1.0f;
+    Color color = (c == 0) ? Color::WHITE : Color::BLACK;
+    Bitboard friendly = pawnsArr[c];
+    Bitboard enemy = pawnsArr[1 - c];
+    Bitboard p = friendly;
 
-    if (isPassed(sq, Color::WHITE, blackPawns)) {
-      addPawnCoeff(pIdx(&PASSED_RANK_BONUS_MG[rank]), mgW);
-      addPawnCoeff(pIdx(&PASSED_RANK_BONUS_EG[rank]), egW);
-      whitePassedFiles |= 1 << fileOf(sq);
-      if (squareBB(sq) & whitePawnAttacks) {
-        addPawnCoeff(pIdx(&PROTECTED_PASSER_MG), mgW);
+    while (p) {
+      Square sq = popLsb(p);
+      int rank = rankOf(sq);
+      int passedRank = (c == 0) ? rank : (7 - rank);
+      bool doubled = isDoubled(sq, color, friendly);
+
+      // Passed pawn (only frontmost — doubled pawn excluded).
+      bool passed = isPassed(sq, color, enemy);
+      if (passed && !doubled) {
+        addPawnCoeff(pIdx(&PASSED_RANK_BONUS_MG[passedRank]), sign * mgW);
+        addPawnCoeff(pIdx(&PASSED_RANK_BONUS_EG[passedRank]), sign * egW);
+        passedPawns[c] |= squareBB(sq);
+
+        // Protected passed pawn.
+        if (squareBB(sq) & pawnAtks[c]) {
+          addPawnCoeff(pIdx(&PROTECTED_PASSER_MG), sign * mgW);
+          addPawnCoeff(pIdx(&PROTECTED_PASSER_EG), sign * egW);
+        }
       }
-    }
-    if (isIsolated(sq, whitePawns)) {
-      addPawnCoeff(pIdx(&ISOLATED_PENALTY_MG), mgW);
-      addPawnCoeff(pIdx(&ISOLATED_PENALTY_EG), egW);
-    }
-    if (isDoubled(sq, Color::WHITE, whitePawns)) {
-      addPawnCoeff(pIdx(&DOUBLED_PENALTY_MG), mgW);
-      addPawnCoeff(pIdx(&DOUBLED_PENALTY_EG), egW);
-    }
-    if (isBackward(sq, Color::WHITE, whitePawns, blackPawnAttacks)) {
-      addPawnCoeff(pIdx(&BACKWARD_PENALTY_MG), mgW);
-      addPawnCoeff(pIdx(&BACKWARD_PENALTY_EG), egW);
-    }
-  }
 
-  Bitboard bp = blackPawns;
-  while (bp) {
-    Square sq = popLsb(bp);
-    int rank = rankOf(sq);
-
-    if (isPassed(sq, Color::BLACK, whitePawns)) {
-      int mirRank = 7 - rank;
-      addPawnCoeff(pIdx(&PASSED_RANK_BONUS_MG[mirRank]), -mgW);
-      addPawnCoeff(pIdx(&PASSED_RANK_BONUS_EG[mirRank]), -egW);
-      blackPassedFiles |= 1 << fileOf(sq);
-      if (squareBB(sq) & blackPawnAttacks) {
-        addPawnCoeff(pIdx(&PROTECTED_PASSER_MG), -mgW);
+      // Candidate passed pawn.
+      if (!passed && !doubled) {
+        // Forward file mask (same file, ranks ahead).
+        int file = fileOf(sq);
+        Bitboard fileMask = fileBB(file);
+        Bitboard fwdFile;
+        Bitboard aheadMask, behindOrLevel;
+        if (c == 0) {
+          fwdFile = (rank < 7)
+              ? fileMask & ~((static_cast<Bitboard>(1) << (8 * (rank + 1))) - 1)
+              : static_cast<Bitboard>(0);
+          aheadMask = (rank < 7)
+              ? ~((static_cast<Bitboard>(1) << (8 * (rank + 1))) - 1)
+              : static_cast<Bitboard>(0);
+          behindOrLevel = (static_cast<Bitboard>(1) << (8 * (rank + 1))) - 1;
+        } else {
+          fwdFile = (rank > 0)
+              ? fileMask & ((static_cast<Bitboard>(1) << (8 * rank)) - 1)
+              : static_cast<Bitboard>(0);
+          aheadMask = (rank > 0)
+              ? (static_cast<Bitboard>(1) << (8 * rank)) - 1
+              : static_cast<Bitboard>(0);
+          behindOrLevel = ~((static_cast<Bitboard>(1) << (8 * rank)) - 1);
+        }
+        if (!(enemy & fwdFile)) {
+          Bitboard adjFiles = adjacentFilesMask(file);
+          int sentries = popcount(enemy & adjFiles & aheadMask);
+          int helpers = popcount(friendly & adjFiles & behindOrLevel);
+          if (helpers >= sentries) {
+            addPawnCoeff(pIdx(&CANDIDATE_PASSED_MG[passedRank]), sign * mgW);
+            addPawnCoeff(pIdx(&CANDIDATE_PASSED_EG[passedRank]), sign * egW);
+          }
+        }
       }
-    }
-    if (isIsolated(sq, blackPawns)) {
-      addPawnCoeff(pIdx(&ISOLATED_PENALTY_MG), -mgW);
-      addPawnCoeff(pIdx(&ISOLATED_PENALTY_EG), -egW);
-    }
-    if (isDoubled(sq, Color::BLACK, blackPawns)) {
-      addPawnCoeff(pIdx(&DOUBLED_PENALTY_MG), -mgW);
-      addPawnCoeff(pIdx(&DOUBLED_PENALTY_EG), -egW);
-    }
-    if (isBackward(sq, Color::BLACK, blackPawns, whitePawnAttacks)) {
-      addPawnCoeff(pIdx(&BACKWARD_PENALTY_MG), -mgW);
-      addPawnCoeff(pIdx(&BACKWARD_PENALTY_EG), -egW);
-    }
-  }
 
-  for (int f = 0; f < 7; ++f) {
-    if ((whitePassedFiles >> f & 1) && (whitePassedFiles >> (f + 1) & 1)) {
-      addPawnCoeff(pIdx(&CONNECTED_PASSED_MG), mgW);
-      addPawnCoeff(pIdx(&CONNECTED_PASSED_EG), egW);
-    }
-    if ((blackPassedFiles >> f & 1) && (blackPassedFiles >> (f + 1) & 1)) {
-      addPawnCoeff(pIdx(&CONNECTED_PASSED_MG), -mgW);
-      addPawnCoeff(pIdx(&CONNECTED_PASSED_EG), -egW);
+      // Isolated pawn.
+      if (isIsolated(sq, friendly)) {
+        addPawnCoeff(pIdx(&ISOLATED_PENALTY_MG), sign * mgW);
+        addPawnCoeff(pIdx(&ISOLATED_PENALTY_EG), sign * egW);
+      }
+
+      // Doubled pawn.
+      if (doubled) {
+        addPawnCoeff(pIdx(&DOUBLED_PENALTY_EG), sign * egW);
+      }
+
+      // Backward pawn.
+      if (isBackward(sq, color, friendly, enemy)) {
+        addPawnCoeff(pIdx(&BACKWARD_PENALTY_MG), sign * mgW);
+        addPawnCoeff(pIdx(&BACKWARD_PENALTY_EG), sign * egW);
+      }
+
+      // Connected pawn (chain or phalanx).
+      {
+        bool supported = (squareBB(sq) & pawnAtks[c]) != 0;
+        Bitboard adjSameRank = adjacentFilesMask(fileOf(sq)) & rankBB(rank);
+        bool phalanx = (friendly & adjSameRank) != 0;
+        if (supported || phalanx) {
+          addPawnCoeff(pIdx(&CONNECTED_BONUS_MG[passedRank]), sign * mgW);
+          addPawnCoeff(pIdx(&CONNECTED_BONUS_EG[passedRank]), sign * egW);
+        }
+      }
     }
   }
 
   for (auto& pc : pawnCoeffs) t.add(pc.first, pc.second);
 
   // -----------------------------------------------------------------------
-  // Passed pawn king distance (EG only).
+  // Passed pawn king proximity (EG only) — mirrors evalPassedPawnKingDist().
   // -----------------------------------------------------------------------
-  Bitboard wkBB = bb.byPiece[pieceIndex('K')];
-  Bitboard bkBB = bb.byPiece[pieceIndex('k')];
-  if (wkBB && bkBB) {
-    Square wkSq = lsb(wkBB);
-    Square bkSq = lsb(bkBB);
+  {
     float ownCoeff = 0.0f, enemyCoeff = 0.0f;
-
-    Bitboard wpPass = whitePawns;
-    while (wpPass) {
-      Square sq = popLsb(wpPass);
-      if (!isPassed(sq, Color::WHITE, blackPawns)) continue;
-      ownCoeff   += (7 - chebyshevDist(sq, wkSq));
-      enemyCoeff += chebyshevDist(sq, bkSq);
+    for (int c = 0; c < 2; ++c) {
+      Bitboard passed = passedPawns[c];
+      if (!passed) continue;
+      float sign = (c == 0) ? 1.0f : -1.0f;
+      Color col = (c == 0) ? Color::WHITE : Color::BLACK;
+      Color ene = (c == 0) ? Color::BLACK : Color::WHITE;
+      Square ownKingSq   = lsb(bb.byPiece[pieceIndex(col, PieceType::KING)]);
+      Square enemyKingSq = lsb(bb.byPiece[pieceIndex(ene, PieceType::KING)]);
+      while (passed) {
+        Square sq = popLsb(passed);
+        ownCoeff   += sign * chebyshevDistance(sq, ownKingSq);
+        enemyCoeff += sign * chebyshevDistance(sq, enemyKingSq);
+      }
     }
-    Bitboard bpPass = blackPawns;
-    while (bpPass) {
-      Square sq = popLsb(bpPass);
-      if (!isPassed(sq, Color::BLACK, whitePawns)) continue;
-      ownCoeff   -= (7 - chebyshevDist(sq, bkSq));
-      enemyCoeff -= chebyshevDist(sq, wkSq);
-    }
-    t.add(pIdx(&PASSER_OWN_KING), ownCoeff * egW);
-    t.add(pIdx(&PASSER_ENEMY_KING), enemyCoeff * egW);
+    t.add(pIdx(&PASSER_OWN_KING_DIST_EG), ownCoeff * egW);
+    t.add(pIdx(&PASSER_ENEMY_KING_DIST_EG), enemyCoeff * egW);
   }
 
   // -----------------------------------------------------------------------
@@ -366,16 +386,16 @@ Trace extractTrace(const BitboardSet& bb) {
 
   // -----------------------------------------------------------------------
   // Rook behind passer (EG only).
+  // Uses passedPawns[] (non-doubled only), matching evalRookBehindPasser().
   // -----------------------------------------------------------------------
   {
     float ownCoeff = 0.0f, enemyCoeff = 0.0f;
     Bitboard whiteRooks = bb.byPiece[pieceIndex('R')];
     Bitboard blackRooks = bb.byPiece[pieceIndex('r')];
 
-    Bitboard wpR = whitePawns;
+    Bitboard wpR = passedPawns[0];
     while (wpR) {
       Square sq = popLsb(wpR);
-      if (!isPassed(sq, Color::WHITE, blackPawns)) continue;
       Bitboard fileMask = FILE_A << (sq & 7);
       Bitboard ownR = whiteRooks & fileMask;
       while (ownR) {
@@ -388,10 +408,9 @@ Trace extractTrace(const BitboardSet& bb) {
         if (rsq < sq) enemyCoeff += 1.0f;
       }
     }
-    Bitboard bpR = blackPawns;
+    Bitboard bpR = passedPawns[1];
     while (bpR) {
       Square sq = popLsb(bpR);
-      if (!isPassed(sq, Color::BLACK, whitePawns)) continue;
       Bitboard fileMask = FILE_A << (sq & 7);
       Bitboard ownR = blackRooks & fileMask;
       while (ownR) {
@@ -409,65 +428,70 @@ Trace extractTrace(const BitboardSet& bb) {
   }
 
   // -----------------------------------------------------------------------
-  // Knight outposts (same value for MG + EG).
+  // Outposts — knight (same value for MG + EG) and bishop (enemy half).
+  // Uses the shared isOutpostSquare() helper from evaluation.
   // -----------------------------------------------------------------------
   {
     constexpr Square SQ_D4 = 27, SQ_D5 = 35, SQ_E4 = 28, SQ_E5 = 36;
-    float coeff = 0.0f;
+    static constexpr Bitboard ENEMY_HALF[2] = {
+      rankBB(4) | rankBB(5) | rankBB(6) | rankBB(7),
+      rankBB(0) | rankBB(1) | rankBB(2) | rankBB(3),
+    };
+    float knightCoeff = 0.0f;
+    float bishopCoeff = 0.0f;
 
-    Bitboard wn = bb.byPiece[pieceIndex('N')];
-    while (wn) {
-      Square sq = popLsb(wn);
-      if (!(squareBB(sq) & whitePawnAttacks)) continue;
-      int file = fileOf(sq);
-      Bitboard adjFiles = 0;
-      if (file > 0) adjFiles |= fileBB(file - 1);
-      if (file < 7) adjFiles |= fileBB(file + 1);
-      int rank = rankOf(sq);
-      Bitboard aboveMask =
-          ~((static_cast<Bitboard>(1) << (8 * (rank + 1))) - 1);
-      if (blackPawns & adjFiles & aboveMask) continue;
-      int bonus = 1;
-      if (sq == SQ_D4 || sq == SQ_D5 || sq == SQ_E4 || sq == SQ_E5) bonus = 2;
-      coeff += bonus;
-    }
+    for (int c = 0; c < 2; ++c) {
+      float sign = (c == 0) ? 1.0f : -1.0f;
 
-    Bitboard bn = bb.byPiece[pieceIndex('n')];
-    while (bn) {
-      Square sq = popLsb(bn);
-      if (!(squareBB(sq) & blackPawnAttacks)) continue;
-      int file = fileOf(sq);
-      Bitboard adjFiles = 0;
-      if (file > 0) adjFiles |= fileBB(file - 1);
-      if (file < 7) adjFiles |= fileBB(file + 1);
-      int rank = rankOf(sq);
-      Bitboard belowMask = (rank > 0)
-          ? (static_cast<Bitboard>(1) << (8 * rank)) - 1
-          : 0;
-      if (whitePawns & adjFiles & belowMask) continue;
-      int bonus = 1;
-      if (sq == SQ_D4 || sq == SQ_D5 || sq == SQ_E4 || sq == SQ_E5) bonus = 2;
-      coeff -= bonus;
+      // Knights.
+      Bitboard kn = bb.byPiece[pieceIndex(static_cast<Color>(c), PieceType::KNIGHT)];
+      while (kn) {
+        Square sq = popLsb(kn);
+        if (!isOutpostSquare(sq, c, pawnAtks[c], pawnsArr[1 - c])) continue;
+        int bonus = 1;
+        if (sq == SQ_D4 || sq == SQ_D5 || sq == SQ_E4 || sq == SQ_E5) bonus = 2;
+        knightCoeff += sign * bonus;
+      }
+
+      // Bishops (enemy half only).
+      Bitboard bi = bb.byPiece[pieceIndex(static_cast<Color>(c), PieceType::BISHOP)];
+      while (bi) {
+        Square sq = popLsb(bi);
+        if (!(squareBB(sq) & ENEMY_HALF[c])) continue;
+        if (!isOutpostSquare(sq, c, pawnAtks[c], pawnsArr[1 - c])) continue;
+        bishopCoeff += sign;
+      }
     }
-    t.add(pIdx(&OUTPOST_BONUS_MG), coeff * mgW);
-    t.add(pIdx(&OUTPOST_BONUS_EG), coeff * egW);
+    t.add(pIdx(&OUTPOST_BONUS_MG), knightCoeff * mgW);
+    t.add(pIdx(&OUTPOST_BONUS_EG), knightCoeff * egW);
+    t.add(pIdx(&BISHOP_OUTPOST_MG), bishopCoeff * mgW);
+    t.add(pIdx(&BISHOP_OUTPOST_EG), bishopCoeff * egW);
   }
 
   // -----------------------------------------------------------------------
-  // King safety / pawn shield (MG only).
+  // King safety / pawn shield + pawn storm (MG only).
   // -----------------------------------------------------------------------
   {
-    float missingCoeff = 0.0f, rank3Coeff = 0.0f, rank4PlusCoeff = 0.0f,
-          openCoeff = 0.0f;
+    std::unordered_map<int, float> shieldCoeffs;
+    auto addSC = [&](int idx, float c) {
+      if (idx >= 0 && c != 0.0f) shieldCoeffs[idx] += c;
+    };
+    float openCoeff = 0.0f;
+
     Bitboard allPawns = whitePawns | blackPawns;
 
-    auto shieldSide = [&](int color, int sign) {
-      Bitboard kingBB_s = bb.byPiece[pieceIndex(static_cast<Color>(color), PieceType::KING)];
-      if (!kingBB_s) return;
+    for (int c = 0; c < 2; ++c) {
+      float sign = (c == 0) ? 1.0f : -1.0f;
+      Color color = static_cast<Color>(c);
+      Color enemy = static_cast<Color>(1 - c);
+      bool isWhite = (c == 0);
+
+      Bitboard kingBB_s = bb.byPiece[pieceIndex(color, PieceType::KING)];
+      if (!kingBB_s) continue;
       Square kingSq = lsb(kingBB_s);
       int kingFile = fileOf(kingSq);
 
-      if (kingFile >= 3 && kingFile <= 4) return;
+      if (kingFile >= 3 && kingFile <= 4) continue;
 
       int shieldFiles[3];
       if (kingFile <= 2) {
@@ -476,220 +500,177 @@ Trace extractTrace(const BitboardSet& bb) {
         shieldFiles[0] = 5; shieldFiles[1] = 6; shieldFiles[2] = 7;
       }
 
-      Bitboard friendlyPawns = bb.byPiece[pieceIndex(static_cast<Color>(color), PieceType::PAWN)];
+      Bitboard friendlyPawns = bb.byPiece[pieceIndex(color, PieceType::PAWN)];
+      Bitboard enemyPawns    = bb.byPiece[pieceIndex(enemy, PieceType::PAWN)];
+
       for (int i = 0; i < 3; ++i) {
         int f = shieldFiles[i];
         Bitboard fileMask = fileBB(f);
-        Bitboard shieldPawns = friendlyPawns & fileMask;
 
-        if (!shieldPawns) {
-          missingCoeff += sign;
+        // Shield rank coefficient.
+        Bitboard ownOnFile = friendlyPawns & fileMask;
+        if (!ownOnFile) {
+          addSC(pIdx(&SHIELD_RANK[3]), sign * mgW);
         } else {
-          Bitboard copy = shieldPawns;
-          while (copy) {
-            Square psq = popLsb(copy);
-            int pRank = rankOf(psq);
-            if (color == 0) {
-              if (pRank == 2)       rank3Coeff += sign;
-              else if (pRank >= 3)  rank4PlusCoeff += sign;
-            } else {
-              if (pRank == 5)       rank3Coeff += sign;
-              else if (pRank <= 4)  rank4PlusCoeff += sign;
-            }
-          }
+          Bitboard view = isWhite ? ownOnFile : byteSwap64(ownOnFile);
+          int dist = rankOf(lsb(view)) - 1;
+          if (dist > 2) dist = 2;
+          addSC(pIdx(&SHIELD_RANK[dist]), sign * mgW);
         }
+
+        // Open file.
         if (f == kingFile && !(allPawns & fileMask))
           openCoeff += sign;
+
+        // Pawn storm.
+        Bitboard enemyOnFile = enemyPawns & fileMask;
+        if (enemyOnFile) {
+          Bitboard eView = isWhite ? enemyOnFile : byteSwap64(enemyOnFile);
+          int stormRank = rankOf(lsb(eView));
+          addSC(pIdx(&PAWN_STORM[stormRank]), sign * mgW);
+        }
       }
-    };
+    }
 
-    shieldSide(0, 1);
-    shieldSide(1, -1);
-
-    t.add(pIdx(&SHIELD_MISSING_PAWN), missingCoeff * mgW);
-    t.add(pIdx(&SHIELD_ADV_RANK3), rank3Coeff * mgW);
-    t.add(pIdx(&SHIELD_ADV_RANK4PLUS), rank4PlusCoeff * mgW);
+    for (auto& sc : shieldCoeffs) t.add(sc.first, sc.second);
     t.add(pIdx(&SHIELD_OPEN_FILE), openCoeff * mgW);
   }
 
-  // -----------------------------------------------------------------------
-  // Pawn storm (MG only).
-  // -----------------------------------------------------------------------
-  {
-    // Per-relRank coefficients for the PAWN_STORM[8] table.
-    float stormCoeff[PAWN_STORM_SIZE] = {};
-
-    auto stormSide = [&](int color, int sign) {
-      Bitboard kingBB_st = bb.byPiece[pieceIndex(static_cast<Color>(color), PieceType::KING)];
-      if (!kingBB_st) return;
-      Square kingSq = lsb(kingBB_st);
-      int kingFile = fileOf(kingSq);
-
-      if (kingFile >= 3 && kingFile <= 4) return;
-
-      int shieldFiles[3];
-      if (kingFile <= 2) {
-        shieldFiles[0] = 0; shieldFiles[1] = 1; shieldFiles[2] = 2;
-      } else {
-        shieldFiles[0] = 5; shieldFiles[1] = 6; shieldFiles[2] = 7;
-      }
-
-      int enemyColor = 1 - color;
-      Bitboard enemyPawns = bb.byPiece[pieceIndex(static_cast<Color>(enemyColor), PieceType::PAWN)];
-
-      for (int i = 0; i < 3; ++i) {
-        int f = shieldFiles[i];
-        Bitboard filePawns = enemyPawns & fileBB(f);
-        if (!filePawns) continue;
-
-        Square sq = (color == 0) ? lsb(filePawns) : msb(filePawns);
-        int rank = rankOf(sq);
-        int relRank = (color == 0) ? rank : (7 - rank);
-        stormCoeff[relRank] += sign;
-      }
-    };
-
-    stormSide(0, 1);
-    stormSide(1, -1);
-
-    for (int r = 0; r < PAWN_STORM_SIZE; ++r) {
-      if (stormCoeff[r] != 0.0f)
-        t.add(pIdx(&PAWN_STORM[r]), stormCoeff[r] * mgW);
-    }
-  }
-
-  // -----------------------------------------------------------------------
-  // Space (separate MG/EG).
-  // -----------------------------------------------------------------------
-  {
-    Bitboard bAtk = shiftSE(blackPawns) | shiftSW(blackPawns);
-    Bitboard wAtk = shiftNE(whitePawns) | shiftNW(whitePawns);
-    int ws = popcount(WHITE_SPACE_ZONE & ~bAtk);
-    int bs = popcount(BLACK_SPACE_ZONE & ~wAtk);
-    float diff = static_cast<float>(ws - bs);
-    t.add(pIdx(&SPACE_BONUS_MG), diff * mgW);
-  }
-
-  // -----------------------------------------------------------------------
-  // Trapped pieces (MG only).
-  // -----------------------------------------------------------------------
-  {
-    constexpr Square A7 = 48, B6 = 41, B8 = 57;
-    constexpr Square H7 = 55, G6 = 46, G8 = 62;
-    constexpr Square A2 = 8,  B3 = 17, B1 = 1;
-    constexpr Square H2 = 15, G3 = 22, G1_sq = 6;
-
-    float bishCoeff = 0.0f;
-    Bitboard wB = bb.byPiece[pieceIndex('B')],
-           bB = bb.byPiece[pieceIndex('b')];
-    if ((wB & squareBB(A7)) && (blackPawns & squareBB(B6))) bishCoeff += 1;
-    if ((wB & squareBB(B8)) && (blackPawns & squareBB(B6))) bishCoeff += 1;
-    if ((wB & squareBB(H7)) && (blackPawns & squareBB(G6))) bishCoeff += 1;
-    if ((wB & squareBB(G8)) && (blackPawns & squareBB(G6))) bishCoeff += 1;
-    if ((bB & squareBB(A2)) && (whitePawns & squareBB(B3))) bishCoeff -= 1;
-    if ((bB & squareBB(B1)) && (whitePawns & squareBB(B3))) bishCoeff -= 1;
-    if ((bB & squareBB(H2)) && (whitePawns & squareBB(G3))) bishCoeff -= 1;
-    if ((bB & squareBB(G1_sq)) && (whitePawns & squareBB(G3))) bishCoeff -= 1;
-    t.add(pIdx(&TRAPPED_BISHOP_PENALTY), bishCoeff * mgW);
-
-    constexpr Square A1 = 0, H1 = 7, F1 = 5, C1 = 2;
-    constexpr Square A8 = 56, H8 = 63, F8 = 61, C8 = 58;
-    constexpr Square B1_r = 1,  G1_r = 6;
-    constexpr Square B8_r = 57, G8_r = 62;
-
-    float rookCoeff = 0.0f;
-    Bitboard wR = bb.byPiece[pieceIndex('R')],
-           bR = bb.byPiece[pieceIndex('r')];
-    Bitboard wK = bb.byPiece[pieceIndex('K')],
-           bK = bb.byPiece[pieceIndex('k')];
-    if ((wR & squareBB(H1)) && (wK & (squareBB(F1) | squareBB(G1_r))))
-      rookCoeff += 1;
-    if ((wR & squareBB(A1)) && (wK & (squareBB(B1_r) | squareBB(C1))))
-      rookCoeff += 1;
-    if ((bR & squareBB(H8)) && (bK & (squareBB(F8) | squareBB(G8_r))))
-      rookCoeff -= 1;
-    if ((bR & squareBB(A8)) && (bK & (squareBB(B8_r) | squareBB(C8))))
-      rookCoeff -= 1;
-    t.add(pIdx(&TRAPPED_ROOK_PENALTY), rookCoeff * mgW);
-  }
-
-  // -----------------------------------------------------------------------
-  // Mobility — nonlinear tables, safe squares (exclude enemy pawn attacks).
-  // -----------------------------------------------------------------------
+  // AttackInfo — needed by mobility, threats, and king danger helpers.
   attacks::AttackInfo info = attacks::computeAll(bb);
 
+  // -----------------------------------------------------------------------
+  // Mobility — uses shared computeMobility() helper.
+  // Each table entry gets a coefficient of +1 or -1 (per color/piece).
+  // -----------------------------------------------------------------------
   {
+    std::unordered_map<int, float> mobCoeffs;
+    auto addMobCoeff = [&](int idx, float c) {
+      if (idx >= 0 && c != 0.0f) mobCoeffs[idx] += c;
+    };
+
     for (int c = 0; c < 2; ++c) {
       float sign = (c == 0) ? 1.0f : -1.0f;
-      Bitboard friendly    = bb.byColor[c];
-      Bitboard enemyPawnAtk = info.byPiece[1 - c][1];  // PieceType::PAWN = 1
-      Bitboard safeMask    = ~friendly & ~enemyPawnAtk;
+      auto m = computeMobility(bb, info, c);
+      addMobCoeff(pIdx(&MOB_KNIGHT_MG[m.knight]), sign * mgW);
+      addMobCoeff(pIdx(&MOB_KNIGHT_EG[m.knight]), sign * egW);
+      addMobCoeff(pIdx(&MOB_BISHOP_MG[m.bishop]), sign * mgW);
+      addMobCoeff(pIdx(&MOB_BISHOP_EG[m.bishop]), sign * egW);
+      addMobCoeff(pIdx(&MOB_ROOK_MG[m.rook]),     sign * mgW);
+      addMobCoeff(pIdx(&MOB_ROOK_EG[m.rook]),     sign * egW);
+      addMobCoeff(pIdx(&MOB_QUEEN_MG[m.queen]),   sign * mgW);
+      addMobCoeff(pIdx(&MOB_QUEEN_EG[m.queen]),   sign * egW);
+    }
 
-      int nMob = popcount(info.byPiece[c][2] & safeMask);
-      int bMob = popcount(info.byPiece[c][3] & safeMask);
-      int rMob = popcount(info.byPiece[c][4] & safeMask);
-      int qMob = popcount(info.byPiece[c][5] & safeMask);
+    for (auto& mc : mobCoeffs) t.add(mc.first, mc.second);
+  }
 
-      t.add(pIdx(&MOBILITY_KNIGHT_MG[nMob]), sign * mgW);
-      t.add(pIdx(&MOBILITY_KNIGHT_EG[nMob]), sign * egW);
-      t.add(pIdx(&MOBILITY_BISHOP_MG[bMob]), sign * mgW);
-      t.add(pIdx(&MOBILITY_BISHOP_EG[bMob]), sign * egW);
-      t.add(pIdx(&MOBILITY_ROOK_MG[rMob]),   sign * mgW);
-      t.add(pIdx(&MOBILITY_ROOK_EG[rMob]),   sign * egW);
-      t.add(pIdx(&MOBILITY_QUEEN_MG[qMob]),  sign * mgW);
-      t.add(pIdx(&MOBILITY_QUEEN_EG[qMob]),  sign * egW);
+  // -----------------------------------------------------------------------
+  // Threats — uses shared computeThreats() helper.
+  // Aggregated across colors (like bishop pair / rook files).
+  // -----------------------------------------------------------------------
+  {
+    float byPawnCoeff = 0.0f, byMinorCoeff = 0.0f;
+    float byRookCoeff = 0.0f, hangingCoeff = 0.0f;
+    for (int c = 0; c < 2; ++c) {
+      float sign = (c == 0) ? 1.0f : -1.0f;
+      auto f = computeThreats(bb, info, c);
+      byPawnCoeff  += sign * f.byPawn;
+      byMinorCoeff += sign * f.byMinor;
+      byRookCoeff  += sign * f.byRook;
+      hangingCoeff += sign * f.hanging;
+    }
+    t.add(pIdx(&THREAT_BY_PAWN_MG),  byPawnCoeff  * mgW);
+    t.add(pIdx(&THREAT_BY_PAWN_EG),  byPawnCoeff  * egW);
+    t.add(pIdx(&THREAT_BY_MINOR_MG), byMinorCoeff * mgW);
+    t.add(pIdx(&THREAT_BY_MINOR_EG), byMinorCoeff * egW);
+    t.add(pIdx(&THREAT_BY_ROOK_MG),  byRookCoeff  * mgW);
+    t.add(pIdx(&THREAT_BY_ROOK_EG),  byRookCoeff  * egW);
+    t.add(pIdx(&THREAT_HANGING_MG),  hangingCoeff * mgW);
+    t.add(pIdx(&THREAT_HANGING_EG),  hangingCoeff * egW);
+  }
+
+  // -----------------------------------------------------------------------
+  // King danger — uses shared computeKingDanger() helper.
+  //
+  // KING_SAFETY_TABLE is EVAL_FIXED (S-curve, not tunable).  Safe check
+  // bonuses (EVAL_CONST, tunable) add to the attack weight before a single
+  // table lookup, so all active checks share the same nonlinear gain.
+  //
+  // Linearization at the COMBINED operating point (totalWeight) ensures
+  // exact reconstruction: bias absorbs the constant offset, and each
+  // active check gets coeff = slope (the shared local derivative).
+  //   slope  = (table[tw + 1] - table[tw - 1]) / 2   (central difference)
+  //   bias  += sign * (table[tw] - Σ_active slope * val_i) * mgW
+  //   coeff  = sign * slope * mgW                     (same for all checks)
+  // Reconstructed = bias + Σ coeff_i * val_i = table[tw].  Exact.
+  // -----------------------------------------------------------------------
+  {
+    for (int c = 0; c < 2; ++c) {
+      auto d = computeKingDanger(bb, info, c);
+      if (d.attackerCount < 2 || !d.hasQueen) continue;
+
+      // sign: penalty to the attacked side (white → -1, black → +1).
+      float fSign = (c == 0) ? -1.0f : 1.0f;
+
+      // Total weight = base (EVAL_FIXED) + all active safe checks,
+      // exactly mirroring evalKingDanger().
+      int totalWeight = d.attackWeight;
+      if (d.knightSafeCheck) totalWeight += SAFE_CHECK_KNIGHT;
+      if (d.bishopSafeCheck) totalWeight += SAFE_CHECK_BISHOP;
+      if (d.rookSafeCheck)   totalWeight += SAFE_CHECK_ROOK;
+      if (d.queenSafeCheck)  totalWeight += SAFE_CHECK_QUEEN;
+
+      int totalPenalty = kingDangerScore(totalWeight);
+
+      // Shared slope at the combined operating point (central difference,
+      // one-sided at table boundaries).
+      int tw = totalWeight;
+      if (tw < 0) tw = 0;
+      if (tw >= KING_SAFETY_TABLE_SIZE) tw = KING_SAFETY_TABLE_SIZE - 1;
+      float slope;
+      if (tw == 0)
+        slope = static_cast<float>(kingDangerScore(1) - kingDangerScore(0));
+      else if (tw >= KING_SAFETY_TABLE_SIZE - 1)
+        slope = static_cast<float>(kingDangerScore(KING_SAFETY_TABLE_SIZE - 1)
+                                 - kingDangerScore(KING_SAFETY_TABLE_SIZE - 2));
+      else
+        slope = static_cast<float>(kingDangerScore(tw + 1)
+                                 - kingDangerScore(tw - 1)) * 0.5f;
+
+      // Bias absorbs: totalPenalty - Σ_active(slope * val_i).
+      float checkSum = 0.0f;
+      if (d.knightSafeCheck) checkSum += slope * SAFE_CHECK_KNIGHT;
+      if (d.bishopSafeCheck) checkSum += slope * SAFE_CHECK_BISHOP;
+      if (d.rookSafeCheck)   checkSum += slope * SAFE_CHECK_ROOK;
+      if (d.queenSafeCheck)  checkSum += slope * SAFE_CHECK_QUEEN;
+      t.bias += fSign * (static_cast<float>(totalPenalty) - checkSum) * mgW;
+
+      // Each active check: coeff = slope (per-unit marginal, same for all).
+      auto emitCheck = [&](bool active, int* param) {
+        if (!active) return;
+        t.add(pIdx(param), fSign * slope * mgW);
+      };
+      emitCheck(d.knightSafeCheck, &SAFE_CHECK_KNIGHT);
+      emitCheck(d.bishopSafeCheck, &SAFE_CHECK_BISHOP);
+      emitCheck(d.rookSafeCheck,   &SAFE_CHECK_ROOK);
+      emitCheck(d.queenSafeCheck,  &SAFE_CHECK_QUEEN);
     }
   }
 
   // -----------------------------------------------------------------------
-  // King danger table (MG only, scaled by opponent material).
+  // Space — uses shared countOpenFiles() + computeSpace() helpers.
+  // Aggregated across colors (like bishop pair / rook files).
   // -----------------------------------------------------------------------
-  for (int c = 0; c < 2; ++c) {
-    int sign = (c == 0) ? -1 : 1;
-    int enemy = 1 - c;
-
-    Bitboard kingBB_kd = bb.byPiece[pieceIndex(static_cast<Color>(c), PieceType::KING)];
-    if (!kingBB_kd) continue;
-    Square kingSq = lsb(kingBB_kd);
-    Bitboard kingZone = attacks::KING[kingSq] | squareBB(kingSq);
-
-    int totalWeight = 0;
-    for (int pt = 0; pt < 4; ++pt) {
-      int pieceType = pt + 2;
-      if (info.byPiece[enemy][pieceType] & kingZone)
-        totalWeight += KING_DANGER_WEIGHT[pt];
+  {
+    int openFiles = countOpenFiles(bb);
+    float spaceCoeff = 0.0f;
+    for (int c = 0; c < 2; ++c) {
+      float sign = (c == 0) ? 1.0f : -1.0f;
+      auto s = computeSpace(bb, c, openFiles);
+      spaceCoeff += sign * static_cast<float>(s.bonus * s.weight * s.weight) / 16.0f;
     }
-    if (totalWeight > 0) {
-      for (int pt = 0; pt < 4; ++pt) {
-        // pt 0..3 → KNIGHT..QUEEN (PieceType 2..5)
-        int pieceIdx = pieceIndex(static_cast<Color>(enemy), static_cast<PieceType>(pt + 2));
-        Bitboard pieces = bb.byPiece[pieceIdx];
-        while (pieces) {
-          Square sq = popLsb(pieces);
-          if (chebyshevDist(sq, kingSq) <= 3) ++totalWeight;
-        }
-      }
-    }
-
-    // Opponent material scaling — must match evaluation's integer arithmetic
-    // exactly: danger = KING_DANGER_TABLE[idx] * oppPhase / STARTING_PHASE_ONE_SIDE.
-    // Derive the coefficient from the truncated integer result to avoid
-    // float vs integer-division mismatch.
-    int oppPhase =
-        popcount(bb.byPiece[pieceIndex(static_cast<Color>(enemy), PieceType::KNIGHT)]) * PHASE_KNIGHT
-      + popcount(bb.byPiece[pieceIndex(static_cast<Color>(enemy), PieceType::BISHOP)]) * PHASE_BISHOP
-      + popcount(bb.byPiece[pieceIndex(static_cast<Color>(enemy), PieceType::ROOK)])   * PHASE_ROOK
-      + popcount(bb.byPiece[pieceIndex(static_cast<Color>(enemy), PieceType::QUEEN)])  * PHASE_QUEEN;
-
-    int idx = (totalWeight < KING_DANGER_TABLE_SIZE)
-            ? totalWeight
-            : KING_DANGER_TABLE_SIZE - 1;
-    int dangerVal = KING_DANGER_TABLE[idx];
-    if (dangerVal != 0) {
-      int scaledDanger = dangerVal * oppPhase / STARTING_PHASE_ONE_SIDE;
-      float coeff = static_cast<float>(scaledDanger) / static_cast<float>(dangerVal);
-      t.add(pIdx(&KING_DANGER_TABLE[idx]), static_cast<float>(sign) * coeff * mgW);
-    }
+    t.add(pIdx(&SPACE_WEIGHT), spaceCoeff * mgW);
   }
 
   return t;
@@ -698,132 +679,144 @@ Trace extractTrace(const BitboardSet& bb) {
 // ===========================================================================
 // Parameter descriptor getters — metadata for the tuning registry.
 //
-// Three descriptor types: scalar (individual params), mobility (nonlinear
-// table pairs), and PST (piece-square tables).  Each getter returns a
-// static array of descriptors with tuning bounds.
+// Two descriptor types: scalar (individual params) and PST (piece-square
+// tables).  Mobility tables are loop-generated in buildRegistry() using
+// the same pattern as PSTs.
 // ===========================================================================
 
 // clang-format off
 const tuning::ScalarParam* tuning::scalarParams(int& count) {
   static const ScalarParam params[] = {
-    // --- Material MG (5) ---
-    {"MAT_PAWN_MG",             &MATERIAL[0],               80,  130,  5},
-    {"MAT_KNIGHT_MG",           &MATERIAL[1],              250,  400, 10},
-    {"MAT_BISHOP_MG",           &MATERIAL[2],              250,  420, 10},
-    {"MAT_ROOK_MG",             &MATERIAL[3],              400,  610, 10},
-    {"MAT_QUEEN_MG",            &MATERIAL[4],              800, 1250, 20},
-    // --- Material EG (5) ---
-    {"MAT_PAWN_EG",             &MATERIAL_EG[0],            80,  150,  5},
-    {"MAT_KNIGHT_EG",           &MATERIAL_EG[1],           230,  400, 10},
-    {"MAT_BISHOP_EG",           &MATERIAL_EG[2],           250,  420, 10},
-    {"MAT_ROOK_EG",             &MATERIAL_EG[3],           430,  650, 10},
-    {"MAT_QUEEN_EG",            &MATERIAL_EG[4],           850, 1300, 20},
+    // --- Material MG (4) --- pawn pinned at 100 (see eval_params.h).
+    {"MAT_KNIGHT_MG",           &MATERIAL[1]},
+    {"MAT_BISHOP_MG",           &MATERIAL[2]},
+    {"MAT_ROOK_MG",             &MATERIAL[3]},
+    {"MAT_QUEEN_MG",            &MATERIAL[4]},
+    // --- Material EG (4) --- pawn pinned at 100 (see eval_params.h).
+    {"MAT_KNIGHT_EG",           &MATERIAL_EG[1]},
+    {"MAT_BISHOP_EG",           &MATERIAL_EG[2]},
+    {"MAT_ROOK_EG",             &MATERIAL_EG[3]},
+    {"MAT_QUEEN_EG",            &MATERIAL_EG[4]},
     // --- Passed pawn rank bonus (12) ---
-    {"PASSED_R2_MG",            &PASSED_RANK_BONUS_MG[1],    0,   30,  5},
-    {"PASSED_R3_MG",            &PASSED_RANK_BONUS_MG[2],    0,   40,  5},
-    {"PASSED_R4_MG",            &PASSED_RANK_BONUS_MG[3],    0,   50,  5},
-    {"PASSED_R5_MG",            &PASSED_RANK_BONUS_MG[4],    5,  150, 10},
-    {"PASSED_R6_MG",            &PASSED_RANK_BONUS_MG[5],   10,  180, 10},
-    {"PASSED_R7_MG",            &PASSED_RANK_BONUS_MG[6],   20,  300, 15},
-    {"PASSED_R2_EG",            &PASSED_RANK_BONUS_EG[1],    0,   30,  5},
-    {"PASSED_R3_EG",            &PASSED_RANK_BONUS_EG[2],    0,   50,  5},
-    {"PASSED_R4_EG",            &PASSED_RANK_BONUS_EG[3],    0,   80, 10},
-    {"PASSED_R5_EG",            &PASSED_RANK_BONUS_EG[4],   10,  150, 10},
-    {"PASSED_R6_EG",            &PASSED_RANK_BONUS_EG[5],   20,  300, 15},
-    {"PASSED_R7_EG",            &PASSED_RANK_BONUS_EG[6],   80,  500, 20},
-    // --- Pawn structure scalars (9) ---
-    {"CONNECTED_PASSED_MG",     &CONNECTED_PASSED_MG,        0,   40,  5},
-    {"CONNECTED_PASSED_EG",     &CONNECTED_PASSED_EG,        0,   60,  5},
-    {"ISOLATED_PENALTY_MG",     &ISOLATED_PENALTY_MG,      -30,    0,  5},
-    {"ISOLATED_PENALTY_EG",     &ISOLATED_PENALTY_EG,      -40,    0,  5},
-    {"DOUBLED_PENALTY_MG",      &DOUBLED_PENALTY_MG,       -40,    0,  5},
-    {"DOUBLED_PENALTY_EG",      &DOUBLED_PENALTY_EG,       -50,    0,  5},
-    {"BACKWARD_PENALTY_MG",     &BACKWARD_PENALTY_MG,      -35,    0,  5},
-    {"BACKWARD_PENALTY_EG",     &BACKWARD_PENALTY_EG,      -35,    0,  5},
-    {"PROTECTED_PASSER_MG",     &PROTECTED_PASSER_MG,        0,   40,  5},
+    {"PASSED_R2_MG",            &PASSED_RANK_BONUS_MG[1]},
+    {"PASSED_R3_MG",            &PASSED_RANK_BONUS_MG[2]},
+    {"PASSED_R4_MG",            &PASSED_RANK_BONUS_MG[3]},
+    {"PASSED_R5_MG",            &PASSED_RANK_BONUS_MG[4]},
+    {"PASSED_R6_MG",            &PASSED_RANK_BONUS_MG[5]},
+    {"PASSED_R7_MG",            &PASSED_RANK_BONUS_MG[6]},
+    {"PASSED_R2_EG",            &PASSED_RANK_BONUS_EG[1]},
+    {"PASSED_R3_EG",            &PASSED_RANK_BONUS_EG[2]},
+    {"PASSED_R4_EG",            &PASSED_RANK_BONUS_EG[3]},
+    {"PASSED_R5_EG",            &PASSED_RANK_BONUS_EG[4]},
+    {"PASSED_R6_EG",            &PASSED_RANK_BONUS_EG[5]},
+    {"PASSED_R7_EG",            &PASSED_RANK_BONUS_EG[6]},
+    // --- Pawn structure scalars (3) ---
+    {"ISOLATED_PENALTY_MG",     &ISOLATED_PENALTY_MG},
+    {"ISOLATED_PENALTY_EG",     &ISOLATED_PENALTY_EG},
+    {"DOUBLED_PENALTY_EG",      &DOUBLED_PENALTY_EG},
+    // --- Backward pawn (2) ---
+    {"BACKWARD_PENALTY_MG",     &BACKWARD_PENALTY_MG},
+    {"BACKWARD_PENALTY_EG",     &BACKWARD_PENALTY_EG},
+    // --- Connected pawns (10) ---
+    {"CONNECTED_R2_MG",         &CONNECTED_BONUS_MG[1]},
+    {"CONNECTED_R3_MG",         &CONNECTED_BONUS_MG[2]},
+    {"CONNECTED_R4_MG",         &CONNECTED_BONUS_MG[3]},
+    {"CONNECTED_R5_MG",         &CONNECTED_BONUS_MG[4]},
+    {"CONNECTED_R6_MG",         &CONNECTED_BONUS_MG[5]},
+    {"CONNECTED_R7_MG",         &CONNECTED_BONUS_MG[6]},
+    {"CONNECTED_R2_EG",         &CONNECTED_BONUS_EG[1]},
+    {"CONNECTED_R3_EG",         &CONNECTED_BONUS_EG[2]},
+    {"CONNECTED_R4_EG",         &CONNECTED_BONUS_EG[3]},
+    {"CONNECTED_R5_EG",         &CONNECTED_BONUS_EG[4]},
+    {"CONNECTED_R6_EG",         &CONNECTED_BONUS_EG[5]},
+    {"CONNECTED_R7_EG",         &CONNECTED_BONUS_EG[6]},
+    // --- Candidate passed pawn (8) ---
+    {"CANDIDATE_R3_MG",         &CANDIDATE_PASSED_MG[2]},
+    {"CANDIDATE_R4_MG",         &CANDIDATE_PASSED_MG[3]},
+    {"CANDIDATE_R5_MG",         &CANDIDATE_PASSED_MG[4]},
+    {"CANDIDATE_R6_MG",         &CANDIDATE_PASSED_MG[5]},
+    {"CANDIDATE_R3_EG",         &CANDIDATE_PASSED_EG[2]},
+    {"CANDIDATE_R4_EG",         &CANDIDATE_PASSED_EG[3]},
+    {"CANDIDATE_R5_EG",         &CANDIDATE_PASSED_EG[4]},
+    {"CANDIDATE_R6_EG",         &CANDIDATE_PASSED_EG[5]},
+    // --- Protected passed pawn (2) ---
+    {"PROTECTED_PASSER_MG",     &PROTECTED_PASSER_MG},
+    {"PROTECTED_PASSER_EG",     &PROTECTED_PASSER_EG},
+    // --- Passed pawn king proximity (2) ---
+    {"PASSER_OWN_KING_DIST_EG",   &PASSER_OWN_KING_DIST_EG},
+    {"PASSER_ENEMY_KING_DIST_EG", &PASSER_ENEMY_KING_DIST_EG},
     // --- Bishop pair (2) ---
-    {"BISHOP_PAIR_MG",          &BISHOP_PAIR_MG,              0,  100,  5},
-    {"BISHOP_PAIR_EG",          &BISHOP_PAIR_EG,             10,  150,  5},
+    {"BISHOP_PAIR_MG",          &BISHOP_PAIR_MG},
+    {"BISHOP_PAIR_EG",          &BISHOP_PAIR_EG},
     // --- Rook on file (4) ---
-    {"ROOK_OPEN_FILE_MG",       &ROOK_OPEN_FILE_MG,          0,   50,  5},
-    {"ROOK_OPEN_FILE_EG",       &ROOK_OPEN_FILE_EG,          0,   50,  5},
-    {"ROOK_SEMI_OPEN_FILE_MG",  &ROOK_SEMI_OPEN_FILE_MG,     0,   40,  5},
-    {"ROOK_SEMI_OPEN_FILE_EG",  &ROOK_SEMI_OPEN_FILE_EG,     0,   40,  5},
+    {"ROOK_OPEN_FILE_MG",       &ROOK_OPEN_FILE_MG},
+    {"ROOK_OPEN_FILE_EG",       &ROOK_OPEN_FILE_EG},
+    {"ROOK_SEMI_OPEN_FILE_MG",  &ROOK_SEMI_OPEN_FILE_MG},
+    {"ROOK_SEMI_OPEN_FILE_EG",  &ROOK_SEMI_OPEN_FILE_EG},
     // --- Rook on 7th (2) ---
-    {"ROOK_7TH_MG",             &ROOK_7TH_MG,                5,   50,  5},
-    {"ROOK_7TH_EG",             &ROOK_7TH_EG,                0,   80,  5},
+    {"ROOK_7TH_MG",             &ROOK_7TH_MG},
+    {"ROOK_7TH_EG",             &ROOK_7TH_EG},
     // --- Rook behind passer (2) ---
-    {"ROOK_BEHIND_OWN_EG",      &ROOK_BEHIND_OWN_PASSER_EG,    0,   50,  5},
-    {"ROOK_BEHIND_ENEMY_EG",    &ROOK_BEHIND_ENEMY_PASSER_EG, -50,   10,  5},
-    // --- Outpost (2) ---
-    {"OUTPOST_BONUS_MG",        &OUTPOST_BONUS_MG,            0,   60,  5},
-    {"OUTPOST_BONUS_EG",        &OUTPOST_BONUS_EG,            0,   40,  5},
+    {"ROOK_BEHIND_OWN_EG",      &ROOK_BEHIND_OWN_PASSER_EG},
+    {"ROOK_BEHIND_ENEMY_EG",    &ROOK_BEHIND_ENEMY_PASSER_EG},
+    // --- Outpost (4) ---
+    {"OUTPOST_BONUS_MG",        &OUTPOST_BONUS_MG},
+    {"OUTPOST_BONUS_EG",        &OUTPOST_BONUS_EG},
+    {"BISHOP_OUTPOST_MG",       &BISHOP_OUTPOST_MG},
+    {"BISHOP_OUTPOST_EG",       &BISHOP_OUTPOST_EG},
     // --- Bad bishop (2) ---
-    {"BAD_BISHOP_MG",           &BAD_BISHOP_MG,             -15,    0,  1},
-    {"BAD_BISHOP_EG",           &BAD_BISHOP_EG,             -15,    0,  1},
-    // --- Trapped pieces (2) ---
-    {"TRAPPED_BISHOP",          &TRAPPED_BISHOP_PENALTY,   -120,    0, 10},
-    {"TRAPPED_ROOK",            &TRAPPED_ROOK_PENALTY,     -100,    0, 10},
-    // --- King safety shield (4) ---
-    {"SHIELD_MISSING_PAWN",     &SHIELD_MISSING_PAWN,       -60,    0,  5},
-    {"SHIELD_ADV_RANK3",        &SHIELD_ADV_RANK3,          -30,    0,  5},
-    {"SHIELD_ADV_RANK4PLUS",    &SHIELD_ADV_RANK4PLUS,      -30,    0,  5},
-    {"SHIELD_OPEN_FILE",        &SHIELD_OPEN_FILE,          -50,    0,  5},
-    // --- Pawn storm (6 active entries: relRank 2–5 meaningful) ---
-    {"STORM_RANK2",             &PAWN_STORM[2],             -40,    0,  5},
-    {"STORM_RANK3",             &PAWN_STORM[3],             -30,    0,  5},
-    {"STORM_RANK4",             &PAWN_STORM[4],             -20,    0,  5},
-    {"STORM_RANK5",             &PAWN_STORM[5],             -15,    0,  5},
-    // --- King danger table (12) ---
-    {"KD_TABLE_1",              &KING_DANGER_TABLE[1],        0,   20,  5},
-    {"KD_TABLE_2",              &KING_DANGER_TABLE[2],        0,   30,  5},
-    {"KD_TABLE_3",              &KING_DANGER_TABLE[3],        0,   50,  5},
-    {"KD_TABLE_4",              &KING_DANGER_TABLE[4],        0,   80, 10},
-    {"KD_TABLE_5",              &KING_DANGER_TABLE[5],       10,  130, 10},
-    {"KD_TABLE_6",              &KING_DANGER_TABLE[6],       20,  200, 10},
-    {"KD_TABLE_7",              &KING_DANGER_TABLE[7],       40,  280, 15},
-    {"KD_TABLE_8",              &KING_DANGER_TABLE[8],       60,  360, 15},
-    {"KD_TABLE_9",              &KING_DANGER_TABLE[9],       80,  440, 20},
-    {"KD_TABLE_10",             &KING_DANGER_TABLE[10],     100,  500, 20},
-    {"KD_TABLE_11",             &KING_DANGER_TABLE[11],     120,  600, 25},
-    {"KD_TABLE_12",             &KING_DANGER_TABLE[12],     150,  700, 25},
+    {"BAD_BISHOP_MG",           &BAD_BISHOP_MG},
+    {"BAD_BISHOP_EG",           &BAD_BISHOP_EG},
+    // --- Threats (8) ---
+    {"THREAT_BY_PAWN_MG",       &THREAT_BY_PAWN_MG},
+    {"THREAT_BY_PAWN_EG",       &THREAT_BY_PAWN_EG},
+    {"THREAT_BY_MINOR_MG",      &THREAT_BY_MINOR_MG},
+    {"THREAT_BY_MINOR_EG",      &THREAT_BY_MINOR_EG},
+    {"THREAT_BY_ROOK_MG",       &THREAT_BY_ROOK_MG},
+    {"THREAT_BY_ROOK_EG",       &THREAT_BY_ROOK_EG},
+    {"THREAT_HANGING_MG",       &THREAT_HANGING_MG},
+    {"THREAT_HANGING_EG",       &THREAT_HANGING_EG},
+    // --- King safety shield (5) ---
+    {"SHIELD_RANK_0",           &SHIELD_RANK[0]},
+    {"SHIELD_RANK_1",           &SHIELD_RANK[1]},
+    {"SHIELD_RANK_2",           &SHIELD_RANK[2]},
+    {"SHIELD_RANK_3",           &SHIELD_RANK[3]},
+    {"SHIELD_OPEN_FILE",        &SHIELD_OPEN_FILE},
+    // --- Pawn storm (6 tunable: indices 2-7, 0-1 fixed at 0) ---
+    {"PAWN_STORM_2",            &PAWN_STORM[2]},
+    {"PAWN_STORM_3",            &PAWN_STORM[3]},
+    {"PAWN_STORM_4",            &PAWN_STORM[4]},
+    {"PAWN_STORM_5",            &PAWN_STORM[5]},
+    {"PAWN_STORM_6",            &PAWN_STORM[6]},
+    {"PAWN_STORM_7",            &PAWN_STORM[7]},
+    // --- Safe check bonuses (4) ---
+    {"SAFE_CHECK_KNIGHT",       &SAFE_CHECK_KNIGHT},
+    {"SAFE_CHECK_BISHOP",       &SAFE_CHECK_BISHOP},
+    {"SAFE_CHECK_ROOK",         &SAFE_CHECK_ROOK},
+    {"SAFE_CHECK_QUEEN",        &SAFE_CHECK_QUEEN},
     // --- Space (1) ---
-    {"SPACE_BONUS_MG",          &SPACE_BONUS_MG,              0,   10,  1},
-    // --- Passed pawn king distance (2) ---
-    {"PASSER_OWN_KING",         &PASSER_OWN_KING,             0,   15,  1},
-    {"PASSER_ENEMY_KING",       &PASSER_ENEMY_KING,           0,   25,  2},
+    {"SPACE_WEIGHT",            &SPACE_WEIGHT},
   };
   // clang-format on
   count = sizeof(params) / sizeof(params[0]);
   return params;
 }
 
-const tuning::MobilityTableDef* tuning::mobilityDefs(int& count) {
-  static const MobilityTableDef defs[] = {
-    {"MOB_KNIGHT", MOBILITY_KNIGHT_MG, MOBILITY_KNIGHT_EG, MOBILITY_KNIGHT_SIZE, -80, 120, 2},
-    {"MOB_BISHOP", MOBILITY_BISHOP_MG, MOBILITY_BISHOP_EG, MOBILITY_BISHOP_SIZE, -80, 120, 2},
-    {"MOB_ROOK",   MOBILITY_ROOK_MG,   MOBILITY_ROOK_EG,   MOBILITY_ROOK_SIZE,   -80, 120, 2},
-    {"MOB_QUEEN",  MOBILITY_QUEEN_MG,  MOBILITY_QUEEN_EG,  MOBILITY_QUEEN_SIZE,  -80, 120, 2},
-  };
-  count = sizeof(defs) / sizeof(defs[0]);
-  return defs;
-}
-
 // clang-format off
 const tuning::PstDef* tuning::pstDefs(int& count) {
   static const PstDef defs[] = {
-    {"PST_PAWN_MG",   PST_PAWN_MG,   true,  -100, 100, 5},
-    {"PST_KNIGHT_MG", PST_KNIGHT_MG, false, -100, 100, 5},
-    {"PST_BISHOP_MG", PST_BISHOP_MG, false, -100, 100, 5},
-    {"PST_ROOK_MG",   PST_ROOK_MG,   false, -100, 100, 5},
-    {"PST_QUEEN_MG",  PST_QUEEN_MG,  false, -100, 100, 5},
-    {"PST_KING_MG",   PST_KING_MG,   false, -100, 100, 5},
-    {"PST_PAWN_EG",   PST_PAWN_EG,   true,  -100, 100, 5},
-    {"PST_KNIGHT_EG", PST_KNIGHT_EG, false, -100, 100, 5},
-    {"PST_BISHOP_EG", PST_BISHOP_EG, false, -100, 100, 5},
-    {"PST_ROOK_EG",   PST_ROOK_EG,   false, -100, 100, 5},
-    {"PST_QUEEN_EG",  PST_QUEEN_EG,  false, -100, 100, 5},
-    {"PST_KING_EG",   PST_KING_EG,   false, -100, 100, 5},
+    {"PST_PAWN_MG",   PST_PAWN_MG,   true},
+    {"PST_KNIGHT_MG", PST_KNIGHT_MG, false},
+    {"PST_BISHOP_MG", PST_BISHOP_MG, false},
+    {"PST_ROOK_MG",   PST_ROOK_MG,   false},
+    {"PST_QUEEN_MG",  PST_QUEEN_MG,  false},
+    {"PST_KING_MG",   PST_KING_MG,   false},
+    {"PST_PAWN_EG",   PST_PAWN_EG,   true},
+    {"PST_KNIGHT_EG", PST_KNIGHT_EG, false},
+    {"PST_BISHOP_EG", PST_BISHOP_EG, false},
+    {"PST_ROOK_EG",   PST_ROOK_EG,   false},
+    {"PST_QUEEN_EG",  PST_QUEEN_EG,  false},
+    {"PST_KING_EG",   PST_KING_EG,   false},
   };
   // clang-format on
   count = sizeof(defs) / sizeof(defs[0]);
@@ -833,44 +826,53 @@ const tuning::PstDef* tuning::pstDefs(int& count) {
 // ===========================================================================
 // buildRegistry — constructs the full parameter list on first access.
 //
-// Iterates the descriptor getters to populate the registry.  All parameter
-// names, pointers, and tuning bounds are owned by the descriptors above —
-// buildRegistry never references individual eval param variables directly.
+// Iterates the descriptor getters to populate the registry.  Mobility
+// table entries and PST entries are generated via loops (same pattern),
+// avoiding repetitive manual listings.
 //
-// Total: 77 scalar + 124 mobility + 752 PST = 953 tunable parameters.
+// Total: scalar + mobility + PST tunable parameters.
 // ===========================================================================
 
 static std::vector<TuneEntry>& buildRegistry() {
   static std::vector<TuneEntry> reg;
   if (!reg.empty()) return reg;
 
-  // ---- Scalar entries (77) ------------------------------------------------
+  // ---- Scalar entries -----------------------------------------------------
   int nScalar;
   const auto* scalars = tuning::scalarParams(nScalar);
   for (int i = 0; i < nScalar; ++i) {
     const auto& s = scalars[i];
-    reg.push_back({s.name, s.ptr, *s.ptr, s.min, s.max, s.step});
+    reg.push_back({s.name, s.ptr, *s.ptr});
   }
 
-  // ---- Mobility tables (124) ----------------------------------------------
-  // Entry [0] of each table is fixed at 0 (zero mobility = zero bonus).
-  // Remaining entries [1..size-1] are tunable.
-  int nMob;
-  const auto* mobs = tuning::mobilityDefs(nMob);
-  for (int m = 0; m < nMob; ++m) {
-    const auto& md = mobs[m];
-    for (int i = 1; i < md.size; ++i) {
-      char mgName[32], egName[32];
-      std::snprintf(mgName, sizeof(mgName), "%s_MG_%d", md.prefix, i);
-      std::snprintf(egName, sizeof(egName), "%s_EG_%d", md.prefix, i);
-      char* mgN = new char[std::strlen(mgName) + 1]; std::strcpy(mgN, mgName);
-      char* egN = new char[std::strlen(egName) + 1]; std::strcpy(egN, egName);
-      reg.push_back({mgN, &md.mgData[i], md.mgData[i], md.min, md.max, md.step});
-      reg.push_back({egN, &md.egData[i], md.egData[i], md.min, md.max, md.step});
+  // ---- Mobility table entries (loop-generated, like PSTs) -----------------
+  // 8 tables × variable size = 132 entries total.
+  // Sizes mirror EVAL_FIXED values in eval_params.h (const = internal linkage,
+  // not accessible via extern).
+  struct ArrayInfo { const char* prefix; int* data; int size; };
+  // clang-format off
+  static const ArrayInfo mobArrays[] = {
+    {"MOB_KNIGHT_MG", MOB_KNIGHT_MG, 9},
+    {"MOB_KNIGHT_EG", MOB_KNIGHT_EG, 9},
+    {"MOB_BISHOP_MG", MOB_BISHOP_MG, 14},
+    {"MOB_BISHOP_EG", MOB_BISHOP_EG, 14},
+    {"MOB_ROOK_MG",   MOB_ROOK_MG,   15},
+    {"MOB_ROOK_EG",   MOB_ROOK_EG,   15},
+    {"MOB_QUEEN_MG",  MOB_QUEEN_MG,  28},
+    {"MOB_QUEEN_EG",  MOB_QUEEN_EG,  28},
+  };
+  // clang-format on
+  for (const auto& a : mobArrays) {
+    for (int i = 0; i < a.size; ++i) {
+      char buf[32];
+      std::snprintf(buf, sizeof(buf), "%s_%d", a.prefix, i);
+      char* name = new char[std::strlen(buf) + 1];
+      std::strcpy(name, buf);
+      reg.push_back({name, &a.data[i], a.data[i]});
     }
   }
 
-  // ---- PST entries (752) --------------------------------------------------
+  // ---- PST entries --------------------------------------------------------
   // 12 arrays × 64 squares = 768, minus 16 frozen pawn squares (rank 1 + 8).
   int nPst;
   const auto* psts = tuning::pstDefs(nPst);
@@ -882,7 +884,7 @@ static std::vector<TuneEntry>& buildRegistry() {
       std::snprintf(buf, sizeof(buf), "%s_%d", pd.prefix, sq);
       char* name = new char[std::strlen(buf) + 1];
       std::strcpy(name, buf);
-      reg.push_back({name, &pd.data[sq], pd.data[sq], pd.min, pd.max, pd.step});
+      reg.push_back({name, &pd.data[sq], pd.data[sq]});
     }
   }
 
@@ -900,9 +902,6 @@ const char* getName(int i)    { return buildRegistry()[i].name; }
 int getValue(int i)           { return *buildRegistry()[i].ptr; }
 void setValue(int i, int v)   { *buildRegistry()[i].ptr = v; }
 int getDefault(int i)         { return buildRegistry()[i].defaultVal; }
-int getMin(int i)             { return buildRegistry()[i].min; }
-int getMax(int i)             { return buildRegistry()[i].max; }
-int getStep(int i)            { return buildRegistry()[i].step; }
 
 }  // namespace tuning
 

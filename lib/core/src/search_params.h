@@ -198,10 +198,6 @@ static constexpr int SE_MARGIN_SCALE    = 2;
 // Reference: https://www.chessprogramming.org/Lazy_Evaluation
 static constexpr int LAZY_EVAL_MARGIN = 300;
 
-// Tempo bonus — small bonus for the side to move (initiative).
-// Reference: https://www.chessprogramming.org/Tempo
-static constexpr int TEMPO_BONUS = 10;
-
 }  // anonymous namespace
 }  // namespace search
 }  // namespace LibreChess

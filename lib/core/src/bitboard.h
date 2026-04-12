@@ -215,6 +215,14 @@ constexpr Bitboard shiftSW(Bitboard bb)    { return (bb & NOT_FILE_A) >> 9; }
 constexpr Bitboard fileBB(int file) { return FILE_A << file; }
 constexpr Bitboard rankBB(int rank) { return RANK_1 << (rank * 8); }
 
+// Bitboard of the one or two files adjacent to `file` (not including `file`).
+constexpr Bitboard adjacentFilesMask(int file) {
+  Bitboard mask = 0;
+  if (file > 0) mask |= fileBB(file - 1);
+  if (file < 7) mask |= fileBB(file + 1);
+  return mask;
+}
+
 // ---------------------------------------------------------------------------
 // BitboardSet — the bitboard position representation
 // ---------------------------------------------------------------------------
