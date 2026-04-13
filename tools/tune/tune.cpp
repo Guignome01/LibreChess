@@ -58,7 +58,10 @@ using namespace LibreChess;
 // ===========================================================================
 
 // Adam hyperparameters.
-static constexpr double ADAM_LR    = 0.1;
+// LR 0.001 is conservative for ~960 chess eval parameters.  Higher rates
+// cause too many parameters to shift at once, disrupting search-eval synergy
+// even when individual values look reasonable.
+static constexpr double ADAM_LR    = 0.005;
 static constexpr double ADAM_BETA1 = 0.9;
 static constexpr double ADAM_BETA2 = 0.999;
 static constexpr double ADAM_EPS   = 1e-8;
@@ -70,8 +73,7 @@ static constexpr int MOB_BISHOP_SIZE = 14;
 static constexpr int MOB_ROOK_SIZE   = 15;
 static constexpr int MOB_QUEEN_SIZE  = 28;
 
-// L2 regularization strength for PST parameters.
-static constexpr double L2_LAMBDA = 1e-7;
+
 
 // ===========================================================================
 // Corpus loading — EPD format with c9 "result" opcode
@@ -284,19 +286,146 @@ static bool validateGradients(
 }
 
 // ===========================================================================
-// Adam gradient descent
+// Parameter constraints — frozen params, sign bounds, mobility monotonicity
 // ===========================================================================
 
-/// Identify which param indices are PST entries (for L2 regularization).
-static std::vector<bool> buildPstFlags() {
+// Sign constraint for scalar parameters.  Penalties must stay ≤ 0, bonuses
+// must stay ≥ 0.  Prevents the optimizer from inverting term semantics.
+enum class SignConstraint { NONE, NON_NEGATIVE, NON_POSITIVE };
+
+/// Build a boolean mask identifying frozen (non-tunable) parameters.
+/// Material values are frozen because search pruning margins (futility,
+/// delta, razoring, SEE thresholds) are calibrated to specific piece values.
+/// Tuning material requires co-tuning all search constants — separate task.
+/// PSTs are frozen because they interact deeply with search pruning and are
+/// already well-calibrated (Michniewski); tuning 752 PST entries at once
+/// causes too much collective disruption.
+static std::vector<bool> buildFrozenMask() {
   int n = eval::tuning::paramCount();
-  std::vector<bool> isPst(n, false);
+  std::vector<bool> frozen(n, false);
   for (int i = 0; i < n; ++i) {
-    if (strncmp(eval::tuning::getName(i), "PST_", 4) == 0)
-      isPst[i] = true;
+    const char* name = eval::tuning::getName(i);
+    if (strncmp(name, "MAT_", 4) == 0 || strncmp(name, "PST_", 4) == 0)
+      frozen[i] = true;
   }
-  return isPst;
+  return frozen;
 }
+
+/// Build sign constraints from parameter names.  Uses the same name-matching
+/// pattern as the registry itself — robust against reordering.
+static std::vector<SignConstraint> buildSignConstraints() {
+  int n = eval::tuning::paramCount();
+  std::vector<SignConstraint> constraints(n, SignConstraint::NONE);
+
+  for (int i = 0; i < n; ++i) {
+    const char* name = eval::tuning::getName(i);
+
+    // --- Non-positive (penalties / costs ≤ 0) ---
+    if (strstr(name, "PENALTY"))            { constraints[i] = SignConstraint::NON_POSITIVE; continue; }
+    if (strstr(name, "BAD_BISHOP"))         { constraints[i] = SignConstraint::NON_POSITIVE; continue; }
+    if (strcmp(name, "SHIELD_OPEN_FILE") == 0) { constraints[i] = SignConstraint::NON_POSITIVE; continue; }
+    if (strcmp(name, "SHIELD_RANK_3") == 0) { constraints[i] = SignConstraint::NON_POSITIVE; continue; }
+    if (strcmp(name, "PASSER_OWN_KING_DIST_EG") == 0)  { constraints[i] = SignConstraint::NON_POSITIVE; continue; }
+    if (strcmp(name, "ROOK_BEHIND_ENEMY_EG") == 0)      { constraints[i] = SignConstraint::NON_POSITIVE; continue; }
+
+    // --- Non-negative (bonuses / rewards ≥ 0) ---
+    if (strstr(name, "BONUS"))              { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strstr(name, "OUTPOST"))            { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strstr(name, "BISHOP_PAIR"))        { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strstr(name, "PROTECTED_PASSER"))   { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strstr(name, "THREAT"))             { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strstr(name, "ROOK_OPEN_FILE"))     { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strstr(name, "ROOK_SEMI_OPEN"))     { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strstr(name, "ROOK_7TH"))           { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strstr(name, "SAFE_CHECK"))         { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strstr(name, "PASSED_R"))           { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strstr(name, "CONNECTED_R"))        { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strstr(name, "CANDIDATE_R"))        { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strcmp(name, "PASSER_ENEMY_KING_DIST_EG") == 0) { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strcmp(name, "ROOK_BEHIND_OWN_EG") == 0)        { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strcmp(name, "SPACE_WEIGHT") == 0)               { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strcmp(name, "SHIELD_RANK_0") == 0) { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+    if (strcmp(name, "SHIELD_RANK_1") == 0) { constraints[i] = SignConstraint::NON_NEGATIVE; continue; }
+
+    // Everything else (PSTs, mobility, SHIELD_RANK_2, PAWN_STORM) → NONE.
+  }
+  return constraints;
+}
+
+/// A contiguous group of mobility table entries (start index + count).
+struct MobilityGroup {
+  int start;  ///< First param index in this group.
+  int count;  ///< Number of entries.
+};
+
+/// Discover mobility groups from the registry.  Each group is a contiguous
+/// run of parameters whose names share a common prefix (e.g. "MOB_KNIGHT_MG").
+static std::vector<MobilityGroup> buildMobilityGroups() {
+  int n = eval::tuning::paramCount();
+  std::vector<MobilityGroup> groups;
+
+  int i = 0;
+  while (i < n) {
+    const char* name = eval::tuning::getName(i);
+    if (strncmp(name, "MOB_", 4) != 0) { ++i; continue; }
+
+    // Extract the group prefix (everything before the last '_' + digit).
+    // E.g. "MOB_KNIGHT_MG_0" → prefix "MOB_KNIGHT_MG_".
+    std::string prefix(name);
+    auto lastUnderscore = prefix.rfind('_');
+    if (lastUnderscore != std::string::npos)
+      prefix = prefix.substr(0, lastUnderscore + 1);
+
+    // Count contiguous entries with the same prefix.
+    int start = i;
+    while (i < n && strncmp(eval::tuning::getName(i), prefix.c_str(),
+                            prefix.size()) == 0)
+      ++i;
+    groups.push_back({start, i - start});
+  }
+  return groups;
+}
+
+/// Enforce monotonically non-decreasing values in a contiguous parameter
+/// range using the pool-adjacent-violators (PAV) isotonic regression.
+/// This is the L2-optimal projection onto the monotone cone.
+/// Reference: https://en.wikipedia.org/wiki/Isotonic_regression
+static void enforceMonotonicity(double* params, int start, int count) {
+  if (count <= 1) return;
+
+  // Pool-adjacent-violators: left-to-right pass.
+  // Each "block" is a range whose values have been averaged.
+  struct Block { int begin; int end; double sum; };
+  std::vector<Block> blocks;
+  blocks.reserve(count);
+
+  for (int i = 0; i < count; ++i) {
+    blocks.push_back({i, i + 1, params[start + i]});
+    // Merge backward while the new block violates monotonicity.
+    while (blocks.size() >= 2) {
+      auto& last = blocks[blocks.size() - 1];
+      auto& prev = blocks[blocks.size() - 2];
+      double avgLast = last.sum / (last.end - last.begin);
+      double avgPrev = prev.sum / (prev.end - prev.begin);
+      if (avgPrev <= avgLast) break;  // Monotone — done.
+      // Merge: absorb last into prev.
+      prev.end = last.end;
+      prev.sum += last.sum;
+      blocks.pop_back();
+    }
+  }
+
+  // Write averaged values back.
+  for (const auto& blk : blocks) {
+    double avg = blk.sum / (blk.end - blk.begin);
+    for (int i = blk.begin; i < blk.end; ++i)
+      params[start + i] = avg;
+  }
+}
+
+// ===========================================================================
+// Adam gradient descent
+// ===========================================================================
 
 static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
                          const std::vector<eval::TrainingPosition>& testSet,
@@ -307,7 +436,9 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
       static_cast<int>(std::thread::hardware_concurrency()));
   const int chunkSize = (N + nThreads - 1) / nThreads;
 
-  std::vector<bool> isPst = buildPstFlags();
+  std::vector<bool> frozen = buildFrozenMask();
+  std::vector<SignConstraint> signConstraints = buildSignConstraints();
+  std::vector<MobilityGroup> mobilityGroups = buildMobilityGroups();
 
   // Float accumulators — accumulate Adam updates in double precision.
   // Parameters are only rounded to int at the very end after all epochs,
@@ -374,10 +505,9 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
       for (int i = 0; i < nParams; ++i) gradient[i] += threadGrads[ti][i];
     for (int i = 0; i < nParams; ++i) gradient[i] /= N;
 
-    // L2 regularization for PSTs.
+    // Zero gradients for frozen parameters (material values).
     for (int i = 0; i < nParams; ++i) {
-      if (isPst[i])
-        gradient[i] += 2.0 * L2_LAMBDA * params[i];
+      if (frozen[i]) gradient[i] = 0.0;
     }
 
     // ----- Adam update (float accumulators, no rounding) -----
@@ -385,6 +515,8 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
     double beta2t = pow(ADAM_BETA2, epoch);
 
     for (int i = 0; i < nParams; ++i) {
+      if (frozen[i]) continue;  // Skip frozen — keeps m/v at zero.
+
       m[i] = ADAM_BETA1 * m[i] + (1.0 - ADAM_BETA1) * gradient[i];
       v[i] = ADAM_BETA2 * v[i] + (1.0 - ADAM_BETA2) * gradient[i] * gradient[i];
 
@@ -393,6 +525,22 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
 
       params[i] -= lr * mHat / (sqrt(vHat) + ADAM_EPS);
     }
+
+    // ----- Sign constraint clamping -----
+    // Penalties must stay ≤ 0, bonuses must stay ≥ 0.  Applied after Adam
+    // update to prevent the optimizer from inverting term semantics.
+    for (int i = 0; i < nParams; ++i) {
+      if (signConstraints[i] == SignConstraint::NON_NEGATIVE)
+        params[i] = std::max(0.0, params[i]);
+      else if (signConstraints[i] == SignConstraint::NON_POSITIVE)
+        params[i] = std::min(0.0, params[i]);
+    }
+
+    // ----- Mobility monotonicity projection -----
+    // More squares = better → enforce non-decreasing mobility tables.
+    // Uses pool-adjacent-violators (L2-optimal isotonic regression).
+    for (const auto& grp : mobilityGroups)
+      enforceMonotonicity(params.data(), grp.start, grp.count);
 
     // ----- Report + early stopping -----
     if (epoch == 1 || epoch % 5 == 0 || epoch == maxEpochs) {

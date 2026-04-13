@@ -28,7 +28,11 @@ Consolidated from 4 former files (`tools/tune/trace.h`, `trace.cpp`, `tune_regis
 - The former `TraceIndices` struct (40+ manual field declarations)
 - The former `initTraceIndices()` function (100+ manual `findParam()` calls)
 
-For array-based params (PST, mobility, king danger, passed rank, connected), the same pattern applies: `pIdx(&MOBILITY_KNIGHT_MG[nMob])`, `pIdx(PST_DATA[table] + sq)`, etc. Unregistered entries (e.g. mobility[0], passed rank[0]/[7]) return -1 and are safely skipped by `Trace::add`.  **Important**: every array index that the eval actually accesses with a nonzero value MUST be registered, otherwise the trace silently drops the contribution (e.g. CONNECTED_BONUS[6] for rank-7 connected pawns).
+For array-based params (PST, mobility, king danger, passed rank, connected), the same pattern applies: `pIdx(&MOBILITY_KNIGHT_MG[nMob])`, `pIdx(PST_DATA[table] + sq)`, etc. Unregistered entries (e.g. mobility[0], passed rank[0]/[7]) return -1 and are safely skipped by `Trace::add`.  **Important**: every array index that the eval actually accesses with a nonzero value MUST be registered, otherwise the trace silently drops the contribution.
+
+## Non-Tunable Parameters → Bias
+
+When a parameter is deliberately excluded from the registry (e.g. pawn material pinned at 100), its contribution MUST be added to `Trace::bias`.  The material loop checks `pIdx()` result: if >= 0, the coefficient goes into a tunable trace entry; if -1, the fixed contribution (`diff * phaseWeight * paramValue`) goes into bias.  **Failing to add unregistered but active parameters to bias** causes trace/eval divergence proportional to the missing term's magnitude — for pawn material, this was ~100cp per pawn imbalance, causing 58% of validation positions to mismatch and the tuner to systematically distort all other parameters to compensate.
 
 ## Shared Compute Helpers
 

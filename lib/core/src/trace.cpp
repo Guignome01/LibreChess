@@ -131,14 +131,23 @@ Trace extractTrace(const BitboardSet& bb) {
   }
 
   // -----------------------------------------------------------------------
-  // Material (P, N, B, R, Q) — all tunable, separate MG and EG.
+  // Material (P, N, B, R, Q) — separate MG and EG.
+  // Pawn material is pinned (not in the tuning registry), so its
+  // contribution goes into the trace bias instead of a tunable entry.
+  // Without this, the trace reconstruction is off by
+  // 100 × (whitePawns − blackPawns) centipawns, causing the optimizer
+  // to distort all other parameters to compensate.
   // -----------------------------------------------------------------------
   for (int i = 0; i < 5; ++i) {
     int wCount = popcount(bb.byPiece[i]);
     int bCount = popcount(bb.byPiece[i + 6]);
     float diff = static_cast<float>(wCount - bCount);
-    t.add(pIdx(&MATERIAL[i]), diff * mgW);
-    t.add(pIdx(&MATERIAL_EG[i]), diff * egW);
+    int mgIdx = pIdx(&MATERIAL[i]);
+    int egIdx = pIdx(&MATERIAL_EG[i]);
+    if (mgIdx >= 0) t.add(mgIdx, diff * mgW);
+    else            t.bias += diff * mgW * MATERIAL[i];
+    if (egIdx >= 0) t.add(egIdx, diff * egW);
+    else            t.bias += diff * egW * MATERIAL_EG[i];
   }
 
   // -----------------------------------------------------------------------
