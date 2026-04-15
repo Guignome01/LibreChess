@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Tuning — Adam gradient-descent optimizer for evaluation parameters.
+// Tuning — local search (coordinate descent) optimizer for eval parameters.
 //
 // Uses precomputed Traces (sparse feature vectors) extracted by mirroring
 // the logic of evaluatePosition() from evaluation.cpp.  Each trace records
@@ -11,19 +11,27 @@
 // at the operating point during trace extraction, so gradients are approximate
 // but accurate near current values.
 //
+// The optimizer uses classical Texel tuning: for each parameter, test ±1
+// from the current integer value and keep the change only if it reduces
+// MSE.  This avoids the float→int quantization noise of gradient descent,
+// which was shown to produce ~80 Elo regressions across 7 SPRT runs.
+//
+// An inverted index maps each parameter to the positions that reference it,
+// enabling O(affected positions) per test instead of O(all positions).
+//
 // Workflow:
 //   1. Load corpus (EPD format with c9 "result" opcode)
 //   2. Build name→index map from the tuning registry
 //   3. Extract traces for all positions (one-time, O(N))
 //   4. Find optimal sigmoid scaling constant K (ternary search)
-//   5. Adam gradient descent with float accumulators (~500 epochs)
-//   6. Round final params to int, output C++ code
+//   5. Local search: test each param ±1, keep MSE-improving changes
+//   6. Output C++ code with changed values
 //
 // After tuning, copy the formatted block from stdout into
 // eval_params.h, replacing the existing EVAL_CONST definitions.
 // Rebuild the tuner to start the next iteration from updated defaults.
 //
-// Usage: tune <corpus.epd> [epochs=500]
+// Usage: tune <corpus.epd> [maxPasses=500] [K]
 //
 // Reference: https://www.chessprogramming.org/Texel%27s_Tuning_Method
 // ---------------------------------------------------------------------------
@@ -56,15 +64,6 @@ using namespace LibreChess;
 // ===========================================================================
 // Constants
 // ===========================================================================
-
-// Adam hyperparameters.
-// LR 0.001 is conservative for ~960 chess eval parameters.  Higher rates
-// cause too many parameters to shift at once, disrupting search-eval synergy
-// even when individual values look reasonable.
-static constexpr double ADAM_LR    = 0.005;
-static constexpr double ADAM_BETA1 = 0.9;
-static constexpr double ADAM_BETA2 = 0.999;
-static constexpr double ADAM_EPS   = 1e-8;
 
 // Mobility table sizes — mirrors EVAL_FIXED values in eval_params.h.
 // (EVAL_FIXED = const under TUNING → internal linkage, not accessible here.)
@@ -203,89 +202,6 @@ static double findOptimalK(const std::vector<eval::TrainingPosition>& positions,
 }
 
 // ===========================================================================
-// Gradient validation — finite-difference check
-// ===========================================================================
-
-// Computes analytical gradient for a single parameter and compares against
-// central finite-difference approximation.  Catches chain-rule bugs in the
-// gradient computation before wasting time on training.
-// Standard ML technique ("gradient checking") — not part of the Texel method
-// itself, but essential for verifying chain-rule correctness in the gradient.
-
-/// Compute the analytical gradient for a single parameter.
-static double analyticalGradient(
-    const std::vector<eval::TrainingPosition>& data,
-    const double* params, double K, int paramIdx) {
-  const int N = static_cast<int>(data.size());
-  double grad = 0.0;
-  for (int i = 0; i < N; ++i) {
-    double score = traceScore(data[i].trace, params);
-    double sig = sigmoid(score, K);
-    double factor = 2.0 * (sig - data[i].result)
-                   * sig * (1.0 - sig) * (K * log(10.0) / 400.0);
-    if (data[i].trace.hasOCB) factor *= 0.75;
-    for (const auto& e : data[i].trace.entries) {
-      if (e.idx == paramIdx)
-        grad += factor * e.coeff;
-    }
-  }
-  return grad / N;
-}
-
-/// Validate analytical gradients against finite-difference for a sample
-/// of random parameters.  Returns true if all pass within tolerance.
-static bool validateGradients(
-    const std::vector<eval::TrainingPosition>& data,
-    const double* params, int nParams, double K) {
-  constexpr double EPSILON = 1e-4;
-  constexpr double REL_TOL = 1e-3;     // Relative tolerance.
-  constexpr int    SAMPLE  = 10;        // Number of params to check.
-
-  std::mt19937 rng(12345);
-  std::uniform_int_distribution<int> dist(0, nParams - 1);
-
-  // Copy params for perturbation.
-  std::vector<double> paramsCopy(params, params + nParams);
-
-  int failures = 0;
-  fprintf(stderr, "Gradient validation (%d random params, eps=%.0e):\n",
-          SAMPLE, EPSILON);
-
-  for (int s = 0; s < SAMPLE; ++s) {
-    int idx = dist(rng);
-
-    // Analytical.
-    double ag = analyticalGradient(data, paramsCopy.data(), K, idx);
-
-    // Numerical (central difference).
-    double origVal = paramsCopy[idx];
-    paramsCopy[idx] = origVal + EPSILON;
-    double errPlus = computeError(data, K, paramsCopy.data());
-    paramsCopy[idx] = origVal - EPSILON;
-    double errMinus = computeError(data, K, paramsCopy.data());
-    paramsCopy[idx] = origVal;  // Restore.
-    double ng = (errPlus - errMinus) / (2.0 * EPSILON);
-
-    double absDiff = fabs(ag - ng);
-    double denom = fmax(fabs(ag), fabs(ng)) + 1e-12;
-    double relErr = absDiff / denom;
-
-    const char* status = (relErr < REL_TOL) ? "OK" : "FAIL";
-    if (relErr >= REL_TOL) ++failures;
-
-    fprintf(stderr, "  [%s] param %4d (%-24s): analytical=%+.8e  numerical=%+.8e  relErr=%.2e\n",
-            status, idx, eval::tuning::getName(idx), ag, ng, relErr);
-  }
-
-  if (failures > 0)
-    fprintf(stderr, "WARNING: %d/%d gradient checks FAILED!\n", failures, SAMPLE);
-  else
-    fprintf(stderr, "All %d gradient checks passed.\n", SAMPLE);
-
-  return failures == 0;
-}
-
-// ===========================================================================
 // Parameter constraints — frozen params, sign bounds, mobility monotonicity
 // ===========================================================================
 
@@ -294,18 +210,38 @@ static bool validateGradients(
 enum class SignConstraint { NONE, NON_NEGATIVE, NON_POSITIVE };
 
 /// Build a boolean mask identifying frozen (non-tunable) parameters.
-/// Material values are frozen because search pruning margins (futility,
-/// delta, razoring, SEE thresholds) are calibrated to specific piece values.
-/// Tuning material requires co-tuning all search constants — separate task.
-/// PSTs are frozen because they interact deeply with search pruning and are
-/// already well-calibrated (Michniewski); tuning 752 PST entries at once
-/// causes too much collective disruption.
+///
+/// Frozen categories:
+///   MAT_*          — search pruning margins calibrated to piece values.
+///   PST_*          — 752 entries would dominate the gradient.
+///   MOB_*          — mobility tables are search-guidance terms: the tuner
+///                    flattens them (reducing MSE) but this destroys the
+///                    gradients the search relies on to distinguish good
+///                    moves.  Queen mobility was flattened to 5-7 identical
+///                    values, rook low-mobility became indistinguishable.
+///   SHIELD_*       — pawn shield terms interact non-linearly with king
+///                    safety table; Texel tuning can't capture this.
+///   PAWN_STORM_*   — same: tuner pushed storm values positive (welcoming
+///                    enemy pawn advances toward the castled king).
+///   SAFE_CHECK_*   — feed into the nonlinear KING_SAFETY_TABLE S-curve;
+///                    linearized trace coefficients are too approximate.
+///   SPACE_WEIGHT   — tuner reduced it 60% (5→2), nearly eliminating space
+///                    evaluation — a pure search-guidance term.
+///
+/// Only pawn structure scalars, piece bonuses, threats, and rook bonuses
+/// remain tunable (~50 parameters with clear eval-to-outcome correlation).
 static std::vector<bool> buildFrozenMask() {
   int n = eval::tuning::paramCount();
   std::vector<bool> frozen(n, false);
   for (int i = 0; i < n; ++i) {
     const char* name = eval::tuning::getName(i);
-    if (strncmp(name, "MAT_", 4) == 0 || strncmp(name, "PST_", 4) == 0)
+    if (strncmp(name, "MAT_", 4) == 0 ||
+        strncmp(name, "PST_", 4) == 0 ||
+        strncmp(name, "MOB_", 4) == 0 ||
+        strncmp(name, "SHIELD_", 7) == 0 ||
+        strncmp(name, "PAWN_STORM", 10) == 0 ||
+        strncmp(name, "SAFE_CHECK", 10) == 0 ||
+        strcmp(name, "SPACE_WEIGHT") == 0)
       frozen[i] = true;
   }
   return frozen;
@@ -386,50 +322,39 @@ static std::vector<MobilityGroup> buildMobilityGroups() {
   return groups;
 }
 
-/// Enforce monotonically non-decreasing values in a contiguous parameter
-/// range using the pool-adjacent-violators (PAV) isotonic regression.
-/// This is the L2-optimal projection onto the monotone cone.
-/// Reference: https://en.wikipedia.org/wiki/Isotonic_regression
-static void enforceMonotonicity(double* params, int start, int count) {
-  if (count <= 1) return;
-
-  // Pool-adjacent-violators: left-to-right pass.
-  // Each "block" is a range whose values have been averaged.
-  struct Block { int begin; int end; double sum; };
-  std::vector<Block> blocks;
-  blocks.reserve(count);
-
-  for (int i = 0; i < count; ++i) {
-    blocks.push_back({i, i + 1, params[start + i]});
-    // Merge backward while the new block violates monotonicity.
-    while (blocks.size() >= 2) {
-      auto& last = blocks[blocks.size() - 1];
-      auto& prev = blocks[blocks.size() - 2];
-      double avgLast = last.sum / (last.end - last.begin);
-      double avgPrev = prev.sum / (prev.end - prev.begin);
-      if (avgPrev <= avgLast) break;  // Monotone — done.
-      // Merge: absorb last into prev.
-      prev.end = last.end;
-      prev.sum += last.sum;
-      blocks.pop_back();
-    }
-  }
-
-  // Write averaged values back.
-  for (const auto& blk : blocks) {
-    double avg = blk.sum / (blk.end - blk.begin);
-    for (int i = blk.begin; i < blk.end; ++i)
-      params[start + i] = avg;
-  }
-}
-
 // ===========================================================================
-// Adam gradient descent
+// Local search — sequential coordinate descent with integer ±1 perturbation
 // ===========================================================================
 
-static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
-                         const std::vector<eval::TrainingPosition>& testSet,
-                         double K, int maxEpochs) {
+// Classical Texel tuning: for each parameter in turn, test ±1 and keep the
+// change if it reduces MSE.  Unlike batch approaches that compute all deltas
+// simultaneously, each change is applied immediately so subsequent tests see
+// up-to-date scores.  This avoids the cumulative drift that caused -269 Elo
+// in the batch variant (BISHOP_PAIR 30→108 over 500 batch passes).
+//
+// MAX_DELTA caps how far any parameter can move from its default value.
+// Without this, coordinate descent diverges: MSE improves but the resulting
+// values are chess-nonsensical (-308 Elo at MAX_DELTA=∞).
+//
+// Search-guidance parameters (mobility, king safety, space) are frozen —
+// they look like noise to position-level MSE optimization but the search
+// depends on their gradients.  Only ~50 scalars with clear static-eval-to-
+// outcome correlation remain tunable (pawn structure, piece bonuses, threats,
+// rook bonuses).
+//
+// For each unfrozen parameter, the delta computation is parallelized across
+// positions (scanning all positions' trace entries for references).
+// This is O(N × avg_entries) per param test, with threading.
+//
+// Reference: https://www.chessprogramming.org/Texel%27s_Tuning_Method
+
+/// Maximum drift from default per parameter.  Prevents coordinate descent
+/// from diverging into chess-nonsensical local minima.
+static constexpr int MAX_DELTA = 3;
+
+static void localSearch(std::vector<eval::TrainingPosition>& trainSet,
+                        const std::vector<eval::TrainingPosition>& testSet,
+                        double K, int maxPasses) {
   const int N = static_cast<int>(trainSet.size());
   const int nParams = eval::tuning::paramCount();
   const int nThreads = std::max(1,
@@ -440,138 +365,190 @@ static void adamOptimize(std::vector<eval::TrainingPosition>& trainSet,
   std::vector<SignConstraint> signConstraints = buildSignConstraints();
   std::vector<MobilityGroup> mobilityGroups = buildMobilityGroups();
 
-  // Float accumulators — accumulate Adam updates in double precision.
-  // Parameters are only rounded to int at the very end after all epochs,
-  // preventing sub-integer gradients from being destroyed by per-epoch
-  // rounding.
+  // Current integer parameters.
   std::vector<double> params(nParams);
   for (int i = 0; i < nParams; ++i)
     params[i] = static_cast<double>(eval::tuning::getValue(i));
 
-  // Adam state.
-  std::vector<double> m(nParams, 0.0);
-  std::vector<double> v(nParams, 0.0);
+  int unfrozen = static_cast<int>(
+      std::count(frozen.begin(), frozen.end(), false));
 
-  // Per-thread gradient accumulators.
-  std::vector<std::vector<double>> threadGrads(nThreads,
-      std::vector<double>(nParams, 0.0));
+  // ----- Precompute base scores and sigmoid values (multithreaded) -----
+  std::vector<double> rawScores(N);
+  std::vector<double> sigValues(N);
 
-  // --- Early stopping ---
-  // Track best test MSE and stop if no improvement for 50 epochs.
-  // Saves the best parameters (lowest test MSE).
-  // Standard ML technique — prevents overfitting on ~960 parameters.
-  constexpr int PATIENCE = 50;
-  double bestTestMSE = 1e30;
-  int epochsSinceImprove = 0;
-  std::vector<double> bestParams = params;
-
-  for (int epoch = 1; epoch <= maxEpochs; ++epoch) {
-    // --- Cosine annealing learning rate schedule ---
-    // Gradually reduces LR from ADAM_LR toward a minimum floor, reducing
-    // oscillation in later epochs while maintaining aggressive early
-    // learning.  The floor at 1% of initial LR prevents late-epoch
-    // stagnation — without it, LR drops to ~0.001 by epoch 400 and
-    // parameters can barely move in the final 100 epochs.
-    // Reference: Loshchilov & Hutter, "SGDR: Stochastic Gradient Descent
-    // with Warm Restarts", 2017.
-    double lr = ADAM_LR * std::max(0.01, 0.5 * (1.0 + cos(M_PI * epoch / maxEpochs)));
-
-    // ----- Compute gradient (multi-threaded) -----
-    for (auto& g : threadGrads) std::fill(g.begin(), g.end(), 0.0);
-
-    auto worker = [&](int threadIdx) {
-      int start = threadIdx * chunkSize;
+  auto recomputeAll = [&]() -> double {
+    std::vector<double> partialErr(nThreads, 0.0);
+    auto worker = [&](int ti) {
+      int start = ti * chunkSize;
       int end = std::min(start + chunkSize, N);
-      auto& grad = threadGrads[threadIdx];
+      double localErr = 0.0;
+      for (int j = start; j < end; ++j) {
+        double raw = trainSet[j].trace.bias;
+        for (const auto& e : trainSet[j].trace.entries)
+          raw += params[e.idx] * e.coeff;
+        rawScores[j] = raw;
+        double s = trainSet[j].trace.hasOCB ? raw * 0.75 : raw;
+        sigValues[j] = sigmoid(s, K);
+        double diff = trainSet[j].result - sigValues[j];
+        localErr += diff * diff;
+      }
+      partialErr[ti] = localErr;
+    };
+    std::vector<std::thread> threads;
+    for (int ti = 0; ti < nThreads; ++ti)
+      threads.emplace_back(worker, ti);
+    for (auto& th : threads) th.join();
+    double total = 0.0;
+    for (double e : partialErr) total += e;
+    return total / N;
+  };
 
-      for (int i = start; i < end; ++i) {
-        double score = traceScore(trainSet[i].trace, params.data());
-        double sig = sigmoid(score, K);
-        double factor = 2.0 * (sig - trainSet[i].result)
-                       * sig * (1.0 - sig) * (K * log(10.0) / 400.0);
-        if (trainSet[i].trace.hasOCB) factor *= 0.75;
-        for (const auto& e : trainSet[i].trace.entries)
-          grad[e.idx] += factor * e.coeff;
+  double baseMSE = recomputeAll();
+  fprintf(stderr, "Local search: initial MSE = %.10f (%d unfrozen params, "
+          "MAX_DELTA=%d)\n", baseMSE, unfrozen, MAX_DELTA);
+
+  // ----- Test a single param ±delta: compute MSE change (multithreaded) -----
+  // Scans all positions for references to paramIdx, computes the MSE delta
+  // if that param were changed by `delta`.  Returns unnormalized sum of
+  // squared-error changes (caller divides by N).
+  auto computeParamDelta = [&](int paramIdx, double delta) -> double {
+    std::vector<double> partials(nThreads, 0.0);
+    auto worker = [&](int ti) {
+      int start = ti * chunkSize;
+      int end = std::min(start + chunkSize, N);
+      double local = 0.0;
+      for (int j = start; j < end; ++j) {
+        for (const auto& e : trainSet[j].trace.entries) {
+          if (e.idx == paramIdx) {
+            double newRaw = rawScores[j] + delta * e.coeff;
+            double newFinal = trainSet[j].trace.hasOCB
+                ? newRaw * 0.75 : newRaw;
+            double newSig = sigmoid(newFinal, K);
+            double oldDiff = trainSet[j].result - sigValues[j];
+            double newDiff = trainSet[j].result - newSig;
+            local += newDiff * newDiff - oldDiff * oldDiff;
+            break;  // Each param appears at most once per trace.
+          }
+        }
+      }
+      partials[ti] = local;
+    };
+    std::vector<std::thread> threads;
+    for (int ti = 0; ti < nThreads; ++ti)
+      threads.emplace_back(worker, ti);
+    for (auto& th : threads) th.join();
+    double total = 0.0;
+    for (double d : partials) total += d;
+    return total / N;
+  };
+
+  // ----- Apply a param change: update rawScores/sigValues (multithreaded) -----
+  auto applyParamChange = [&](int paramIdx, double delta) {
+    auto worker = [&](int ti) {
+      int start = ti * chunkSize;
+      int end = std::min(start + chunkSize, N);
+      for (int j = start; j < end; ++j) {
+        for (const auto& e : trainSet[j].trace.entries) {
+          if (e.idx == paramIdx) {
+            rawScores[j] += delta * e.coeff;
+            double s = trainSet[j].trace.hasOCB
+                ? rawScores[j] * 0.75 : rawScores[j];
+            sigValues[j] = sigmoid(s, K);
+            break;
+          }
+        }
       }
     };
-
     std::vector<std::thread> threads;
-    for (int ti = 0; ti < nThreads; ++ti) threads.emplace_back(worker, ti);
-    for (auto& th : threads) th.join();
-
-    // Merge per-thread gradients.
-    std::vector<double> gradient(nParams, 0.0);
     for (int ti = 0; ti < nThreads; ++ti)
-      for (int i = 0; i < nParams; ++i) gradient[i] += threadGrads[ti][i];
-    for (int i = 0; i < nParams; ++i) gradient[i] /= N;
+      threads.emplace_back(worker, ti);
+    for (auto& th : threads) th.join();
+  };
 
-    // Zero gradients for frozen parameters (material values).
+  // Convergence: stop when no changes or MSE improvement is negligible.
+  // Relative threshold avoids oscillation (params flipping back and forth).
+  static constexpr double MIN_RELATIVE_IMPROVEMENT = 1e-8;
+  double bestMSESoFar = baseMSE;
+
+  for (int pass = 1; pass <= maxPasses; ++pass) {
+    double startMSE = baseMSE;
+    int changes = 0;
+
+    // ----- Sequential: test each param with up-to-date scores -----
     for (int i = 0; i < nParams; ++i) {
-      if (frozen[i]) gradient[i] = 0.0;
-    }
+      if (frozen[i]) continue;
 
-    // ----- Adam update (float accumulators, no rounding) -----
-    double beta1t = pow(ADAM_BETA1, epoch);
-    double beta2t = pow(ADAM_BETA2, epoch);
+      double origVal = params[i];
+      int defaultVal = eval::tuning::getDefault(i);
+      double bestMSEDelta = 0;  // Must be < 0 to accept.
+      double bestDelta = 0;
 
-    for (int i = 0; i < nParams; ++i) {
-      if (frozen[i]) continue;  // Skip frozen — keeps m/v at zero.
+      for (double delta : {1.0, -1.0}) {
+        double newVal = origVal + delta;
 
-      m[i] = ADAM_BETA1 * m[i] + (1.0 - ADAM_BETA1) * gradient[i];
-      v[i] = ADAM_BETA2 * v[i] + (1.0 - ADAM_BETA2) * gradient[i] * gradient[i];
+        // MAX_DELTA constraint: limit drift from default.
+        if (std::abs(newVal - defaultVal) > MAX_DELTA) continue;
 
-      double mHat = m[i] / (1.0 - beta1t);
-      double vHat = v[i] / (1.0 - beta2t);
+        // Sign constraints.
+        if (signConstraints[i] == SignConstraint::NON_POSITIVE && newVal > 0)
+          continue;
+        if (signConstraints[i] == SignConstraint::NON_NEGATIVE && newVal < 0)
+          continue;
 
-      params[i] -= lr * mHat / (sqrt(vHat) + ADAM_EPS);
-    }
-
-    // ----- Sign constraint clamping -----
-    // Penalties must stay ≤ 0, bonuses must stay ≥ 0.  Applied after Adam
-    // update to prevent the optimizer from inverting term semantics.
-    for (int i = 0; i < nParams; ++i) {
-      if (signConstraints[i] == SignConstraint::NON_NEGATIVE)
-        params[i] = std::max(0.0, params[i]);
-      else if (signConstraints[i] == SignConstraint::NON_POSITIVE)
-        params[i] = std::min(0.0, params[i]);
-    }
-
-    // ----- Mobility monotonicity projection -----
-    // More squares = better → enforce non-decreasing mobility tables.
-    // Uses pool-adjacent-violators (L2-optimal isotonic regression).
-    for (const auto& grp : mobilityGroups)
-      enforceMonotonicity(params.data(), grp.start, grp.count);
-
-    // ----- Report + early stopping -----
-    if (epoch == 1 || epoch % 5 == 0 || epoch == maxEpochs) {
-      double trainErr = computeError(trainSet, K, params.data());
-      double testErr  = computeError(testSet, K, params.data());
-      fprintf(stderr, "Epoch %4d: train MSE = %.10f, test MSE = %.10f  (lr=%.6f)\n",
-              epoch, trainErr, testErr, lr);
-
-      if (testErr < bestTestMSE) {
-        bestTestMSE = testErr;
-        bestParams = params;
-        epochsSinceImprove = 0;
-      } else {
-        epochsSinceImprove += (epoch == 1) ? 1 : 5;
+        double mseDelta = computeParamDelta(i, delta);
+        if (mseDelta < bestMSEDelta) {
+          bestMSEDelta = mseDelta;
+          bestDelta = delta;
+        }
       }
-      if (epochsSinceImprove >= PATIENCE) {
-        fprintf(stderr, "Early stopping at epoch %d (no improvement for %d epochs)\n",
-                epoch, PATIENCE);
-        break;
+
+      // Accept the best improving change and immediately update scores.
+      if (bestDelta != 0) {
+        params[i] = origVal + bestDelta;
+        baseMSE += bestMSEDelta;
+        ++changes;
+        applyParamChange(i, bestDelta);
       }
     }
+
+    // Enforce mobility monotonicity after each full pass.
+    bool monoViolated = false;
+    for (const auto& grp : mobilityGroups) {
+      for (int j = grp.start + 1; j < grp.start + grp.count; ++j) {
+        if (params[j] < params[j - 1]) {
+          params[j] = params[j - 1];
+          monoViolated = true;
+        }
+      }
+    }
+    if (monoViolated) baseMSE = recomputeAll();
+
+    double testMSE = computeError(testSet, K, params.data());
+    fprintf(stderr, "Pass %3d: %3d changes, train MSE = %.10f, "
+            "test MSE = %.10f\n", pass, changes, baseMSE, testMSE);
+
+    if (changes == 0) {
+      fprintf(stderr, "Converged (no changes) after %d passes.\n", pass);
+      break;
+    }
+
+    // Check relative improvement.  Catches oscillation where changes != 0
+    // but net MSE barely moves (params flipping back and forth).
+    double relImprovement = (startMSE - baseMSE) / startMSE;
+    if (relImprovement < MIN_RELATIVE_IMPROVEMENT) {
+      fprintf(stderr, "Converged (relative improvement %.2e < %.2e) "
+              "after %d passes.\n", relImprovement,
+              MIN_RELATIVE_IMPROVEMENT, pass);
+      break;
+    }
+
+    bestMSESoFar = std::min(bestMSESoFar, baseMSE);
   }
 
-  // Use the best parameters found (lowest test MSE).
-  params = bestParams;
-
-  // ----- Finalize: round to int, write to registry -----
-  for (int i = 0; i < nParams; ++i) {
-    int rounded = static_cast<int>(std::round(params[i]));
-    eval::tuning::setValue(i, rounded);
-  }
+  // Write final integer values to registry.
+  for (int i = 0; i < nParams; ++i)
+    eval::tuning::setValue(i, static_cast<int>(std::round(params[i])));
 }
 
 // ---------------------------------------------------------------------------
@@ -838,20 +815,15 @@ int main(int argc, char* argv[]) {
     fprintf(stderr, "Optimal K = %.6f\n", K);
   }
 
-  // Validate analytical gradients before training.
-  validateGradients(trainSet, initParams.data(),
-                    eval::tuning::paramCount(), K);
-
   double initTrainErr = computeError(trainSet, K, initParams.data());
   double initTestErr  = computeError(testSet, K, initParams.data());
   fprintf(stderr, "Initial: train MSE = %.10f, test MSE = %.10f\n",
           initTrainErr, initTestErr);
 
-  // Adam optimization.
-  fprintf(stderr, "Starting Adam (%d params, %d epochs, %d threads)...\n",
-          eval::tuning::paramCount(), maxEpochs,
-          static_cast<int>(std::thread::hardware_concurrency()));
-  adamOptimize(trainSet, testSet, K, maxEpochs);
+  // Local search optimization (classical Texel method).
+  fprintf(stderr, "Starting local search (%d params, max %d passes)...\n",
+          eval::tuning::paramCount(), maxEpochs);
+  localSearch(trainSet, testSet, K, maxEpochs);
 
   // Final error (using integer-rounded values now in the registry).
   std::vector<double> finalParams(eval::tuning::paramCount());

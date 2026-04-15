@@ -1,3 +1,5 @@
 obj/
 tune.exe
-quiet-labeled.epd
+*.epd
+*.pgn
+config.json
