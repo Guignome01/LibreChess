@@ -309,6 +309,130 @@ Trace extractTrace(const BitboardSet& bb) {
     }
     t.add(pIdx(&PASSER_OWN_KING_DIST_EG), ownCoeff * egW);
     t.add(pIdx(&PASSER_ENEMY_KING_DIST_EG), enemyCoeff * egW);
+
+    // Rule of the Square — mirrors evalPassedPawnKingDist() unstoppable check.
+    // Gated on enemy having no non-pawn pieces (pure pawn endgame).
+    float unstoppableCoeff = 0.0f;
+    Bitboard allPieces = bb.byColor[0] | bb.byColor[1];
+    Bitboard enemyPieces[2];
+    for (int ce = 0; ce < 2; ++ce) {
+      Color eneC = (ce == 0) ? Color::BLACK : Color::WHITE;
+      enemyPieces[ce] = bb.byColor[1 - ce]
+          & ~bb.byPiece[pieceIndex(eneC, PieceType::PAWN)]
+          & ~bb.byPiece[pieceIndex(eneC, PieceType::KING)];
+    }
+    int bestDist[2]     = {99, 99};
+    Square bestPromo[2] = {0, 0};
+    for (int c2 = 0; c2 < 2; ++c2) {
+      Bitboard p2 = passedPawns[c2];
+      if (!p2) continue;
+      float s2 = (c2 == 0) ? 1.0f : -1.0f;
+      Color ene2 = (c2 == 0) ? Color::BLACK : Color::WHITE;
+      Square eKSq = lsb(bb.byPiece[pieceIndex(ene2, PieceType::KING)]);
+      while (p2) {
+        Square sq = popLsb(p2);
+        if (enemyPieces[c2] == 0) {
+          int promoRank = (c2 == 0) ? 7 : 0;
+          Square promoSq = makeSquare(promoRank, fileOf(sq));
+          int pawnDist = (c2 == 0) ? (7 - rankOf(sq)) : rankOf(sq);
+          if (pawnDist > 5) pawnDist = 5;  // double-push from home rank
+          // Frontspan: same file, ranks ahead of the pawn.
+          Bitboard fileMask = fileBB(fileOf(sq));
+          Bitboard frontspan = (c2 == 0)
+              ? fileMask & ~((static_cast<Bitboard>(1) << (8 * (rankOf(sq) + 1))) - 1)
+              : fileMask & ((static_cast<Bitboard>(1) << (8 * rankOf(sq))) - 1);
+          bool clearPath = (frontspan & allPieces) == 0;
+          int kingToPromo = chebyshevDistance(eKSq, promoSq);
+          if (clearPath && kingToPromo > pawnDist) {
+            unstoppableCoeff += s2;
+            if (pawnDist < bestDist[c2]) {
+              bestDist[c2] = pawnDist;
+              bestPromo[c2] = promoSq;
+            }
+          }
+        }
+      }
+    }
+    t.add(pIdx(&UNSTOPPABLE_PASSER_EG), unstoppableCoeff * egW);
+
+    // Pawn race — mirrors evalPassedPawnKingDist() race detection.
+    float raceCoeff = 0.0f, raceCheckCoeff = 0.0f;
+    if (bestDist[0] <= 7 && bestDist[1] <= 7) {
+      int diff = bestDist[1] - bestDist[0];
+      if (diff != 0) {
+        int fasterColor = (diff > 0) ? 0 : 1;
+        float raceSgn = (fasterColor == 0) ? 1.0f : -1.0f;
+        raceCoeff = raceSgn;
+        Square promoSq = bestPromo[fasterColor];
+        Color ene = (fasterColor == 0) ? Color::BLACK : Color::WHITE;
+        Square eKSq = lsb(bb.byPiece[pieceIndex(ene, PieceType::KING)]);
+        Bitboard queenAtk = attacks::queen(promoSq, allPieces);
+        if (queenAtk & (static_cast<Bitboard>(1) << eKSq))
+          raceCheckCoeff = raceSgn;
+      }
+    }
+    t.add(pIdx(&PAWN_RACE_ADVANTAGE_EG), raceCoeff * egW);
+    t.add(pIdx(&PAWN_RACE_CHECK_EG), raceCheckCoeff * egW);
+  }
+
+  // -----------------------------------------------------------------------
+  // Outside passed pawn (EG only) — mirrors evalOutsidePasser().
+  // -----------------------------------------------------------------------
+  {
+    Bitboard pawns2[2] = {
+      bb.byPiece[pieceIndex('P')],
+      bb.byPiece[pieceIndex('p')]
+    };
+    float outsideCoeff = 0.0f;
+    for (int c = 0; c < 2; ++c) {
+      Bitboard passed = passedPawns[c];
+      if (!passed) continue;
+      Bitboard enemy = pawns2[1 - c];
+      if (!enemy) continue;
+      int minFile = 7, maxFile = 0;
+      Bitboard ep = enemy;
+      while (ep) {
+        int f = fileOf(popLsb(ep));
+        if (f < minFile) minFile = f;
+        if (f > maxFile) maxFile = f;
+      }
+      float s = (c == 0) ? 1.0f : -1.0f;
+      Bitboard pp = passed;
+      while (pp) {
+        Square sq = popLsb(pp);
+        int f = fileOf(sq);
+        if ((f < minFile && minFile - f >= 2) ||
+            (f > maxFile && f - maxFile >= 2)) {
+          outsideCoeff += s;
+        }
+      }
+    }
+    t.add(pIdx(&OUTSIDE_PASSER_EG), outsideCoeff * egW);
+  }
+
+  // -----------------------------------------------------------------------
+  // King-pawn tropism (EG only) — mirrors evalKingPawnTropism().
+  // -----------------------------------------------------------------------
+  {
+    Bitboard allPawns = bb.byPiece[pieceIndex('P')]
+                      | bb.byPiece[pieceIndex('p')];
+    float tropismCoeff = 0.0f;
+    if (allPawns) {
+      int pawnCount = popcount(allPawns);
+      int totalDist[2] = {0, 0};
+      for (int c = 0; c < 2; ++c) {
+        Color col = (c == 0) ? Color::WHITE : Color::BLACK;
+        Square kingSq = lsb(bb.byPiece[pieceIndex(col, PieceType::KING)]);
+        Bitboard p = allPawns;
+        while (p) {
+          Square sq = popLsb(p);
+          totalDist[c] += chebyshevDistance(kingSq, sq);
+        }
+      }
+      int diff = totalDist[1] - totalDist[0];
+      tropismCoeff = static_cast<float>(diff) / pawnCount;
+    }
+    t.add(pIdx(&KING_PAWN_TROPISM_EG), tropismCoeff * egW);
   }
 
   // -----------------------------------------------------------------------
@@ -682,6 +806,32 @@ Trace extractTrace(const BitboardSet& bb) {
     t.add(pIdx(&SPACE_WEIGHT), spaceCoeff * mgW);
   }
 
+  // -----------------------------------------------------------------------
+  // Mop-up — mirrors evalMopUp() in evaluation.cpp.
+  // Two tunable EG weights, gated by material threshold.
+  // -----------------------------------------------------------------------
+  {
+    int material = computeMaterial(bb);
+    int absMat = material > 0 ? material : -material;
+    if (absMat >= MOPUP_THRESHOLD) {
+      int winColor  = material > 0 ? 0 : 1;
+      int loseColor = 1 - winColor;
+      float sign = (winColor == 0) ? 1.0f : -1.0f;
+
+      Color winCol  = (winColor == 0) ? Color::WHITE : Color::BLACK;
+      Color loseCol = (loseColor == 0) ? Color::WHITE : Color::BLACK;
+      Square winKingSq  = lsb(bb.byPiece[pieceIndex(winCol, PieceType::KING)]);
+      Square loseKingSq = lsb(bb.byPiece[pieceIndex(loseCol, PieceType::KING)]);
+
+      float cmdCoeff   = sign * static_cast<float>(centerManhattanDist(loseKingSq));
+      float closeCoeff = sign * static_cast<float>(
+          14 - chebyshevDistance(winKingSq, loseKingSq));
+
+      t.add(pIdx(&MOPUP_CMD_WEIGHT), cmdCoeff * egW);
+      t.add(pIdx(&MOPUP_CLOSE_KING), closeCoeff * egW);
+    }
+  }
+
   return t;
 }
 
@@ -754,6 +904,15 @@ const tuning::ScalarParam* tuning::scalarParams(int& count) {
     // --- Passed pawn king proximity (2) ---
     {"PASSER_OWN_KING_DIST_EG",   &PASSER_OWN_KING_DIST_EG},
     {"PASSER_ENEMY_KING_DIST_EG", &PASSER_ENEMY_KING_DIST_EG},
+    // --- Unstoppable passer (1) ---
+    {"UNSTOPPABLE_PASSER_EG",     &UNSTOPPABLE_PASSER_EG},
+    // --- Pawn race (2) ---
+    {"PAWN_RACE_ADVANTAGE_EG",    &PAWN_RACE_ADVANTAGE_EG},
+    {"PAWN_RACE_CHECK_EG",        &PAWN_RACE_CHECK_EG},
+    // --- Outside passer (1) ---
+    {"OUTSIDE_PASSER_EG",         &OUTSIDE_PASSER_EG},
+    // --- King-pawn tropism (1) ---
+    {"KING_PAWN_TROPISM_EG",      &KING_PAWN_TROPISM_EG},
     // --- Bishop pair (2) ---
     {"BISHOP_PAIR_MG",          &BISHOP_PAIR_MG},
     {"BISHOP_PAIR_EG",          &BISHOP_PAIR_EG},
@@ -805,6 +964,9 @@ const tuning::ScalarParam* tuning::scalarParams(int& count) {
     {"SAFE_CHECK_QUEEN",        &SAFE_CHECK_QUEEN},
     // --- Space (1) ---
     {"SPACE_WEIGHT",            &SPACE_WEIGHT},
+    // --- Mop-up (2) ---
+    {"MOPUP_CMD_WEIGHT",        &MOPUP_CMD_WEIGHT},
+    {"MOPUP_CLOSE_KING",        &MOPUP_CLOSE_KING},
   };
   // clang-format on
   count = sizeof(params) / sizeof(params[0]);

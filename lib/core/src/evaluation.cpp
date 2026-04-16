@@ -495,6 +495,23 @@ static void evalBishopPair(const BitboardSet& bb,
 static void evalPassedPawnKingDist(const BitboardSet& bb,
                                    const Bitboard passedPawns[2],
                                    int& egScore) {
+  Bitboard allPieces = bb.byColor[0] | bb.byColor[1];
+
+  // Per-side check: does the enemy have any non-pawn, non-king material?
+  // Unstoppable passer and pawn race only apply in pure pawn endgames —
+  // any enemy piece (knight, bishop, rook, queen) can intercept a passer
+  // regardless of the king's distance to the promotion square.
+  Bitboard enemyPieces[2];
+  for (int c = 0; c < 2; ++c) {
+    enemyPieces[c] = bb.byColor[1 - c]
+        & ~bb.byPiece[pieceIndex(COLORS[1 - c], PieceType::PAWN)]
+        & ~bb.byPiece[pieceIndex(COLORS[1 - c], PieceType::KING)];
+  }
+
+  // Track the fastest unstoppable passer per side for pawn race detection.
+  int bestDist[2]     = {99, 99};
+  Square bestPromo[2] = {0, 0};
+
   for (int c = 0; c < 2; ++c) {
     Bitboard passed = passedPawns[c];
     if (!passed) continue;
@@ -509,8 +526,147 @@ static void evalPassedPawnKingDist(const BitboardSet& bb,
       int enemyDist = chebyshevDistance(sq, enemyKingSq);
       egScore += sign * (PASSER_OWN_KING_DIST_EG * ownDist
                        + PASSER_ENEMY_KING_DIST_EG * enemyDist);
+
+      // Rule of the Square — bonus when enemy king cannot catch the pawn.
+      // Only valid in pure pawn endgames: any enemy piece can intercept,
+      // making the geometric king-distance check meaningless.
+      // Pawn distance is capped at 5 to account for the initial double push.
+      // Only applied when the frontspan (path to promotion) is clear of all
+      // pieces — a blocked pawn is not unstoppable regardless of king distance.
+      // Conservative: no STM adjustment (eval has no side-to-move context).
+      // Reference: https://www.chessprogramming.org/Rule_of_the_Square
+      // Reference: https://www.chessprogramming.org/Unstoppable_Passer
+      if (enemyPieces[c] == 0) {
+        int promoRank = (c == 0) ? 7 : 0;
+        Square promoSq = makeSquare(promoRank, fileOf(sq));
+        int pawnDist = (c == 0) ? (7 - rankOf(sq)) : rankOf(sq);
+        if (pawnDist > 5) pawnDist = 5;  // double-push from home rank
+        bool clearPath = (forwardMask(COLORS[c], sq) & allPieces) == 0;
+        int kingToPromo = chebyshevDistance(enemyKingSq, promoSq);
+        if (clearPath && kingToPromo > pawnDist) {
+          egScore += sign * UNSTOPPABLE_PASSER_EG;
+          if (pawnDist < bestDist[c]) {
+            bestDist[c] = pawnDist;
+            bestPromo[c] = promoSq;
+          }
+        }
+      }
     }
   }
+
+  // Pawn race — when both sides have unstoppable passers, bonus for the side
+  // that promotes first.  If the promoted queen gives check, the promoting
+  // side gains a critical tempo (opponent must address the check before
+  // promoting their own pawn).
+  // Both sides must be in a pure pawn endgame for the race to be meaningful.
+  // Reference: https://www.chessprogramming.org/Pawn_Race
+  if (bestDist[0] <= 7 && bestDist[1] <= 7) {
+    int diff = bestDist[1] - bestDist[0];  // positive = white faster
+    if (diff != 0) {
+      int fasterColor = (diff > 0) ? 0 : 1;
+      int raceSgn = SIDE_SIGN[fasterColor];
+      egScore += raceSgn * PAWN_RACE_ADVANTAGE_EG;
+
+      // Queen check on promotion — queen attacks = rook + bishop from the
+      // promotion square.  Uses current occupancy (approximate).
+      Square promoSq = bestPromo[fasterColor];
+      Square enemyKingSq = lsb(bb.byPiece[pieceIndex(
+          COLORS[1 - fasterColor], PieceType::KING)]);
+      Bitboard queenAtk = attacks::queen(promoSq, allPieces);
+      if (queenAtk & (static_cast<Bitboard>(1) << enemyKingSq))
+        egScore += raceSgn * PAWN_RACE_CHECK_EG;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Outside passed pawn — bonus when a passer is on a file beyond the range
+// of all opponent pawns.  Such passers force the enemy king to the flank,
+// leaving the friendly king free to dominate the center and attack the
+// remaining pawn mass.  EG only — the concept is most relevant in endgames.
+//
+// Detection: a passed pawn on file F is "outside" if F < min(enemy files)
+// or F > max(enemy files), with at least 2-file separation to avoid
+// trivial cases.
+//
+// Reference: https://www.chessprogramming.org/Outside_Passed_Pawn
+// ---------------------------------------------------------------------------
+
+static void evalOutsidePasser(const BitboardSet& bb,
+                              const Bitboard passedPawns[2],
+                              int& egScore) {
+  Bitboard pawns[2] = {
+    bb.byPiece[pieceIndex('P')],
+    bb.byPiece[pieceIndex('p')]
+  };
+
+  for (int c = 0; c < 2; ++c) {
+    Bitboard passed = passedPawns[c];
+    if (!passed) continue;
+
+    Bitboard enemy = pawns[1 - c];
+    if (!enemy) continue;  // no enemy pawns → no "outside" concept
+
+    // Compute file range of enemy pawns.
+    int minFile = 7, maxFile = 0;
+    Bitboard ep = enemy;
+    while (ep) {
+      int f = fileOf(popLsb(ep));
+      if (f < minFile) minFile = f;
+      if (f > maxFile) maxFile = f;
+    }
+
+    int sign = SIDE_SIGN[c];
+    Bitboard pp = passed;
+    while (pp) {
+      Square sq = popLsb(pp);
+      int f = fileOf(sq);
+      if ((f < minFile && minFile - f >= 2) ||
+          (f > maxFile && f - maxFile >= 2)) {
+        egScore += sign * OUTSIDE_PASSER_EG;
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// King-pawn tropism — penalise when a king is far from all pawns, EG only.
+//
+// In endgames, the king must be near the action: supporting own passers,
+// defending own weaknesses, and attacking enemy pawns.  Computed as the
+// average Chebyshev distance from each king to ALL pawns (own + enemy).
+// The king closer to the overall pawn mass gets a bonus.
+//
+// This complements passed-pawn king distance (which only covers passers)
+// and the king EG PST (which only rewards centralisation). It handles
+// positions where all pawns are on one wing and the king is stranded on
+// the opposite side.
+//
+// Reference: https://www.chessprogramming.org/King_Pawn_Tropism
+// ---------------------------------------------------------------------------
+
+static void evalKingPawnTropism(const BitboardSet& bb, int& egScore) {
+  Bitboard allPawns = bb.byPiece[pieceIndex('P')]
+                    | bb.byPiece[pieceIndex('p')];
+  if (!allPawns) return;
+
+  int pawnCount = popcount(allPawns);
+
+  int totalDist[2] = {0, 0};
+  for (int c = 0; c < 2; ++c) {
+    Square kingSq = lsb(bb.byPiece[pieceIndex(COLORS[c], PieceType::KING)]);
+    Bitboard p = allPawns;
+    while (p) {
+      Square sq = popLsb(p);
+      totalDist[c] += chebyshevDistance(kingSq, sq);
+    }
+  }
+
+  // White-relative: positive = white king closer to pawns (good for white).
+  // Divide by pawnCount for average, multiply by weight.
+  // To avoid integer division truncation, multiply first.
+  int diff = totalDist[1] - totalDist[0];  // positive = white closer
+  egScore += KING_PAWN_TROPISM_EG * diff / pawnCount;
 }
 
 // ---------------------------------------------------------------------------
@@ -1217,6 +1373,44 @@ static int applyOCBScaling(int score, const BitboardSet& bb, int phase) {
   return score;
 }
 
+// ---------------------------------------------------------------------------
+// Mop-up evaluation — bonus for driving the losing king toward edges/corners
+// when one side has a decisive material advantage.
+//
+// In won endgames, standard material + PST evaluation provides insufficient
+// incentive to deliver checkmate.  The king EG PST penalises corners by only
+// ~50cp — too weak to guide mating plans.  This term adds a direct bonus for:
+//   1. Pushing the losing king away from the center (Center Manhattan Dist).
+//   2. Keeping the winning king close to the losing king (Chebyshev proximity).
+//
+// Applied to EG score only; the tapered blend phases it in naturally.
+// Material is recomputed from bitboards (~12 popcounts) rather than passed
+// as a parameter to avoid changing the evaluateImpl API surface.
+//
+// Reference: https://www.chessprogramming.org/Mop-up_Evaluation
+// ---------------------------------------------------------------------------
+
+static void evalMopUp(const BitboardSet& bb, int& egScore) {
+  int material = eval::computeMaterial(bb);
+  int absMat = material > 0 ? material : -material;
+  if (absMat < MOPUP_THRESHOLD) return;
+
+  int winColor  = material > 0 ? 0 : 1;
+  int loseColor = 1 - winColor;
+  int sign = SIDE_SIGN[winColor];
+
+  Square winKingSq  = lsb(bb.byPiece[pieceIndex(COLORS[winColor],
+                                                  PieceType::KING)]);
+  Square loseKingSq = lsb(bb.byPiece[pieceIndex(COLORS[loseColor],
+                                                  PieceType::KING)]);
+
+  int cmdBonus   = eval::centerManhattanDist(loseKingSq) * MOPUP_CMD_WEIGHT;
+  int closeBonus = (14 - eval::chebyshevDistance(winKingSq, loseKingSq))
+                   * MOPUP_CLOSE_KING;
+
+  egScore += sign * (cmdBonus + closeBonus);
+}
+
 static int evaluateImpl(const BitboardSet& bb, int mgScore, int egScore,
                         PawnHashTable* pawnHash, int precomputedPhase = -1) {
   // Full attack computation first — shared by pawn structure, mobility,
@@ -1232,6 +1426,8 @@ static int evaluateImpl(const BitboardSet& bb, int mgScore, int egScore,
   Bitboard passedPawns[2] = {0, 0};
   evalPawnStructure(bb, mgScore, egScore, passedPawns, pawnHash);
   evalPassedPawnKingDist(bb, passedPawns, egScore);
+  evalOutsidePasser(bb, passedPawns, egScore);
+  evalKingPawnTropism(bb, egScore);
 
   evalBishopPair(bb, mgScore, egScore);
   evalBadBishop(bb, mgScore, egScore);
@@ -1245,6 +1441,7 @@ static int evaluateImpl(const BitboardSet& bb, int mgScore, int egScore,
   evalThreats(bb, info, mgScore, egScore);
   evalKingDanger(bb, info, mgScore);
   evalSpace(bb, mgScore);
+  evalMopUp(bb, egScore);
 
   int phase = (precomputedPhase >= 0) ? precomputedPhase
                                      : computeGamePhase(bb);

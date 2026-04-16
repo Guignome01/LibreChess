@@ -34,6 +34,10 @@ Each eval function (`evalThreats`, `evalMobility`, `evalKingDanger`, `evalSpace`
 
 **Accessors** — `tempoBonus()` returns `TEMPO_BONUS`, `kingDangerScore(weight)` clamps and looks up `KING_SAFETY_TABLE[weight]`.  Both avoid exposing `eval_params.h` (prevents TUNING ODR violations when other TUs need these values).  `kingDangerScore()` is used by trace extraction to add the non-tunable S-curve penalty to bias.
 
+**Distance helpers** (inline, `evaluation.h`):
+- `chebyshevDistance(a, b)` — king distance metric (max of file/rank deltas). Used by passed pawn king proximity and mop-up.
+- `centerManhattanDist(sq)` — sum of file/rank distances from board center (range 0–6). Used by mop-up evaluation.
+
 **Tuning isolation** — evaluation.h has zero `#ifdef TUNING`. evaluation.cpp has two minimal `#ifdef TUNING` regions:
 1. **Data definitions** — TUNING: PST pointer tables for direct computation from mutable params. Production: `static constexpr PSQT_MG/EG[12][64]`.
 2. **pieceSquareMGEG** — TUNING: computes `MATERIAL[type] + PST[type][sq]` on each call (no caching). Production: reads constexpr PSQT.
@@ -51,7 +55,9 @@ All tuning metadata (descriptors, param externs, accessor API) lives in `lib/cor
 | Material | `MATERIAL[]` (MG), `MATERIAL_EG[]` (EG), pawn pinned at 100cp (excluded from tuning to prevent K/param scale degeneracy). Starting values: CPW Simplified Evaluation Function (Michniewski). |
 | PSTs | Per-piece-type MG/EG tables, pre-combined into `PSQT_MG/EG[12][64]` (material + PST + color sign). MG tables: CPW Michniewski (LERF-converted). EG tables: king from CPW, others zeroed (tuner discovers them). |
 | Pawn structure | Passed (rank-based exponential `PASSED_RANK_BONUS_MG/EG[8]`), isolated, doubled (EG only), backward (not isolated, stop square enemy-controlled), connected (chain/phalanx, rank-indexed), candidate passer (helpers ≥ sentries), protected passer (passed + own-pawn-defended) |
-| Passed pawn king proximity | Chebyshev distance to own/enemy king, EG only, not cached in pawn hash |
+| Passed pawn king proximity | Chebyshev distance to own/enemy king, EG only, not cached in pawn hash. Includes Rule of the Square: `UNSTOPPABLE_PASSER_EG` bonus when enemy king is outside the pawn's promotion square (Chebyshev to promo > pawn distance to promo, conservative — no STM adjustment). **Gated on `enemyPieces[c] == 0`** — only fires in pure pawn endgames (enemy has no N/B/R/Q). Includes Pawn Race: when both sides have unstoppable passers, `PAWN_RACE_ADVANTAGE_EG` bonus for the side promoting first; `PAWN_RACE_CHECK_EG` additional bonus if the promoted queen gives check. Also gated on pawn endgame. |
+| Outside passed pawn | EG bonus (`OUTSIDE_PASSER_EG`) when a passed pawn's file is ≥2 files outside the enemy pawn file range (min/max enemy pawn files). Rewards passers that force the enemy king to the flank. |
+| King-pawn tropism | Average Chebyshev distance from each king to ALL pawns (own + enemy), EG only. `KING_PAWN_TROPISM_EG * (blackDist − whiteDist) / pawnCount`. Rewards kings that are closer to the pawn mass. |
 | Bishop pair | MG/EG bonus |
 | Bad bishop | Penalty per own pawn on same color complex (MG/EG) |
 | Rook on open/semi-open | MG/EG split |
@@ -63,6 +69,7 @@ All tuning metadata (descriptors, param externs, accessor API) lives in `lib/cor
 | King danger | Per-piece zone attack counting (individual piece iteration, not binary per-type), attacker threshold gate (≥2 attackers AND queen), safe check bonuses (N/B/R/Q), nonlinear `KING_SAFETY_TABLE[100]` (S-curve, capped 500cp), MG only |
 | Outposts | Knight outposts (MG/EG, center bonus) + bishop outposts (enemy half only, MG/EG) |
 | Space | Stockfish-style: safe squares on c-f files, ranks 2-4 (white) / 5-7 (black), behind-own-pawn double-counted. Scaled by `SPACE_WEIGHT * bonus * weight² / 16` where weight = piece_count - 2*open_files. MG only. |
+| Mop-up | Won-endgame bonus for driving the losing king to edges/corners. Activated when `|material| >= MOPUP_THRESHOLD` (400cp). Two components: Center Manhattan Distance of losing king (`MOPUP_CMD_WEIGHT`, 0–60cp range) + winning king proximity (`MOPUP_CLOSE_KING`, 35–70cp range). EG only — tapered blend phases it in. Material recomputed from bitboards inside function. |
 | OCB scaling | Opposite-color bishop scaling (3/4), EG only, phase ≤ 6. Constants are internal to evaluation.cpp |
 
 ## Key Patterns

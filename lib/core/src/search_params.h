@@ -190,6 +190,16 @@ static constexpr int SE_DEPTH_THRESHOLD = 6;
 static constexpr int SE_MARGIN_SCALE    = 2;
 
 // ===========================================================================
+// Pawn Endgame Extension
+// ===========================================================================
+
+// Extend when a capture transitions to a pure pawn endgame (phase drops
+// to 0).  Pawn endgames are highly tactical — zugzwang, opposition, and
+// tempo dominate — so deeper search is critical for accuracy.
+// Reference: https://www.chessprogramming.org/Pawn_Endgame
+static constexpr int PAWN_ENDGAME_EXTENSION = 2;
+
+// ===========================================================================
 // Evaluation helpers
 // ===========================================================================
 

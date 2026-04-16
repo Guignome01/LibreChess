@@ -840,6 +840,17 @@ int negamax(Position& pos, int depth, int alpha, int beta,
 
     UndoInfo undo = pos.make(m);
 
+    // --- Pawn Endgame Extension ---
+    // When a capture removes the last non-pawn piece, the position
+    // transitions to a pure pawn endgame.  These are highly tactical
+    // (zugzwang, opposition, tempo) — deeper search is critical.
+    // Detected by phase dropping to 0 (no non-pawn material remains).
+    // Reference: https://www.chessprogramming.org/Pawn_Endgame
+    if (extension == 0 && m.isCapture() && undo.phase > 0 &&
+        pos.phase() == 0 && ply < MAX_PLY - 10) {
+      extension = PAWN_ENDGAME_EXTENSION;
+    }
+
     int newDepth = depth - 1 + extension;
 
     int score;

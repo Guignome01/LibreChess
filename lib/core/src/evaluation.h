@@ -141,13 +141,22 @@ int tempoBonus();
 int kingDangerScore(int weight);
 
 // Chebyshev distance (king distance metric) between two squares.
-// Used by passed pawn king proximity evaluation.
+// Used by passed pawn king proximity and mop-up evaluation.
 inline int chebyshevDistance(Square a, Square b) {
   int dr = rankOf(a) - rankOf(b);
   int df = fileOf(a) - fileOf(b);
   if (dr < 0) dr = -dr;
   if (df < 0) df = -df;
   return dr > df ? dr : df;
+}
+
+// Center Manhattan Distance — sum of file and rank distances from the
+// geometric board center.  Range: 0 (d4/d5/e4/e5) to 6 (a1/h1/a8/h8).
+// Used by mop-up evaluation to reward pushing the losing king toward edges.
+// Reference: https://www.chessprogramming.org/Center_Manhattan-Distance
+inline int centerManhattanDist(Square sq) {
+  int f = fileOf(sq), r = rankOf(sq);
+  return (f < 4 ? 3 - f : f - 4) + (r < 4 ? 3 - r : r - 4);
 }
 
 // ---------------------------------------------------------------------------

@@ -265,6 +265,32 @@ EVAL_CONST int PROTECTED_PASSER_EG =  10;
 EVAL_CONST int PASSER_OWN_KING_DIST_EG   =  -5;
 EVAL_CONST int PASSER_ENEMY_KING_DIST_EG =   10;
 
+// Unstoppable passed pawn — Rule of the Square bonus, EG only.
+// Applied when the enemy king is outside the pawn's promotion square
+// (Chebyshev distance to promo > pawn distance to promo), meaning the
+// king cannot catch the pawn in a race.  Conservative: no side-to-move
+// adjustment (eval has no STM context).
+// Reference: https://www.chessprogramming.org/Rule_of_the_Square
+EVAL_CONST int UNSTOPPABLE_PASSER_EG = 75;
+
+// Pawn race — bonus when both sides have unstoppable passers but one
+// promotes first.  ADVANTAGE gives the faster side a bonus; CHECK adds
+// extra when the promoted queen gives check (opponent loses a tempo).
+// Reference: https://www.chessprogramming.org/Pawn_Race
+EVAL_CONST int PAWN_RACE_ADVANTAGE_EG = 50;
+EVAL_CONST int PAWN_RACE_CHECK_EG     = 25;
+
+// Outside passed pawn — bonus when a passer is on a file beyond the range
+// of all opponent pawns (≥2 file gap).  Forces the enemy king to the flank.
+// Reference: https://www.chessprogramming.org/Outside_Passed_Pawn
+EVAL_CONST int OUTSIDE_PASSER_EG = 20;
+
+// King-pawn tropism — per-unit bonus for king proximity to all pawns
+// (average Chebyshev distance difference between kings).  Encourages the
+// king to be near the pawn mass in endgames.
+// Reference: https://www.chessprogramming.org/King_Pawn_Tropism
+EVAL_CONST int KING_PAWN_TROPISM_EG = 5;
+
 // ===========================================================================
 // Piece bonuses
 // ===========================================================================
@@ -471,6 +497,33 @@ EVAL_CONST int SPACE_WEIGHT = 5;
 // Reference: https://www.chessprogramming.org/Tempo
 // ---------------------------------------------------------------------------
 EVAL_CONST int TEMPO_BONUS = 15;
+
+// ===========================================================================
+// Mop-up evaluation
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// Mop-up bonus — drives the losing king to edges/corners in won endgames.
+//
+// In the late endgame with a large material advantage, the winning side must
+// actively force the losing king toward the board's edge (and ideally a
+// corner) to deliver checkmate.  Standard material + PST scoring provides
+// insufficient incentive: the endgame king PST penalises corners by only
+// ~50cp, which is too weak to guide mating plans effectively.
+//
+// Activation: |material| >= MOPUP_THRESHOLD (raw material difference).
+//
+// Two components, applied to EG score only (tapered blend phases them in):
+//   1. Center Manhattan Distance (CMD) of losing king — bonus per CMD unit
+//      (range 0–6).  Rewards pushing the king toward edges.
+//   2. King proximity — bonus for (14 - Chebyshev distance between kings).
+//      Rewards keeping the winning king close to the losing king.
+//
+// Reference: https://www.chessprogramming.org/Mop-up_Evaluation
+// ---------------------------------------------------------------------------
+EVAL_CONST int MOPUP_THRESHOLD  = 400;  // min material advantage (cp)
+EVAL_CONST int MOPUP_CMD_WEIGHT =  10;  // per CMD unit (0–60cp range)
+EVAL_CONST int MOPUP_CLOSE_KING =   5;  // per closeness unit (35–70cp range)
 
 }  // namespace eval
 }  // namespace LibreChess

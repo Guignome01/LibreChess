@@ -42,6 +42,7 @@ When a parameter is deliberately excluded from the registry (e.g. pawn material 
 - `computeKingDanger(bb, info, c)` → `KingDangerInfo` — then emits safe check coefficients
 - `computeSpace(bb, c, openFiles)` → `SpaceInfo` — then emits space bonus coefficient
 - `countOpenFiles(bb)`, `isOutpostSquare(sq, c, ...)` — shared outpost/space helpers
+- `computeMaterial(bb)`, `centerManhattanDist(sq)`, `chebyshevDistance(a, b)` — used by mop-up section (threshold gate + distance coefficients)
 
 This eliminates ~200 lines of duplicated intermediate computation.  Each helper computes intermediate values; the eval applies weights to get scores, while trace emits gradient coefficients referencing the same parameter addresses.
 

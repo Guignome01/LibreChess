@@ -89,6 +89,7 @@ Also contains heuristic update functions: `updateKillers`, `updateHistory` (grav
 | Aspiration windows | Gradual doubling on fail-low/fail-high |
 | Singular extensions | Exclusion search at TT-hit nodes, depth ≥ 6; singularBeta = ttScore − 2×depth. After the exclusion search returns, `pvLength[ply]` is reset to 0 to prevent stale PV data from the same-ply recursive call from leaking into the main search's PV. |
 | Recapture extensions | Same target square, depth ≥ 2, lazy SEE ≥ 0 |
+| Pawn endgame extension | Extend by `PAWN_ENDGAME_EXTENSION` (2 plies) when a capture transitions to phase=0 (pure pawn endgame). Checked after `pos.make(m)` using `undo.phase > 0 && pos.phase() == 0`. Depth guard: `ply < MAX_PLY - 10`. |
 | Delta pruning | QS: skip captures that can't raise alpha |
 | Futility pruning | Shallow negamax: skip when eval + margin below alpha |
 | Lazy eval | Material-only shortcut when score far outside window |
