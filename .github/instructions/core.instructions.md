@@ -28,6 +28,7 @@ Detailed API, design decisions, and patterns for each module live in dedicated f
 | `search.instructions.md` | `search.h/cpp`, `move_picker.h`, `stats.h` — search algorithm, TT, MovePicker |
 | `uci.instructions.md` | `uci.h/cpp` — UCI protocol handler, UCIState resource bundle |
 | `time-management.instructions.md` | `time_management.h` — time control computation |
+| `book.instructions.md` | `book.h/cpp` — internal opening book, ReplayBoard, probe |
 
 ## Cross-Cutting Design Rules
 
@@ -86,5 +87,6 @@ Every change to `lib/core/` MUST include:
 | `search.instructions.md` | Per-file — search algorithm, MovePicker, SearchState |
 | `uci.instructions.md` | Per-file — UCI protocol handler |
 | `time-management.instructions.md` | Per-file — time control computation |
+| `book.instructions.md` | Per-file — internal opening book |
 | `game-library.instructions.md` | Downstream consumer (`core ← game`) |
 | `testing.instructions.md` | Test architecture and per-group details |

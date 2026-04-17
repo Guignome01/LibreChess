@@ -50,7 +50,8 @@ test/
 │   ├── test_utils.cpp                   utils: 50-move rule, castling rights strings, coordinate helpers, board transforms, special-move analysis (via Position), resolveKingSquare, forEachSquare, forEachPiece
 │   ├── test_zobrist.cpp                 Zobrist hashing: key determinism, computeHash, computePawnHash, position sensitivity
 │   ├── test_search.cpp                  search: mate-in-1, captures, quiescence, stalemate avoidance, iterative deepening, IID, time/stop, TT, move ordering, delta pruning, futility pruning, SEE ordering, lazy eval, PV table, MDP, capture history, staged MovePicker, TT replacement, soft time, easy move, instability time extension
-│   └── test_uci.cpp                     UCI protocol: uci command, isready, go depth, position/fen, newgame, info output, quit, mate score, setoption Hash, go movetime
+│   ├── test_uci.cpp                     UCI protocol: uci command, isready, go depth, position/fen, newgame, info output, quit, mate score, setoption Hash, go movetime
+│   └── test_book.cpp                    Opening book: entry count, probe hits/misses, variety, hash correctness, findBestMove integration
 ├── test_game/                           Game library tests (lib/game/)
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
 │   ├── test_game.cpp                    Game: lifecycle, draws, observer, history, undo/redo, getHistory
@@ -95,6 +96,7 @@ Each library source file has a corresponding test file in the matching test suit
 | `lib/core/src/search.h/cpp` | `test_core/` | `test_search.cpp` |
 | `lib/core/src/uci.h/cpp` | `test_core/` | `test_uci.cpp` |
 | `lib/core/src/epd.h/cpp` | `test_core/` | `test_epd.cpp` |
+| `lib/core/src/book.h/cpp` | `test_core/` | `test_book.cpp` |
 
 Place tests in the suite that mirrors the owning library. When creating a new source file in either library, create a matching test file in the corresponding `test_<lib>/` directory and register its test functions in that suite's main file.
 
@@ -168,6 +170,9 @@ Leaper attack tables (knight on e4, king on a1, pawn attacks per color). Slider 
 
 ### EPD Parser (`test_epd.cpp`)
 `parseEPDLine`: basic FEN + bm opcode, multiple opcodes (bm + am + id + c0), quoted id strings, avoid move variations, comma-separated operands, c9 game result parsing (white win/draw/black win). `validateEPDLine`: valid/invalid FEN, missing fields. Accessors: `findOperation()` lookup, `id()` convenience, non-existent opcode returns nullptr yet `id()` returns empty.
+
+### Opening Book (`test_book.cpp`)
+Entry count validation (>350, <700). Probe hits for starting position, after 1.e4, after 1.d4. Probe miss for middlegame position. Variety: ≥3 distinct first moves from startpos across different PRNG seeds. Hash correctness: probe hits for 4 known opening positions (startpos, 1.e4 e5 2.Nf3 Nc6, 1.d4 Nf6 2.c4 e6, 1.e4 c5). `findBestMove` integration: returns depth 0 / nodes 0 with book enabled; searches normally when book disabled.
 
 ### Tactical Suites (`test_positions_time/test_positions_time.cpp`)
 Engine accuracy benchmarks using standard `.epd` files loaded from `../suites/` at runtime via the EPD parser. Each suite reads its `.epd` file, parses each line into an `EPDRecord`, runs `search::findBestMove` with a fixed time budget (500ms/position), converts both expected (SAN) and engine (Move) results to coordinate notation, and compares. Shared `TranspositionTable`, `PawnHashTable`, and `EvalHashTable` are allocated once at startup and cleared between suites. Suites: **WAC** (Win At Chess, 300 positions), **BK** (Bratko-Kopec, 24 positions), **ERET** (Eigenmann Rapid Engine Test, 111 positions). Tests are informational — they assert only that at least one position is solved, printing individual mismatches and overall pass rate.

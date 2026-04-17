@@ -70,6 +70,10 @@ Callers must own and pass a `SearchState&` to `findBestMove`. The `Engine` facad
 - `staticEvals[MAX_PLY]` — `int16_t`, for improving flag
 - `pv/pvLength` — triangular PV table (PackedMove format)
 
+**Opening book fields** (opt-in, used by `findBestMove`):
+- `useBook` — `bool`, default `false`. Enabled by `Game::setTimeFunc()` and `UCIState` constructor
+- `bookRng` — `uint64_t`, xorshift64 PRNG state for random book move selection, seeded per-game
+
 ## MovePicker (in `move_picker.h`, staged move ordering)
 
 TT move → good captures (MVV-LVA + captureHistory, lazy SEE ≥ 0; cached SEE stored in scores[] for bad captures) → killer moves (2/ply) → countermove → history (append-mode quiet generation via `generateMovesAppend()`) → bad captures (ordered by cached SEE, least-negative first). Score arrays use `int16_t` (~1.7 KiB saved per ply). `pickBestInRange()` — selection sort, O(N) per move.
@@ -109,6 +113,7 @@ Also contains heuristic update functions: `updateKillers`, `updateHistory` (grav
 - `reorderRootMoves()` — promote best move to index 0 (uses `Move::operator==` and `std::swap`)
 - `scoreToTT()` / `scoreFromTT()` — mate score adjustments for TT storage
 - `lazyEval()` / `evaluate()` — search-side evaluation wrappers
+- Book probe — inserted in `findBestMove()` after root move generation, before iterative deepening. On hit: returns `SearchResult` with `depth=0`, `nodes=0`, `bestMove` from book.
 
 ## Stopped Search Safety
 

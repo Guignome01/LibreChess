@@ -52,7 +52,12 @@ search::SearchResult Game::calculateMove(const search::SearchLimits& limits) {
 }
 
 void Game::setTimeFunc(search::TimeFunc fn) {
-  if (searchState_) searchState_->timeFunc = fn;
+  if (searchState_) {
+    searchState_->timeFunc = fn;
+    // Enable the opening book and seed its PRNG from current time.
+    searchState_->useBook = true;
+    if (fn) searchState_->bookRng = fn() | 1ULL;  // ensure non-zero
+  }
 }
 
 void Game::setExternalStop(std::atomic<bool>* flag) {

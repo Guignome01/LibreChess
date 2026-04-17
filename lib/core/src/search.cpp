@@ -9,6 +9,7 @@
 #include "move_picker.h"
 #include "movegen.h"
 #include "piece.h"
+#include "book.h"
 #include "stats.h"
 #include "utils.h"
 
@@ -1050,6 +1051,26 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
                          rootMoves, movegen::FilterMode::ALL);
 
   if (rootMoves.count == 0) return result;  // No legal moves
+
+  // --- Opening book probe ---
+  // Before iterative deepening, check the internal book for a pre-computed
+  // reply.  On hit, return immediately with depth=0 / nodes=0.
+  if (state.useBook) {
+    uint8_t bookFrom = 0, bookTo = 0;
+    if (book::probe(pos.hash(), bookFrom, bookTo, state.bookRng)) {
+      // Find the matching legal move to get correct flags.
+      for (int i = 0; i < rootMoves.count; ++i) {
+        if (rootMoves.moves[i].from == bookFrom &&
+            rootMoves.moves[i].to == bookTo) {
+          result.bestMove = rootMoves.moves[i];
+          result.depth = 0;
+          result.nodes = 0;
+          if (info) info(result);
+          return result;
+        }
+      }
+    }
+  }
 
   // If only one legal move, return it immediately.
   // Emit info callback so the GUI receives a score line before bestmove.

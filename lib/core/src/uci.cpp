@@ -30,6 +30,7 @@ UCIState::UCIState(search::TimeFunc timeFunc, int ttSize)
   tt.resize(ttSize);
   pawnHash.resize(eval::DEFAULT_PAWN_HASH_SIZE);
   evalHash.resize(eval::DEFAULT_EVAL_HASH_SIZE);
+  searchState.useBook = true;
   pos.loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
 }
 
@@ -85,6 +86,7 @@ static void cmdUci(std::string& output) {
   output += "id name LibreChess\n";
   output += "id author LibreChess Contributors\n";
   output += "option name Hash type spin default 4 min 1 max 256\n";
+  output += "option name OwnBook type check default true\n";
   output += "uciok\n";
 }
 
@@ -118,6 +120,8 @@ static void cmdSetOption(UCIState& state, const char* ptr) {
     int entries = (mb * 1024 * 1024) / static_cast<int>(sizeof(search::TTEntry));
     state.tt.free();
     state.tt.resize(entries);
+  } else if (name == "OwnBook") {
+    state.searchState.useBook = (value == "true");
   }
 }
 

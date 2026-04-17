@@ -104,6 +104,7 @@ static void test_uci_newgame(void) {
 
 static void test_uci_info_output(void) {
   uci::UCIState state(nullptr, 64);
+  send(state, "setoption name OwnBook value false");
   send(state, "position startpos");
   std::string out = send(state, "go depth 3");
   TEST_ASSERT_TRUE(contains(out, "info depth"));

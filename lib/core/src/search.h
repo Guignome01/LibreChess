@@ -347,6 +347,15 @@ struct SearchState {
   PackedMove pv[MAX_PLY][MAX_PV_LEN];
   int8_t pvLength[MAX_PLY];
 
+  // --- Opening book ---
+  // When true, findBestMove() probes the internal opening book before
+  // iterative deepening.  Opt-in to avoid interfering with search tests.
+  bool useBook = false;
+
+  // xorshift64 PRNG state for random book-move selection.  Seeded per-game
+  // so that repeated positions yield varied play across games.
+  uint64_t bookRng = 0x12345678ABCDEF01ULL;
+
   // Reset heuristic tables to zero.  Called by findBestMove() at start.
   void clearHeuristics();
 
