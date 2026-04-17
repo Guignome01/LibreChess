@@ -36,6 +36,7 @@ Fail-soft negamax + alpha-beta + quiescence with iterative deepening. Stateless 
 - `DEFAULT_TT_SIZE` — 4096 entries (64 KiB). `LibreChessProvider` may further cap dynamically based on available heap
 
 **Constants** (public): `MATE_SCORE=30000`, `MAX_PLY=48`, `MAX_PV_LEN=24`
+**Score helpers** (public, constexpr in search.h): `isMateWin(score)`, `isMateLoss(score)`, `isMateScore(score)`, `mateMovesFromScore(score)` — centralise mate-range detection and mate-to-moves conversion. Used by search.cpp (`scoreToTT`/`scoreFromTT`, NMP clamp, early exit) and uci.cpp (info callbacks).
 **Constants** (internal, in search.cpp): `INF_SCORE=31000`, `DRAW_SCORE=0`, `CHECK_INTERVAL=512`
 
 **`checkTime()`**: Defined in search.cpp (not inline in header). Interval-masked internally — callers invoke unconditionally, the method returns early unless `nodes` is a multiple of `CHECK_INTERVAL`.

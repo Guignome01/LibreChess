@@ -176,15 +176,10 @@ static void infoCallback(const search::SearchResult& result) {
   if (!g_infoOut) return;
 
   // Elapsed time — approximate from node count (no timeFunc in callback)
-  const char* scoreType = (result.score >= search::MATE_SCORE - search::MAX_PLY)
-                              ? "mate"
-                              : "cp";
-  int scoreVal = result.score;
-  if (result.score >= search::MATE_SCORE - search::MAX_PLY) {
-    scoreVal = (search::MATE_SCORE - result.score + 1) / 2;
-  } else if (result.score <= -search::MATE_SCORE + search::MAX_PLY) {
-    scoreVal = -(search::MATE_SCORE + result.score + 1) / 2;
-  }
+  const char* scoreType = search::isMateScore(result.score) ? "mate" : "cp";
+  int scoreVal = search::isMateScore(result.score)
+                     ? search::mateMovesFromScore(result.score)
+                     : result.score;
 
   fprintf(g_infoOut, "info depth %d score %s %d nodes %u",
           result.depth, scoreType, scoreVal, result.nodes);
@@ -213,15 +208,10 @@ static thread_local std::string* g_infoStr = nullptr;
 static void infoCallbackStr(const search::SearchResult& result) {
   if (!g_infoStr) return;
 
-  const char* scoreType = (result.score >= search::MATE_SCORE - search::MAX_PLY)
-                              ? "mate"
-                              : "cp";
-  int scoreVal = result.score;
-  if (result.score >= search::MATE_SCORE - search::MAX_PLY) {
-    scoreVal = (search::MATE_SCORE - result.score + 1) / 2;
-  } else if (result.score <= -search::MATE_SCORE + search::MAX_PLY) {
-    scoreVal = -(search::MATE_SCORE + result.score + 1) / 2;
-  }
+  const char* scoreType = search::isMateScore(result.score) ? "mate" : "cp";
+  int scoreVal = search::isMateScore(result.score)
+                     ? search::mateMovesFromScore(result.score)
+                     : result.score;
 
   char buf[512];
   int len = snprintf(buf, sizeof(buf), "info depth %d score %s %d nodes %u",

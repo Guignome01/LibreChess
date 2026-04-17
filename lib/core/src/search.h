@@ -193,6 +193,38 @@ static constexpr int MAX_PLY    = 48;
 static constexpr int MAX_PV_LEN = 24;
 
 // ---------------------------------------------------------------------------
+// Score classification helpers — eliminate raw MATE_SCORE comparisons.
+//
+// Mate scores are encoded as MATE_SCORE - plies (winning) or
+// -MATE_SCORE + plies (losing).  These helpers centralise the range
+// check and the conversion to "mate in N moves" for UCI output.
+//
+// Reference: https://www.chessprogramming.org/Mate_Score
+// ---------------------------------------------------------------------------
+
+/// True when the score indicates a forced win (mate-giver side).
+constexpr bool isMateWin(int score) {
+  return score >= MATE_SCORE - MAX_PLY;
+}
+
+/// True when the score indicates a forced loss (mated side).
+constexpr bool isMateLoss(int score) {
+  return score <= -MATE_SCORE + MAX_PLY;
+}
+
+/// True when the score is any kind of mate (win or loss).
+constexpr bool isMateScore(int score) {
+  return isMateWin(score) || isMateLoss(score);
+}
+
+/// Convert a mate score to signed "mate in N moves" for UCI output.
+/// Positive = mating, negative = being mated.  Undefined for non-mate scores.
+constexpr int mateMovesFromScore(int score) {
+  if (isMateWin(score))  return  (MATE_SCORE - score + 1) / 2;
+  /* isMateLoss */       return -(MATE_SCORE + score + 1) / 2;
+}
+
+// ---------------------------------------------------------------------------
 // Platform-agnostic time function — returns milliseconds.
 // Firmware passes millis(); tests pass a mock or nullptr.
 // ---------------------------------------------------------------------------

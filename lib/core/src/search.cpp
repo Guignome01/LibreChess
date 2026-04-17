@@ -97,15 +97,15 @@ namespace {
 
 // Convert root-relative mate score to TT-storable form.
 inline int scoreToTT(int score, int ply) {
-  if (score >= MATE_SCORE - MAX_PLY) return score + ply;
-  if (score <= -MATE_SCORE + MAX_PLY) return score - ply;
+  if (isMateWin(score))  return score + ply;
+  if (isMateLoss(score)) return score - ply;
   return score;
 }
 
 // Convert TT-stored mate score back to root-relative.
 inline int scoreFromTT(int score, int ply) {
-  if (score >= MATE_SCORE - MAX_PLY) return score - ply;
-  if (score <= -MATE_SCORE + MAX_PLY) return score + ply;
+  if (isMateWin(score))  return score - ply;
+  if (isMateLoss(score)) return score + ply;
   return score;
 }
 
@@ -700,7 +700,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
       STAT_INC(nullMovePrunes);
       // Don't return unproven mate scores from null-move searches —
       // they can be unreliable.  Clamp to beta instead.
-      return (nullScore >= MATE_SCORE - MAX_PLY) ? beta : nullScore;
+      return isMateWin(nullScore) ? beta : nullScore;
     }
   }
 
@@ -1210,7 +1210,7 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
     if (info) info(result);
 
     // Early exit: found a forced mate — no need to search deeper
-    if (iterBestScore >= MATE_SCORE - MAX_PLY) break;
+    if (isMateWin(iterBestScore)) break;
 
     // --- Time management: stability tracking + instability extension ---
     // Track how many consecutive iterations had the same best move.
