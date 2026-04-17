@@ -12,10 +12,7 @@ Lean UCI command dispatcher for the LibreChess engine. Two entry points, one sta
 ```cpp
 struct UCIState {
   Position pos;
-  search::TranspositionTable tt;
-  eval::PawnHashTable pawnHash;
-  eval::EvalHashTable evalHash;
-  search::SearchState searchState;
+  Engine engine;
   std::atomic<bool> stop{false};
   explicit UCIState(TimeFunc timeFunc = nullptr, int ttSize = DEFAULT_TT_SIZE);
 };
@@ -24,7 +21,7 @@ void loop(UCIState& state, FILE* in, FILE* out);
 bool processLine(UCIState& state, const char* line, std::string& output);
 ```
 
-- `UCIState` — resource bundle owning all search infrastructure. Non-copyable, non-movable.
+- `UCIState` — resource bundle owning Position and Engine (search resources). Non-copyable, non-movable. The `Engine` member owns TT, pawn hash, eval hash, and SearchState. The external stop flag (`stop`) is wired to the engine at construction.
 - `loop()` — blocking stdin/stdout loop for the native CLI executable. Exits on `quit` or EOF.
 - `processLine()` — pure string-in/string-out for unit tests. Returns false on `quit`.
 
@@ -42,7 +39,7 @@ bool processLine(UCIState& state, const char* line, std::string& output);
 
 ## Design Decisions
 
-- **No abstract streams** — `loop()` uses `FILE*` for CLI I/O. `processLine()` uses `std::string&` for tests. No `UCIStream`, no `StringUCIStream`, no inheritance.
+- **Engine composition** — `UCIState` composes `Engine` as a value member, delegating TT/hash/SearchState ownership. `cmdGo` → `engine.calculateMove()`, `cmdNewGame` → `engine.clearState()`, `cmdSetOption Hash` → `engine.resizeTT()`. UCIState destructor is defaulted (Engine cleans up its own resources).
 - **Token parsing** — `nextToken()`, `parseInt()`, `restOfLine()` helpers work on `const char*` with pointer advancement. No `std::istringstream`.
 - **Info callback** — `thread_local std::string*` + `thread_local FILE*` bridge info output to either `FILE*` (CLI) or `std::string` (tests).
 - **Author** — "LibreChess Contributors" (not a personal name).
@@ -63,6 +60,7 @@ Mirror test file: `test/test_core/test_uci.cpp` (suite: `test_core`). 11 tests v
 
 | File | Relationship |
 |------|--------------|
+| `engine.instructions.md` | `Engine` facade composed by UCIState |
 | `search.instructions.md` | `findBestMove()` is the actual search entry point |
 | `time-management.instructions.md` | `computeTimeLimits()` converts `go wtime/btime` to `SearchLimits` |
 | `core.instructions.md` | Parent library conventions |

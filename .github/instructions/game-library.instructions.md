@@ -5,7 +5,7 @@ description: "Game library: shared conventions, dependency model, and cross-cutt
 
 # Game Library (`lib/game/`) — General
 
-Central game orchestrator composing `Position` (from core), `History` (in-memory move log + persistent recording), and optionally `IGameObserver`. All chess-state mutations flow through `Game`. Dependency: `core ← game`. Game never imports engine.
+Central game orchestrator composing `Position` (from core), `History` (in-memory move log + persistent recording), and optionally `IGameObserver`. Optionally composes an `Engine` (from core) for bot-mode search. All chess-state mutations flow through `Game`. Dependency: `core ← game`.
 
 Pure C++ — uses `std::string` (not Arduino `String`); firmware bridges with `.c_str()` / `std::string()`.
 

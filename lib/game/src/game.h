@@ -1,15 +1,13 @@
 #ifndef LIBRECHESS_GAME_H
 #define LIBRECHESS_GAME_H
 
-#include <atomic>
 #include <string>
 
 #include "observer.h"
 #include "history.h"
 #include "notation.h"
 #include "position.h"
-#include "evaluation.h"
-#include "search.h"
+#include "engine.h"
 #include "types.h"
 
 // ---------------------------------------------------------------------------
@@ -206,13 +204,7 @@ class Game {
   char winnerColor_;
 
   // --- Optional search resources (allocated by initSearch) ---
-  search::TranspositionTable* tt_ = nullptr;
-  eval::PawnHashTable* pawnHash_ = nullptr;
-  eval::EvalHashTable* evalHash_ = nullptr;
-  search::SearchState* searchState_ = nullptr;
-  std::atomic<bool> searchStop_{false};
-  std::atomic<bool>* externalStop_ = nullptr;
-  bool searchInitialized_ = false;
+  Engine* engine_ = nullptr;
 
   // Lazy caches — invalidated on game-layer mutations only.
   // Avoids recomputation when observers query the same state multiple times.

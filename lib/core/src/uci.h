@@ -22,9 +22,8 @@
 #include <cstdio>
 #include <string>
 
-#include "evaluation.h"
+#include "engine.h"
 #include "position.h"
-#include "search.h"
 
 namespace LibreChess {
 namespace uci {
@@ -32,21 +31,19 @@ namespace uci {
 // ---------------------------------------------------------------------------
 // UCIState — engine resource bundle.
 //
-// Owns Position, TT, hash tables, SearchState, and the stop flag.
+// Owns Position and Engine (search resources).  The stop flag lives here
+// because UCI stop commands arrive asynchronously from the search thread.
 // Constructed once for the lifetime of the process (CLI) or test fixture.
 // ---------------------------------------------------------------------------
 struct UCIState {
   Position pos;
-  search::TranspositionTable tt;
-  eval::PawnHashTable pawnHash;
-  eval::EvalHashTable evalHash;
-  search::SearchState searchState;
+  Engine engine;
   std::atomic<bool> stop{false};
 
   // Construct with optional time function and TT size.
   explicit UCIState(search::TimeFunc timeFunc = nullptr,
                     int ttSize = search::DEFAULT_TT_SIZE);
-  ~UCIState();
+  ~UCIState() = default;
 
   // Non-copyable, non-movable (owns heap resources).
   UCIState(const UCIState&) = delete;

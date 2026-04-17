@@ -43,7 +43,7 @@ Fail-soft negamax + alpha-beta + quiescence with iterative deepening. Stateless 
 
 ## SearchState (~10 KiB, always required)
 
-Callers must own and pass a `SearchState&` to `findBestMove`. The `Engine` facade holds a direct `SearchState` member and passes it each call.
+Callers must own and pass a `SearchState&` to `findBestMove`. The `Engine` facade holds a direct `SearchState` member and passes it each call. Both `UCIState` and `Game` compose an `Engine` which owns the `SearchState`.
 
 **Constructor**: `explicit SearchState(TimeFunc tf = nullptr, TranspositionTable* tt = nullptr, PawnHashTable* ph = nullptr, EvalHashTable* eh = nullptr)` — wires infrastructure pointers once at construction. All parameters optional (default nullptr). Eliminates manual field-by-field wiring.
 

@@ -29,6 +29,7 @@ Detailed API, design decisions, and patterns for each module live in dedicated f
 | `uci.instructions.md` | `uci.h/cpp` — UCI protocol handler, UCIState resource bundle |
 | `time-management.instructions.md` | `time_management.h` — time control computation |
 | `book.instructions.md` | `book.h/cpp` — internal opening book, ReplayBoard, probe |
+| `engine.instructions.md` | `engine.h/cpp` — Engine facade: search resource ownership and invocation |
 
 ## Cross-Cutting Design Rules
 
@@ -42,9 +43,11 @@ Detailed API, design decisions, and patterns for each module live in dedicated f
 
 - **Search is a stateless namespace** — `search::findBestMove()` takes `Position&`, `SearchLimits`, `SearchState&` (required), optional `InfoCallback`. Infrastructure pointers (`timeFunc`, `tt`, `pawnHash`, `evalHash`) are set via `SearchState` constructor. All per-search state in `SearchState`. Safe to run from any context.
 
-- **Game optionally owns search infrastructure** — `Game::initSearch()` allocates TT, PawnHash, EvalHash, SearchState on heap. `Game::calculateMove()` calls `findBestMove()` on its own Position. Only initialized for bot mode; player-only games skip it entirely.
+- **Engine facade centralises search resources** — `Engine` (engine.h/cpp) owns `TranspositionTable`, `PawnHashTable`, `EvalHashTable`, and `SearchState`.  Both `UCIState` and `Game` compose an `Engine` instance instead of managing these resources independently.  `Engine::calculateMove(pos, limits)` wires the stop flag and calls `findBestMove()`.  UCI's `cmdGo`/`cmdNewGame`/`cmdSetOption Hash` and `Game::initSearch()`/`calculateMove()`/`setTimeFunc()` all delegate to `Engine`.
 
-- **UCI is a stateless dispatcher** — `uci::UCIState` owns Position + TT + hash tables + SearchState for the CLI path. `uci::loop()` / `uci::processLine()` are free functions. No classes, no inheritance.
+- **Game optionally owns an Engine** — `Game::initSearch()` heap-allocates an `Engine*`. `Game::calculateMove()` delegates to the engine. `Game::newGame()` calls `engine_->clearState()`. Only initialized for bot mode; player-only games skip it entirely.
+
+- **UCI composes Engine as a value member** — `UCIState::engine` is a stack-allocated `Engine`. Constructor wires time function, external stop flag, and book settings.
 
 - **Platform time abstraction** — `TimeFunc` function pointer for `millis()` (ESP32) vs `nativeMillis()` (native tests).
 
@@ -88,5 +91,6 @@ Every change to `lib/core/` MUST include:
 | `uci.instructions.md` | Per-file — UCI protocol handler |
 | `time-management.instructions.md` | Per-file — time control computation |
 | `book.instructions.md` | Per-file — internal opening book |
+| `engine.instructions.md` | Per-file — Engine facade (search resource ownership) |
 | `game-library.instructions.md` | Downstream consumer (`core ← game`) |
 | `testing.instructions.md` | Test architecture and per-group details |

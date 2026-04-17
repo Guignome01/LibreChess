@@ -52,7 +52,7 @@ Steps 2–7 are atomic from the caller's perspective.
 - **Firmware abstraction boundary** — `Game` re-exports everything firmware needs. Display-coordinate helpers (`rankChar`, `squareName(row,col)`) live in `game/types.h`.
 - **Dirty-flag caching** — FEN/eval cached, recomputed only when `fenDirty_`/`evalDirty_` set.
 - **Composition over inheritance** — `Game` composes `Position` + `History`, no inheritance.
-- **Optional search resources** — `initSearch()` allocates TT, hash tables, SearchState on heap. `newGame()` clears them when initialized. Destructor frees them. `calculateMove()` calls `findBestMove()` on the internal Position with an internal or external stop flag.
+- **Engine composition** — `Game` optionally composes an `Engine*` (heap-allocated by `initSearch()`, deleted in destructor).  Search methods (`calculateMove`, `setTimeFunc`, `setExternalStop`) delegate to the engine.  `newGame()` calls `engine_->clearState()` when initialized.  Player-only games never allocate an engine.
 - **Nullable DI** — storage, observer, logger all pointer-injected. Logger uses `Log` proxy.
 - **Undo clears game-over** — `undoMove()` re-opens finished games for web UI navigation.
 
@@ -69,5 +69,6 @@ Mirror test file: `test/test_game/test_game.cpp` (suite: `test_game`). When chan
 | `history.instructions.md` | Composes `History`, delegates undo/redo/recording |
 | `game-headers.instructions.md` | Uses `IGameStorage`, `IGameObserver`, `GameHeader`, display-coord helpers |
 | `notation.instructions.md` | `getHistory()` uses notation for SAN/LAN output |
+| `engine.instructions.md` | Engine facade composed by Game for bot-mode search |
 | `evaluation.instructions.md` | `getEvaluation()` delegates to `eval::evaluatePosition()` |
 | `testing.instructions.md` | Test architecture, helpers, and `test_game.cpp` group description |

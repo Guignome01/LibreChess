@@ -26,18 +26,11 @@ namespace uci {
 // ===========================================================================
 
 UCIState::UCIState(search::TimeFunc timeFunc, int ttSize)
-    : searchState(timeFunc, &tt, &pawnHash, &evalHash) {
-  tt.resize(ttSize);
-  pawnHash.resize(eval::DEFAULT_PAWN_HASH_SIZE);
-  evalHash.resize(eval::DEFAULT_EVAL_HASH_SIZE);
-  searchState.useBook = true;
+    : engine(ttSize) {
+  engine.setTimeFunc(timeFunc);
+  engine.setExternalStop(&stop);
+  engine.searchState().useBook = true;
   pos.loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-}
-
-UCIState::~UCIState() {
-  tt.free();
-  pawnHash.free();
-  evalHash.free();
 }
 
 // ===========================================================================
@@ -118,19 +111,15 @@ static void cmdSetOption(UCIState& state, const char* ptr) {
     if (mb < 1) mb = 1;
     if (mb > 256) mb = 256;
     int entries = (mb * 1024 * 1024) / static_cast<int>(sizeof(search::TTEntry));
-    state.tt.free();
-    state.tt.resize(entries);
+    state.engine.resizeTT(entries);
   } else if (name == "OwnBook") {
-    state.searchState.useBook = (value == "true");
+    state.engine.searchState().useBook = (value == "true");
   }
 }
 
 // --- ucinewgame ---
 static void cmdNewGame(UCIState& state) {
-  state.tt.clear();
-  state.pawnHash.clear();
-  state.evalHash.clear();
-  state.searchState.clearHeuristics();
+  state.engine.clearState();
   state.pos.loadFEN(
       "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
 }
@@ -284,13 +273,12 @@ static void cmdGo(UCIState& state, const char* ptr, std::string& output,
     limits.hardTimeMs = timeLimits.hardTimeMs;
   }
 
-  // Wire stop flag
+  // Reset stop flag before search
   state.stop.store(false, std::memory_order_relaxed);
-  limits.stop = &state.stop;
 
   // Run search
   search::SearchResult result =
-      search::findBestMove(state.pos, limits, state.searchState, infoCb);
+      state.engine.calculateMove(state.pos, limits, infoCb);
 
   // Emit bestmove
   if (result.bestMove.from == 0 && result.bestMove.to == 0) {

@@ -12,10 +12,7 @@ Game::Game(IGameStorage* storage, IGameObserver* observer, ILogger* logger)
       cachedEval_(0), fenDirty_(true), evalDirty_(true) {}
 
 Game::~Game() {
-  delete searchState_;
-  if (tt_) { tt_->free(); delete tt_; }
-  if (pawnHash_) { pawnHash_->free(); delete pawnHash_; }
-  if (evalHash_) { evalHash_->free(); delete evalHash_; }
+  delete engine_;
 }
 
 static const char* STANDARD_START_FEN =
@@ -26,42 +23,25 @@ static const char* STANDARD_START_FEN =
 // ---------------------------------------------------------------------------
 
 void Game::initSearch(int ttSize) {
-  if (searchInitialized_) return;
-
-  tt_ = new search::TranspositionTable();
-  tt_->resize(ttSize);
-  pawnHash_ = new eval::PawnHashTable();
-  pawnHash_->resize(eval::DEFAULT_PAWN_HASH_SIZE);
-  evalHash_ = new eval::EvalHashTable();
-  evalHash_->resize(eval::DEFAULT_EVAL_HASH_SIZE);
-  searchState_ = new search::SearchState(nullptr, tt_, pawnHash_, evalHash_);
-  searchInitialized_ = true;
+  if (engine_) return;
+  engine_ = new Engine(ttSize);
 }
 
 search::SearchResult Game::calculateMove(const search::SearchLimits& limits) {
-  // Build internal limits with our stop flag wired in
-  search::SearchLimits internalLimits;
-  internalLimits.maxDepth = limits.maxDepth;
-  internalLimits.softTimeMs = limits.softTimeMs;
-  internalLimits.hardTimeMs = limits.hardTimeMs;
-
-  searchStop_.store(false, std::memory_order_relaxed);
-  internalLimits.stop = externalStop_ ? externalStop_ : &searchStop_;
-
-  return search::findBestMove(board_, internalLimits, *searchState_);
+  return engine_->calculateMove(board_, limits);
 }
 
 void Game::setTimeFunc(search::TimeFunc fn) {
-  if (searchState_) {
-    searchState_->timeFunc = fn;
+  if (engine_) {
+    engine_->setTimeFunc(fn);
     // Enable the opening book and seed its PRNG from current time.
-    searchState_->useBook = true;
-    if (fn) searchState_->bookRng = fn() | 1ULL;  // ensure non-zero
+    engine_->searchState().useBook = true;
+    if (fn) engine_->searchState().bookRng = fn() | 1ULL;  // ensure non-zero
   }
 }
 
 void Game::setExternalStop(std::atomic<bool>* flag) {
-  externalStop_ = flag;
+  if (engine_) engine_->setExternalStop(flag);
 }
 
 // ---------------------------------------------------------------------------
@@ -77,12 +57,7 @@ void Game::newGame() {
   winnerColor_ = ' ';
 
   // Clear search state if initialized (TT, hash tables, heuristics)
-  if (searchInitialized_) {
-    tt_->clear();
-    pawnHash_->clear();
-    evalHash_->clear();
-    searchState_->clearHeuristics();
-  }
+  if (engine_) engine_->clearState();
 
   invalidateCache();
   notifyObserver();

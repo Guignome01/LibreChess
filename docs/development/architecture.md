@@ -14,6 +14,7 @@ Core (lib/core/):
   uci (UCI protocol handler — UCIState + loop/processLine)
   time_management (time control computation — header-only pure function)
   search (fail-soft alpha-beta + quiescence + iterative deepening + check ext + PVS + NMP + LMR + LMP + history pruning + razoring + lazy eval + aspiration windows + IIR + delta pruning + futility pruning + pawn-defended-pawn QS pruning + SEE-based ordering + countermove heuristic + mate distance pruning + triangular PV table)
+  Engine (engine.h/cpp — search resource ownership facade: TT, pawn hash, eval hash, SearchState)
   TranspositionTable (search.h — inherits HashTableBase<TTEntry>)
   MovePicker (move_picker.h — staged move generation + heuristic updates)
 
@@ -21,7 +22,7 @@ Game (lib/game/):
   Game (central game orchestrator)
    ├─ composes Position (from core)
    ├─ composes History (move log + persistent game recording)
-   ├─ optionally owns search resources (TT, PawnHash, EvalHash, SearchState)
+   ├─ optionally composes Engine (heap-allocated for bot mode search)
    └─ uses IGameObserver (notification)
 
 Firmware (src/):
@@ -47,7 +48,7 @@ Firmware (src/):
 
 `LichessProvider` extends `EngineProvider`. Its `initialize()` blocks during game discovery (token verification + polling for active games). Its `requestMove()` spawns a FreeRTOS task that opens a persistent NDJSON stream via `LichessAPI::connectGameStream()` and reads events via `readStreamEvent()`. On connection loss, it reconnects with exponential backoff (1s→2s→4s→8s, up to 5 attempts) — the game stays paused during reconnection; if all attempts are exhausted the game is aborted.
 
-`LibreChessProvider` extends `EngineProvider`. It runs the on-board chess engine entirely in-process via `Game::calculateMove()` — no network, no string serialization required. The provider receives a `Game*` at construction (non-owning). `initialize()` calls `game->initSearch(ttEntries)` with a heap-sized TT (capped at 64 KiB) and `game->setTimeFunc(millis)`, allocating search resources that persist across moves inside the Game object — no per-move heap fragmentation. Each `requestMove()` spawns a FreeRTOS task (64 KiB stack) that wires `ctx->cancel` to `game->setExternalStop()` for cooperative cancellation, builds `SearchLimits` with depth, and calls `game->calculateMove(limits)`. The Game already holds the correct position because BotMode makes all moves through Game. The `SearchResult` (bestMove, score, depth, nodes) is converted to `EngineResult` using `notation::toCoordinate()`. `initialize()` always succeeds, reports `mode = GameModeId::BOT`, `canResume = true`.
+`LibreChessProvider` extends `EngineProvider`. It runs the on-board chess engine entirely in-process via `Game::calculateMove()` — no network, no string serialization required. The provider receives a `Game*` at construction (non-owning). `initialize()` calls `game->initSearch(ttEntries)` with a heap-sized TT (capped at 64 KiB) and `game->setTimeFunc(millis)`, allocating an `Engine` instance inside Game that persists across moves — no per-move heap fragmentation. Each `requestMove()` spawns a FreeRTOS task (64 KiB stack) that wires `ctx->cancel` to `game->setExternalStop()` for cooperative cancellation, builds `SearchLimits` with depth, and calls `game->calculateMove(limits)`. The Game already holds the correct position because BotMode makes all moves through Game. The `SearchResult` (bestMove, score, depth, nodes) is converted to `EngineResult` using `notation::toCoordinate()`. `initialize()` always succeeds, reports `mode = GameModeId::BOT`, `canResume = true`.
 
 `SensorTest` follows the same `begin()`/`update()`/`isComplete()` lifecycle but is not a `GameMode` subclass — it doesn't need chess logic, FEN state, or move history.
 
