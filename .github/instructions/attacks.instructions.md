@@ -28,7 +28,7 @@ Precomputed leaper tables and O(1) slider functions. Stateless namespace (~3 KiB
 
 **Attack maps**:
 - `AttackInfo` struct — `byPiece[2][7]` (indexed `[raw(Color)][raw(PieceType)]`), `byColor[2]`, `allAttacks`
-- `computeAll(bb) → AttackInfo` — one pass: pawns via bulk shift, leapers via table, sliders via HQ. Called by `evaluateImpl()` for mobility, king danger, threats, outposts, space.
+- `computeAll(bb) → AttackInfo` — one pass: pawns via bulk shift, leapers via table, sliders via HQ. Called by `evaluatePosition()` for mobility, king danger, threats, outposts, space.
 
 **Static Exchange Evaluation**:
 - `see(bb, mailbox, move) → int` — swap algorithm, least-valuable-attacker iteration. Delegates to `eval::materialValue()` for piece values (king sentinel = 20000).

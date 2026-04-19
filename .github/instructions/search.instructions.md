@@ -84,7 +84,7 @@ Also contains heuristic update functions: `updateKillers`, `updateHistory` (grav
 
 | Technique | Details |
 |-----------|---------|
-| Null move pruning | R = NMP_REDUCTION + depth/4 + min(3, evalSurplus/200) |
+| Null move pruning | R = NMP_REDUCTION + depth/NMP_DEPTH_DIVISOR + min(NMP_EVAL_BONUS_CAP, evalSurplus/NMP_EVAL_DIVISOR) |
 | LMR | `LMR_TABLE.data[depth][moveIndex]`, +1 hist<`LMR_BAD_HIST_THRESHOLD`, −1 hist>`LMR_GOOD_HIST_THRESHOLD`, +1 non-improving, +1 non-PV |
 | LMP | Skip late quiets at shallow depths, threshold +2 when improving |
 | History pruning | Pre-make skip: hist < −HISTORY_PRUNE_THRESHOLD × depth |

@@ -39,6 +39,7 @@ class Engine {
 - **Value-composable and heap-composable** — UCIState holds `Engine engine` by value; Game holds `Engine* engine_` on heap (optional, allocated only for bot mode).
 - **Non-copyable, non-movable** — owns hash table resources (raw arrays via `HashTableBase`).
 - **Stop flag wiring** — internal `searchStop_` atomic is the default; `setExternalStop()` overrides it. UCI wires `UCIState::stop`; Game/provider wires a FreeRTOS cancel flag.
+- **Re-entry guard** — `busy_` atomic flag protects `calculateMove()`, `clearState()`, and `resizeTT()` from concurrent invocation (e.g., firmware UI thread asking to clear state while a search task is running). Acquisition is wrapped in a file-local `BusyGuard` RAII helper (anonymous namespace in `engine.cpp`) that does a single acquire-CAS and releases on destruction. If acquisition fails (another caller holds the flag), the method returns immediately — no blocking, no queuing.
 - **No Arduino dependencies** — pure C++, same as all core library code.
 
 ## Consumers
