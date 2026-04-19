@@ -43,9 +43,16 @@ static constexpr int DELTA_MARGIN = 200;
 
 // NMP_DEPTH_THRESHOLD: minimum remaining depth to attempt null move.
 // NMP_REDUCTION: base depth reduction for the null-move search (R).
+// NMP_DEPTH_DIVISOR: depth/N term in adaptive R formula.
+// NMP_EVAL_DIVISOR: centipawns per extra R unit from (staticEval - beta).
+// NMP_EVAL_BONUS_CAP: upper bound on the eval-surplus contribution to R.
 // Reference: https://www.chessprogramming.org/Null_Move_Pruning
+// Reference: https://www.chessprogramming.org/Null_Move_Pruning#Adaptive
 static constexpr int NMP_DEPTH_THRESHOLD = 3;
 static constexpr int NMP_REDUCTION       = 3;
+static constexpr int NMP_DEPTH_DIVISOR   = 4;
+static constexpr int NMP_EVAL_DIVISOR    = 200;
+static constexpr int NMP_EVAL_BONUS_CAP  = 3;
 
 // ===========================================================================
 // Late Move Reductions

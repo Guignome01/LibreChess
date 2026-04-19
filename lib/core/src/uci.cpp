@@ -2,7 +2,6 @@
 
 #include <cstring>
 #include <sstream>
-#include <thread>
 
 #include "fen.h"
 #include "notation.h"

@@ -687,8 +687,10 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     // Adaptive reduction: deeper positions get more aggressive pruning,
     // and a large eval surplus over beta adds further reduction.
     // Reference: https://www.chessprogramming.org/Null_Move_Pruning#Adaptive
-    int evalBonus = std::min(3, std::max(0, staticEval - beta) / 200);
-    int R = std::min(NMP_REDUCTION + depth / 4 + evalBonus, depth - 1);
+    int evalBonus = std::min(NMP_EVAL_BONUS_CAP,
+                             std::max(0, staticEval - beta) / NMP_EVAL_DIVISOR);
+    int R = std::min(NMP_REDUCTION + depth / NMP_DEPTH_DIVISOR + evalBonus,
+                     depth - 1);
 
     UndoInfo nullUndo = pos.makeNullMove();
     // Record the "null move" on this ply so the child's (ss-1) lookup

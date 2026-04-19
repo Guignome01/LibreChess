@@ -10,6 +10,35 @@
 
 namespace LibreChess {
 
+namespace {
+
+// RAII guard around the engine's busy_ flag.  Converts the acquire-CAS /
+// release-store pair into a scoped lock so we can use early-return on
+// contention without forgetting to clear the flag.  `owned()` tells the
+// caller whether acquisition succeeded; if not, the method must bail out.
+class BusyGuard {
+ public:
+  explicit BusyGuard(std::atomic<bool>& flag) : flag_(flag) {
+    bool expected = false;
+    owned_ = flag_.compare_exchange_strong(expected, true,
+                                           std::memory_order_acquire,
+                                           std::memory_order_relaxed);
+  }
+  ~BusyGuard() {
+    if (owned_) flag_.store(false, std::memory_order_release);
+  }
+  BusyGuard(const BusyGuard&) = delete;
+  BusyGuard& operator=(const BusyGuard&) = delete;
+
+  bool owned() const { return owned_; }
+
+ private:
+  std::atomic<bool>& flag_;
+  bool owned_;
+};
+
+}  // namespace
+
 // ---------------------------------------------------------------------------
 // Construction / destruction
 // ---------------------------------------------------------------------------
@@ -36,12 +65,8 @@ search::SearchResult Engine::calculateMove(Position& pos,
                                            search::InfoCallback info) {
   // Re-entry guard: if another task is already inside the engine, bail out
   // rather than racing on TT / hash tables.  See busy_ comment in engine.h.
-  bool expected = false;
-  if (!busy_.compare_exchange_strong(expected, true,
-                                     std::memory_order_acquire,
-                                     std::memory_order_relaxed)) {
-    return search::SearchResult{};
-  }
+  BusyGuard guard(busy_);
+  if (!guard.owned()) return search::SearchResult{};
 
   // Build internal limits with our stop flag wired in
   search::SearchLimits internalLimits;
@@ -52,10 +77,7 @@ search::SearchResult Engine::calculateMove(Position& pos,
   searchStop_.store(false, std::memory_order_relaxed);
   internalLimits.stop = externalStop_ ? externalStop_ : &searchStop_;
 
-  search::SearchResult result =
-      search::findBestMove(pos, internalLimits, searchState_, info);
-  busy_.store(false, std::memory_order_release);
-  return result;
+  return search::findBestMove(pos, internalLimits, searchState_, info);
 }
 
 // ---------------------------------------------------------------------------
@@ -77,31 +99,21 @@ void Engine::setExternalStop(std::atomic<bool>* flag) {
 void Engine::clearState() {
   // Refuse to nuke state out from under an in-flight search.  Caller must
   // wait for calculateMove() to return before clearing.
-  bool expected = false;
-  if (!busy_.compare_exchange_strong(expected, true,
-                                     std::memory_order_acquire,
-                                     std::memory_order_relaxed)) {
-    return;
-  }
+  BusyGuard guard(busy_);
+  if (!guard.owned()) return;
   tt_.clear();
   pawnHash_.clear();
   evalHash_.clear();
   searchState_.clearHeuristics();
-  busy_.store(false, std::memory_order_release);
 }
 
 void Engine::resizeTT(int entries) {
   // Same rationale as clearState(): reallocating the TT while a search holds
   // pointers into it would free memory from under findBestMove().
-  bool expected = false;
-  if (!busy_.compare_exchange_strong(expected, true,
-                                     std::memory_order_acquire,
-                                     std::memory_order_relaxed)) {
-    return;
-  }
+  BusyGuard guard(busy_);
+  if (!guard.owned()) return;
   tt_.free();
   tt_.resize(entries);
-  busy_.store(false, std::memory_order_release);
 }
 
 }  // namespace LibreChess
