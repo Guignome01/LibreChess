@@ -125,7 +125,13 @@ static void cmdNewGame(UCIState& state) {
 }
 
 // --- position [startpos | fen <fen>] [moves <move1> <move2> ...] ---
-static void cmdPosition(UCIState& state, const char* ptr) {
+//
+// Errors are reported as `info string error: <reason>` lines (per UCI
+// custom).  On any error the token loop halts immediately so the engine
+// is left with a coherent (partially-applied) position rather than one
+// silently corrupted by ignored commands.
+static void cmdPosition(UCIState& state, const char* ptr,
+                        std::string& output) {
   std::string tok = nextToken(ptr);
 
   if (tok == "startpos") {
@@ -141,9 +147,13 @@ static void cmdPosition(UCIState& state, const char* ptr) {
       if (i > 0) fen += ' ';
       fen += field;
     }
-    if (!state.pos.loadFEN(fen)) return;
+    if (!state.pos.loadFEN(fen)) {
+      output += "info string error: invalid fen: " + fen + "\n";
+      return;
+    }
     tok = nextToken(ptr);  // Should be "moves" or empty
   } else {
+    output += "info string error: position requires 'startpos' or 'fen'\n";
     return;
   }
 
@@ -154,8 +164,14 @@ static void cmdPosition(UCIState& state, const char* ptr) {
       if (tok.empty()) break;
       Square from, to;
       char promo = ' ';
-      if (notation::parseCoordinate(tok, from, to, promo)) {
-        state.pos.makeMove(from, to, promo);
+      if (!notation::parseCoordinate(tok, from, to, promo)) {
+        output += "info string error: unparseable move: " + tok + "\n";
+        return;  // Halt on first error to avoid corrupting position.
+      }
+      MoveResult mr = state.pos.makeMove(from, to, promo);
+      if (!mr.valid()) {
+        output += "info string error: illegal move: " + tok + "\n";
+        return;
       }
     }
   }
@@ -312,7 +328,7 @@ bool processLine(UCIState& state, const char* line, std::string& output) {
   } else if (cmd == "ucinewgame") {
     cmdNewGame(state);
   } else if (cmd == "position") {
-    cmdPosition(state, ptr);
+    cmdPosition(state, ptr, output);
   } else if (cmd == "go") {
     g_infoStr = &output;
     cmdGo(state, ptr, output, infoCallbackStr);
@@ -353,7 +369,12 @@ void loop(UCIState& state, FILE* in, FILE* out) {
     } else if (cmd == "ucinewgame") {
       cmdNewGame(state);
     } else if (cmd == "position") {
-      cmdPosition(state, ptr);
+      std::string posOutput;
+      cmdPosition(state, ptr, posOutput);
+      if (!posOutput.empty()) {
+        fputs(posOutput.c_str(), out);
+        fflush(out);
+      }
     } else if (cmd == "go") {
       g_infoOut = out;
       std::string bestmoveOutput;

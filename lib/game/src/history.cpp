@@ -331,8 +331,14 @@ void History::persistMove(const MoveEntry& entry) {
   header_.moveCount++;
   movesSinceFlush_++;
 
-  // Flush header every full turn (2 half-moves) to reduce flash wear
-  if (movesSinceFlush_ >= 2) {
+  // Flush header every full turn (2 half-moves) to reduce flash wear.
+  // Exception: also flush after move 1 so a power loss between move 1 and
+  // move 2 does not lose move 1's data \u2014 the move bytes are already on
+  // flash but without a header update the count says 0 and resume drops
+  // the move.  We additionally flush after move 2 to re-align the
+  // turn-based cadence (otherwise the next flush would land on move 3
+  // instead of move 2, shifting the entire pattern by one half-move).
+  if (movesSinceFlush_ >= 2 || header_.moveCount <= 2) {
     storage_->updateHeader(header_);
     movesSinceFlush_ = 0;
   }

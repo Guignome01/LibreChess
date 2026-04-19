@@ -208,6 +208,42 @@ static constexpr int PAWN_ENDGAME_EXTENSION = 2;
 // Reference: https://www.chessprogramming.org/Lazy_Evaluation
 static constexpr int LAZY_EVAL_MARGIN = 300;
 
+// ===========================================================================
+// Time Management — Easy Move & Instability
+// ===========================================================================
+
+// Easy move: stop iterative deepening early when the best move has been
+// stable for many iterations and leads the next candidate comfortably.
+//   EASY_MOVE_STABLE_DEPTH: required consecutive iterations with the same
+//                           best move.
+//   EASY_MOVE_MIN_DEPTH   : minimum iteration depth before the heuristic
+//                           may trigger (avoid shallow false positives).
+//   EASY_MOVE_MARGIN      : required lead (cp) over the second-best score.
+// Reference: https://www.chessprogramming.org/Time_Management#Easy_Move
+static constexpr int EASY_MOVE_STABLE_DEPTH = 4;
+static constexpr int EASY_MOVE_MIN_DEPTH    = 6;
+static constexpr int EASY_MOVE_MARGIN       = 100;
+
+// Instability extension: when the best root move changes, scale the
+// effective soft time by factor% = BASE + STEP × bestMoveChanges,
+// capped at CAP.  More changes → more thinking time, up to the hard
+// limit.  Factors are in percent (e.g. 150 = 1.5×).
+// Reference: https://www.chessprogramming.org/Time_Management
+static constexpr int INSTABILITY_FACTOR_BASE = 150;
+static constexpr int INSTABILITY_FACTOR_STEP = 25;
+static constexpr int INSTABILITY_FACTOR_CAP  = 250;
+
+// ===========================================================================
+// LMR History Thresholds
+// ===========================================================================
+
+// History-informed LMR adjustments (see computeLMRReduction):
+//   hist < LMR_BAD_HIST_THRESHOLD  → reduce more (+1)
+//   hist > LMR_GOOD_HIST_THRESHOLD → reduce less (−1)
+// Reference: https://www.chessprogramming.org/Late_Move_Reductions#Heuristic_Reductions
+static constexpr int LMR_BAD_HIST_THRESHOLD  = -500;
+static constexpr int LMR_GOOD_HIST_THRESHOLD = 1500;
+
 }  // anonymous namespace
 }  // namespace search
 }  // namespace LibreChess

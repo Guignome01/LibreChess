@@ -15,7 +15,7 @@ FEN parse/serialize/validate. Stateless namespace.
 
 ## Design Notes
 
-- **Two-step validation** — `validateFEN()` checks format strictly, `fenToBoard()` parses leniently. `Position::loadFEN()` calls validate first, returns `false` on failure without modifying state. Also rejects missing kings.
+- **Two-step validation** — `validateFEN()` checks format strictly (including exactly one white and one black king per FIDE rules, required by `Position::kingSq()`); `fenToBoard()` parses leniently. `Position::loadFEN()` calls validate first, returns `false` on failure without modifying state.
 - Always `validateFEN()` before `fenToBoard()` when accepting user input.
 
 ## Testing

@@ -8,13 +8,19 @@
 // wtime/btime/winc/binc/movestogo into soft/hard time limits that
 // SearchLimits understands.
 //
-// Formula (no movestogo):
-//   softTime = remaining / 30 + increment / 2
-//   hardTime = min(remaining / 4, softTime * 4)
+// Formula:
+//   safeRemaining = max(1, remaining - 50)        // 50 ms move overhead
 //
-// Formula (with movestogo):
-//   softTime = remaining / movestogo + increment
-//   hardTime = min(remaining / 4, softTime * 4)
+//   With movestogo:
+//     softTime = safeRemaining / movestogo + increment
+//   Without movestogo (sudden death):
+//     softTime = safeRemaining / 30 + increment / 2
+//
+//   hardTime = min(safeRemaining / 4, softTime * 4)
+//
+//   Final clamp:
+//     softTime = min(softTime, hardTime, safeRemaining)
+//     hardTime = min(hardTime, safeRemaining)
 //
 // Reference: https://www.chessprogramming.org/Time_Management
 // ---------------------------------------------------------------------------

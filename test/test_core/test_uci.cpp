@@ -160,6 +160,70 @@ static void test_uci_go_movetime(void) {
 }
 
 // ===========================================================================
+// position with invalid FEN — emits "info string error: invalid fen"
+// and leaves position state unchanged.
+// ===========================================================================
+
+static void test_uci_position_invalid_fen(void) {
+  uci::UCIState state(nullptr, 64);
+  // Establish a known starting state first.
+  send(state, "position startpos");
+  Color sideBefore = state.pos.sideToMove();
+
+  // Garbage FEN — must be rejected by validateFEN before fenToBoard runs.
+  std::string out = send(state, "position fen not_a_valid_fen_string");
+  TEST_ASSERT_TRUE_MESSAGE(contains(out, "info string error"),
+                           "Expected error line for invalid FEN");
+  TEST_ASSERT_TRUE_MESSAGE(contains(out, "invalid fen"),
+                           "Error line should mention 'invalid fen'");
+  // Position state must remain untouched (still startpos, white to move).
+  TEST_ASSERT_EQUAL(sideBefore, state.pos.sideToMove());
+}
+
+// ===========================================================================
+// position startpos with an illegal move — emits error and halts the
+// move loop so the side to move does not advance.
+// ===========================================================================
+
+static void test_uci_position_illegal_move(void) {
+  uci::UCIState state(nullptr, 64);
+  // a1a2 is not legal from the starting position (rook blocked by own pawn).
+  std::string out = send(state, "position startpos moves a1a2");
+  TEST_ASSERT_TRUE_MESSAGE(contains(out, "info string error"),
+                           "Expected error line for illegal move");
+  TEST_ASSERT_TRUE_MESSAGE(contains(out, "illegal move"),
+                           "Error line should mention 'illegal move'");
+  // Move loop must halt on first error: side to move stays White.
+  TEST_ASSERT_EQUAL(Color::WHITE, state.pos.sideToMove());
+}
+
+// ===========================================================================
+// position startpos with an unparseable move token — emits error and
+// halts the move loop.
+// ===========================================================================
+
+static void test_uci_position_unparseable_move(void) {
+  uci::UCIState state(nullptr, 64);
+  // "zz99" cannot be parsed as a coordinate move.
+  std::string out = send(state, "position startpos moves zz99 e2e4");
+  TEST_ASSERT_TRUE_MESSAGE(contains(out, "info string error"),
+                           "Expected error line for unparseable move");
+  // Loop halted before e2e4 was applied.
+  TEST_ASSERT_EQUAL(Color::WHITE, state.pos.sideToMove());
+}
+
+// ===========================================================================
+// position with neither startpos nor fen — emits error.
+// ===========================================================================
+
+static void test_uci_position_missing_keyword(void) {
+  uci::UCIState state(nullptr, 64);
+  std::string out = send(state, "position");
+  TEST_ASSERT_TRUE_MESSAGE(contains(out, "info string error"),
+                           "Expected error line for missing position keyword");
+}
+
+// ===========================================================================
 // Registration
 // ===========================================================================
 
@@ -175,4 +239,8 @@ void register_uci_tests() {
   RUN_TEST(test_uci_mate_score);
   RUN_TEST(test_uci_setoption_hash);
   RUN_TEST(test_uci_go_movetime);
+  RUN_TEST(test_uci_position_invalid_fen);
+  RUN_TEST(test_uci_position_illegal_move);
+  RUN_TEST(test_uci_position_unparseable_move);
+  RUN_TEST(test_uci_position_missing_keyword);
 }

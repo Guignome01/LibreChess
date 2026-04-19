@@ -13,7 +13,7 @@ Fail-soft negamax + alpha-beta + quiescence with iterative deepening. Stateless 
 |------|---------|
 | `search.h` | Public API, constants, `SearchLimits`, `SearchResult`, `SearchState`, `TTFlag`, `PackedMove` (lossless pack/unpack), `TTEntry`, `TranspositionTable` (inherits `HashTableBase<TTEntry>`) |
 | `search.cpp` | Search algorithm (negamax, quiescence, findBestMove), PV collection, root reordering |
-| `search_params.h` | Extracted search constants: pruning margins, reduction thresholds, constexpr LMR table, aspiration/futility/razor/LMP/RFP/SEE capture parameters, tempo bonus |
+| `search_params.h` | Extracted search constants: pruning margins, reduction thresholds, constexpr LMR table, aspiration/futility/razor/LMP/RFP/SEE capture parameters, tempo bonus, time-management tuning (easy-move, instability factors), LMR history thresholds |
 | `move_picker.h` | `MovePicker` struct (staged generation), MVV-LVA scoring, move validation, heuristic update functions (`updateKillers`, `updateHistory`, `updateCaptureCutoffHistory`, `updateQuietCutoffHeuristics`) |
 | `stats.h` | `SearchStats` struct, `STAT_INC` macro (active under `-DSTATS` only) |
 
@@ -85,7 +85,7 @@ Also contains heuristic update functions: `updateKillers`, `updateHistory` (grav
 | Technique | Details |
 |-----------|---------|
 | Null move pruning | R = NMP_REDUCTION + depth/4 + min(3, evalSurplus/200) |
-| LMR | `LMR_TABLE.data[depth][moveIndex]`, +1 hist<−500, −1 hist>1500, +1 non-improving, +1 non-PV |
+| LMR | `LMR_TABLE.data[depth][moveIndex]`, +1 hist<`LMR_BAD_HIST_THRESHOLD`, −1 hist>`LMR_GOOD_HIST_THRESHOLD`, +1 non-improving, +1 non-PV |
 | LMP | Skip late quiets at shallow depths, threshold +2 when improving |
 | History pruning | Pre-make skip: hist < −HISTORY_PRUNE_THRESHOLD × depth |
 | SEE capture pruning | Prune captures with SEE < −SEE_CAPTURE_PRUNE_MARGIN × depth at non-PV, non-check nodes. Uses MovePicker's cached SEE. |

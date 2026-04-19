@@ -56,7 +56,9 @@ class Game {
   void initSearch(int ttSize = search::DEFAULT_TT_SIZE);
 
   // Run the search engine on the current position.
-  // Requires initSearch() to have been called first.
+  // Requires initSearch() to have been called first.  If called before
+  // initSearch(), returns an empty SearchResult and logs an error — the
+  // engine pointer is never dereferenced when null.
   // Returns the best move, score, depth, and PV.
   search::SearchResult calculateMove(const search::SearchLimits& limits);
 

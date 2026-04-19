@@ -28,6 +28,13 @@ void Game::initSearch(int ttSize) {
 }
 
 search::SearchResult Game::calculateMove(const search::SearchLimits& limits) {
+  // Precondition: initSearch() must have been called.  Player-only games
+  // skip search resource allocation entirely; calling this method on such
+  // a Game is a usage error — return an empty result rather than crash.
+  if (!engine_) {
+    logger_.error("Game: calculateMove called before initSearch");
+    return search::SearchResult{};
+  }
   return engine_->calculateMove(board_, limits);
 }
 
@@ -148,7 +155,16 @@ MoveResult Game::makeMove(Square from, Square to, char promotion) {
   return result;
 }
 
+// Helper: validate a row/col coordinate pair against the 8x8 board.
+static inline bool validRowCol(int row, int col) {
+  return (unsigned)row < 8u && (unsigned)col < 8u;
+}
+
 MoveResult Game::makeMove(int fromRow, int fromCol, int toRow, int toCol, char promotion) {
+  // Boundary check — firmware passes display coordinates from user input.
+  // Out-of-range values must not flow into Position as bogus Squares.
+  if (!validRowCol(fromRow, fromCol) || !validRowCol(toRow, toCol))
+    return invalidMoveResult();
   return makeMove(rowColToSquare(fromRow, fromCol),
                   rowColToSquare(toRow, toCol), promotion);
 }
@@ -267,6 +283,8 @@ int Game::getHistory(std::string out[], int maxMoves, MoveFormat format) const {
 // ---------------------------------------------------------------------------
 
 std::string Game::toCoordinate(int fromRow, int fromCol, int toRow, int toCol, char promotion) {
+  if (!validRowCol(fromRow, fromCol) || !validRowCol(toRow, toCol))
+    return {};
   return notation::toCoordinate(rowColToSquare(fromRow, fromCol),
                                 rowColToSquare(toRow, toCol), promotion);
 }

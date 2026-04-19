@@ -84,6 +84,17 @@ struct GameHeader {
 #pragma pack(pop)
 static_assert(sizeof(GameHeader) == 16, "GameHeader must be 16 bytes");
 
+// On-disk wire format is little-endian, matching the raw memcpy performed by
+// LittleFSStorage and the `getUint16/32(offset, /*littleEndian=*/true)` calls
+// in the web frontend (src/web/board.html).  ESP32 and the native test host
+// are both LE, so the reinterpret_cast-based I/O is a zero-cost identity.
+// If this ever fires, either the firmware moved to a BE target or the wire
+// format needs explicit serialization helpers.
+#if defined(__BYTE_ORDER__) && defined(__ORDER_LITTLE_ENDIAN__)
+static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
+              "GameHeader wire format requires a little-endian host");
+#endif
+
 // Recording constants.
 static constexpr uint16_t FEN_MARKER = 0xFFFF;
 static constexpr int MAX_GAMES = 50;

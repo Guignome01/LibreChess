@@ -84,6 +84,12 @@ std::string boardToFEN(const Piece mailbox[], Color currentTurn, const PositionS
 
 void fenToBoard(const std::string& fen, BitboardSet& bb, Piece mailbox[],
                 Color& currentTurn, PositionState* state) {
+  // Lenient parser — assumes the caller has already accepted the FEN via
+  // fen::validateFEN().  Does not re-check field counts, EP-square rank,
+  // halfmove/fullmove syntax, or piece-placement well-formedness.  Invalid
+  // input is accepted as best-effort partial state, which is safe only when
+  // upstream validation has occurred.  Public callers (UCI, web API, file
+  // load) MUST gate this with validateFEN() first.
   using namespace LibreChess;
   std::string remaining = fen;
   std::string boardPart = nextToken(remaining);
@@ -164,6 +170,9 @@ void fenToBoard(const std::string& fen, BitboardSet& bb, Piece mailbox[],
 // Validate the board (piece placement) field.
 // Must contain exactly 7 '/' separators.  Each rank must sum to 8 squares
 // and contain only valid piece characters (rnbqkpRNBQKP) and digits 1-8.
+// Must also contain exactly one white king ('K') and one black king ('k'):
+// positions without two kings are illegal per FIDE rules, and Position::
+// kingSq() / attack detection assume every side has exactly one king.
 static bool validateBoardField(const std::string& boardPart) {
   int slashCount = 0;
   for (char c : boardPart) {
@@ -172,6 +181,8 @@ static bool validateBoardField(const std::string& boardPart) {
   if (slashCount != 7) return false;
 
   int col = 0;
+  int whiteKings = 0;
+  int blackKings = 0;
   for (char c : boardPart) {
     if (c == '/') {
       if (col != 8) return false;
@@ -179,12 +190,17 @@ static bool validateBoardField(const std::string& boardPart) {
     } else if (c >= '1' && c <= '8') {
       col += c - '0';
     } else if (std::strchr("rnbqkpRNBQKP", c)) {
+      if (c == 'K') ++whiteKings;
+      else if (c == 'k') ++blackKings;
       col++;
     } else {
       return false;
     }
   }
-  return col == 8;
+  if (col != 8) return false;
+  // Exactly one king per side is required by FIDE rules and assumed
+  // throughout the move generator and attack detector.
+  return whiteKings == 1 && blackKings == 1;
 }
 
 // Validate the active color field.  Must be exactly "w" or "b".
@@ -228,6 +244,10 @@ static bool validateClockField(const std::string& field) {
 }
 
 bool validateFEN(const std::string& fen) {
+  // Strict syntax checker.  Always call this before fenToBoard() \u2014 the
+  // latter is a lenient parser that assumes well-formed input.  The
+  // two-step pattern keeps the hot path cheap (parse) while still
+  // protecting boundaries (validate) when needed.
   if (fen.empty()) return false;
 
   // Extract board part (before first space)

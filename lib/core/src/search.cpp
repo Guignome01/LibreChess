@@ -204,9 +204,9 @@ inline int computeLMRReduction(int depth, int moveIndex, int16_t hist,
   int mi = moveIndex < LMR_MAX_MOVES ? moveIndex : LMR_MAX_MOVES - 1;
   int reduction = LMR_TABLE.data[depth][mi];
 
-  if (hist < -500)
+  if (hist < LMR_BAD_HIST_THRESHOLD)
     ++reduction;           // Bad history → reduce more
-  else if (hist > 1500)
+  else if (hist > LMR_GOOD_HIST_THRESHOLD)
     --reduction;           // Good history → reduce less
   if (!improving)
     ++reduction;           // Not improving → reduce more
@@ -1241,10 +1241,12 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
       // Move instability: when the best move changes at depth >= 4,
       // scale the effective soft time by a dynamic factor that grows
       // with accumulated instability (more changes → more time).
-      // Base factor: 1.5×, + 0.25× per prior change (capped at 2.5×).
+      // Factor (%) = BASE + STEP × bestMoveChanges, capped at CAP.
       // Reference: https://www.chessprogramming.org/Time_Management
       if (depth >= 4 && effectiveSoftTime > 0) {
-        int factor = std::min(250, 150 + bestMoveChanges * 25);
+        int factor = std::min(INSTABILITY_FACTOR_CAP,
+                              INSTABILITY_FACTOR_BASE +
+                                  bestMoveChanges * INSTABILITY_FACTOR_STEP);
         effectiveSoftTime = effectiveSoftTime * factor / 100;
         if (limits.hardTimeMs > 0 && effectiveSoftTime > limits.hardTimeMs)
           effectiveSoftTime = limits.hardTimeMs;
@@ -1255,12 +1257,14 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
     prevIterBest = iterBestMove;
 
     // --- Easy move detection ---
-    // If the best move has been stable for >= 4 iterations, leads the
-    // second-best by >= 100cp, and we're deep enough, stop early.
+    // If the best move has been stable for enough iterations, leads the
+    // second-best by a comfortable margin, and we're deep enough, stop
+    // early.
     // Reference: https://www.chessprogramming.org/Time_Management#Easy_Move
-    if (effectiveSoftTime > 0 && stableCount >= 4 && depth >= 6 &&
+    if (effectiveSoftTime > 0 && stableCount >= EASY_MOVE_STABLE_DEPTH &&
+        depth >= EASY_MOVE_MIN_DEPTH &&
         secondBestScore > -INF_SCORE &&
-        iterBestScore - secondBestScore >= 100) {
+        iterBestScore - secondBestScore >= EASY_MOVE_MARGIN) {
       break;
     }
 

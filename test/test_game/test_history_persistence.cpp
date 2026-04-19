@@ -176,8 +176,10 @@ void test_recorder_add_move_persists(void) {
   history.setHeader(makeTestHeader());
   history.addMove(makeEntry(6, 4, 4, 4, Piece::W_PAWN));  // e2e4
   TEST_ASSERT_EQUAL(2, (int)storage.moveData.size());  // 2-byte encoded move
-  // Header not flushed yet (turn-based: every 2 half-moves)
-  TEST_ASSERT_EQUAL(0, storage.headerUpdateCount);
+  // Header IS flushed after the very first move so a power loss between
+  // move 1 and move 2 does not lose move 1's data on resume.
+  TEST_ASSERT_EQUAL(1, storage.headerUpdateCount);
+  TEST_ASSERT_EQUAL_UINT16(1, storage.storedHeader.moveCount);
 }
 
 void test_recorder_snapshot_position(void) {
@@ -277,12 +279,25 @@ void test_recorder_turn_based_header_flush(void) {
   history.setHeader(makeTestHeader());
   int initial = storage.headerUpdateCount;
 
+  // Move 1 always flushes (durability: prevents loss of the first move on
+  // a crash before move 2).
   history.addMove(makeEntry(6, 4, 4, 4, Piece::W_PAWN));  // e2e4 (1st half-move)
-  TEST_ASSERT_EQUAL(initial, storage.headerUpdateCount);  // Not flushed
+  TEST_ASSERT_EQUAL(initial + 1, storage.headerUpdateCount);
+  TEST_ASSERT_EQUAL_UINT16(1, storage.storedHeader.moveCount);
 
+  // Move 2: regular turn-based flush.
   history.addMove(makeEntry(1, 4, 3, 4, Piece::B_PAWN));  // e7e5 (2nd half-move)
-  TEST_ASSERT_EQUAL(initial + 1, storage.headerUpdateCount);  // Flushed!
+  TEST_ASSERT_EQUAL(initial + 2, storage.headerUpdateCount);
   TEST_ASSERT_EQUAL_UINT16(2, storage.storedHeader.moveCount);
+
+  // Move 3: in-flight, not yet flushed (resets after move 2).
+  history.addMove(makeEntry(6, 3, 4, 3, Piece::W_PAWN));  // d2d4 (3rd half-move)
+  TEST_ASSERT_EQUAL(initial + 2, storage.headerUpdateCount);
+
+  // Move 4: flushes again.
+  history.addMove(makeEntry(1, 3, 3, 3, Piece::B_PAWN));  // d7d5 (4th half-move)
+  TEST_ASSERT_EQUAL(initial + 3, storage.headerUpdateCount);
+  TEST_ASSERT_EQUAL_UINT16(4, storage.storedHeader.moveCount);
 }
 
 void test_recorder_snapshot_always_flushes_header(void) {
@@ -290,11 +305,11 @@ void test_recorder_snapshot_always_flushes_header(void) {
   history.setHeader(makeTestHeader());
   int initial = storage.headerUpdateCount;
 
-  history.addMove(makeEntry(6, 4, 4, 4, Piece::W_PAWN));  // 1 move, no flush
-  TEST_ASSERT_EQUAL(initial, storage.headerUpdateCount);
+  history.addMove(makeEntry(6, 4, 4, 4, Piece::W_PAWN));  // 1st move — always flushes (durability)
+  TEST_ASSERT_EQUAL(initial + 1, storage.headerUpdateCount);
 
   history.snapshotPosition("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1");
-  TEST_ASSERT_EQUAL(initial + 1, storage.headerUpdateCount);  // FEN always flushes
+  TEST_ASSERT_EQUAL(initial + 2, storage.headerUpdateCount);  // FEN always flushes
 }
 
 void test_recorder_replay_rejects_invalid_move(void) {
@@ -487,9 +502,9 @@ void test_game_make_move(void) {
   TEST_ASSERT_TRUE(observer.callCount > 0);
 
   // snapshotPosition flushed the header with moveCount=1 (FEN_MARKER).
-  // persistMove incremented to 2 but only 1 half-move since flush — no
-  // turn-based header update yet.  storedHeader still shows last flush.
-  TEST_ASSERT_EQUAL_UINT16(1, storage.storedHeader.moveCount);
+  // persistMove incremented to 2; the flush rule flushes for moveCount<=2
+  // (durability for the early game), so storedHeader is now at 2.
+  TEST_ASSERT_EQUAL_UINT16(2, storage.storedHeader.moveCount);
   teardownGame();
 }
 

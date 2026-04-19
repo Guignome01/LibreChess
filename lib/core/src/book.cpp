@@ -187,7 +187,11 @@ constexpr void applyMove(ReplayBoard& b, int from, int to) {
     if (diff == 16 || diff == -16) {
       b.epFile = static_cast<uint8_t>(fileOf(from));
     }
-    // Diagonal move to an empty square → en passant capture
+    // Diagonal move to an empty square → en passant capture.
+    // LERF deltas: ±7 (±1 file, ±1 rank, opposite signs)
+    //              ±9 (±1 file, ±1 rank, same signs).
+    // Captured pawn lies one rank "behind" the target from the capturer's
+    // perspective (one rank south for white, one rank north for black).
     if ((diff == 7 || diff == 9 || diff == -7 || diff == -9) && captured == 0) {
       // Remove the captured pawn
       int capturedSq = b.whiteToMove ? (to - 8) : (to + 8);

@@ -663,8 +663,11 @@ UndoInfo Position::makeNullMove() {
   currentTurn_ = ~currentTurn_;
   hash_ ^= zobrist::KEYS.sideToMove;
 
-  // Increment halfmove clock (null move is not a pawn move or capture)
-  state_.halfmoveClock++;
+  // Do NOT touch halfmoveClock: a null move is a hypothetical pass, not a
+  // real move, so it must not count toward the 50-move rule.  Incrementing
+  // here would leak into the null-moved subtree and could spuriously
+  // trigger DRAW_SCORE in isFiftyMoves() near the threshold.
+  // Reference: https://www.chessprogramming.org/Null_Move_Pruning
 
   recordPosition();
 

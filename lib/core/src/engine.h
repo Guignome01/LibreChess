@@ -74,6 +74,14 @@ class Engine {
   search::SearchState searchState_;
   std::atomic<bool> searchStop_{false};
   std::atomic<bool>* externalStop_ = nullptr;
+  // Re-entry guard — flipped to true for the duration of calculateMove() and
+  // any resource-mutating call (clearState, resizeTT).  A concurrent call
+  // from another task is a programming error, not a supported use case; the
+  // offender fails fast with an empty SearchResult or no-op instead of
+  // corrupting the TT / hash tables in flight.  Cheaper than std::mutex
+  // (1 byte RAM, no FreeRTOS handle) and keeps the single-task discipline
+  // explicit.
+  std::atomic<bool> busy_{false};
 };
 
 }  // namespace LibreChess

@@ -51,6 +51,52 @@ struct PawnMasks {
 static constexpr PawnMasks PAWN_MASKS{};
 
 // ---------------------------------------------------------------------------
+// Rank-indexed pawn masks — constexpr, placed in .rodata (Flash on ESP32).
+//
+// Indexed by [colorIndex][rank] where colorIndex = 0 (WHITE) or 1 (BLACK).
+//
+//   AHEAD_MASK[c][r]            — all squares strictly ahead of rank r
+//                                 from color c's perspective.
+//   BEHIND_OR_LEVEL_MASK[c][r]  — all squares at or behind rank r
+//                                 from color c's perspective.
+//
+// Replaces per-call shift expressions in isBackward() and the candidate-
+// passer block — not only removing branching on color but also avoiding
+// an undefined-behavior corner case (shift by 64 when the pawn reaches
+// the promotion rank).
+//
+// Footprint: 2 × 2 × 8 × 8 = 256 bytes in flash.
+// ---------------------------------------------------------------------------
+
+struct PawnRankMasks {
+  Bitboard ahead[2][8] = {};
+  Bitboard behindOrLevel[2][8] = {};
+  constexpr PawnRankMasks() {
+    for (int r = 0; r < 8; ++r) {
+      // WHITE perspective: "ahead" = higher ranks, "behindOrLevel" = 0..r.
+      Bitboard wAhead = 0, wBehindOrLevel = 0;
+      for (int rr = r + 1; rr < 8; ++rr)
+        wAhead |= (static_cast<Bitboard>(0xFF) << (8 * rr));
+      for (int rr = 0; rr <= r; ++rr)
+        wBehindOrLevel |= (static_cast<Bitboard>(0xFF) << (8 * rr));
+      ahead[0][r] = wAhead;
+      behindOrLevel[0][r] = wBehindOrLevel;
+
+      // BLACK perspective: "ahead" = lower ranks, "behindOrLevel" = r..7.
+      Bitboard bAhead = 0, bBehindOrLevel = 0;
+      for (int rr = 0; rr < r; ++rr)
+        bAhead |= (static_cast<Bitboard>(0xFF) << (8 * rr));
+      for (int rr = r; rr < 8; ++rr)
+        bBehindOrLevel |= (static_cast<Bitboard>(0xFF) << (8 * rr));
+      ahead[1][r] = bAhead;
+      behindOrLevel[1][r] = bBehindOrLevel;
+    }
+  }
+};
+
+static constexpr PawnRankMasks PAWN_RANK_MASKS{};
+
+// ---------------------------------------------------------------------------
 // Color-loop helpers — constexpr lookup tables for bilateral evaluation.
 //
 // SIDE_SIGN: maps color index (0=WHITE, 1=BLACK) to the sign applied to
@@ -274,12 +320,8 @@ bool isBackward(Square sq, Color color, Bitboard friendlyPawns,
 
   // Not backward if any adjacent-file friendly pawn is at or behind.
   int rank = rankOf(sq);
-  Bitboard behindOrLevel;
-  if (color == Color::WHITE) {
-    behindOrLevel = (static_cast<Bitboard>(1) << (8 * (rank + 1))) - 1;
-  } else {
-    behindOrLevel = ~((static_cast<Bitboard>(1) << (8 * rank)) - 1);
-  }
+  Bitboard behindOrLevel =
+      PAWN_RANK_MASKS.behindOrLevel[color == Color::WHITE ? 0 : 1][rank];
   if (adjFriendly & behindOrLevel) return false;
 
   // Stop square must be controlled by an enemy pawn.
@@ -400,18 +442,8 @@ static void evalPawnStructure(const BitboardSet& bb,
         Bitboard fwdFile = forwardMask(color, sq);
         if (!(enemy & fwdFile)) {
           Bitboard adjFiles = adjacentFilesMask(file);
-          Bitboard aheadMask, behindOrLevel;
-          if (c == 0) {
-            aheadMask = (rank < 7)
-                ? ~((static_cast<Bitboard>(1) << (8 * (rank + 1))) - 1)
-                : static_cast<Bitboard>(0);
-            behindOrLevel = (static_cast<Bitboard>(1) << (8 * (rank + 1))) - 1;
-          } else {
-            aheadMask = (rank > 0)
-                ? (static_cast<Bitboard>(1) << (8 * rank)) - 1
-                : static_cast<Bitboard>(0);
-            behindOrLevel = ~((static_cast<Bitboard>(1) << (8 * rank)) - 1);
-          }
+          Bitboard aheadMask = PAWN_RANK_MASKS.ahead[c][rank];
+          Bitboard behindOrLevel = PAWN_RANK_MASKS.behindOrLevel[c][rank];
           int sentries = popcount(enemy & adjFiles & aheadMask);
           int helpers = popcount(friendly & adjFiles & behindOrLevel);
           if (helpers >= sentries) {

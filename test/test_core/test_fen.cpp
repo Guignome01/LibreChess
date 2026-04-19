@@ -126,6 +126,26 @@ void test_validateFEN_bad_piece_char(void) {
   TEST_ASSERT_FALSE(fen::validateFEN("xnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"));
 }
 
+// King-presence validation: exactly one K and one k required per FIDE rules.
+
+void test_validateFEN_missing_white_king(void) {
+  // White king replaced with a rook — validation must reject.
+  TEST_ASSERT_FALSE(fen::validateFEN(
+      "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQRBNR w KQkq - 0 1"));
+}
+
+void test_validateFEN_missing_black_king(void) {
+  // Black king missing (replaced with rook).
+  TEST_ASSERT_FALSE(fen::validateFEN(
+      "rnbqrbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"));
+}
+
+void test_validateFEN_two_white_kings(void) {
+  // Two white kings — illegal.
+  TEST_ASSERT_FALSE(fen::validateFEN(
+      "rnbqkbnr/pppppppp/8/8/8/8/PPPPKPPP/RNBQKBNR w KQkq - 0 1"));
+}
+
 void test_validateFEN_bad_turn(void) {
   TEST_ASSERT_FALSE(fen::validateFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR x KQkq - 0 1"));
 }
@@ -148,7 +168,8 @@ void test_validateFEN_bad_fullmove(void) {
 }
 
 void test_validateFEN_no_castling_no_ep(void) {
-  TEST_ASSERT_TRUE(fen::validateFEN("8/8/8/8/8/8/8/4K3 w - - 0 1"));
+  // Minimal legal position: both kings present (required by validator).
+  TEST_ASSERT_TRUE(fen::validateFEN("4k3/8/8/8/8/8/8/4K3 w - - 0 1"));
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +233,9 @@ void register_fen_tests() {
   RUN_TEST(test_validateFEN_bad_rank_count);
   RUN_TEST(test_validateFEN_bad_rank_sum);
   RUN_TEST(test_validateFEN_bad_piece_char);
+  RUN_TEST(test_validateFEN_missing_white_king);
+  RUN_TEST(test_validateFEN_missing_black_king);
+  RUN_TEST(test_validateFEN_two_white_kings);
   RUN_TEST(test_validateFEN_bad_turn);
   RUN_TEST(test_validateFEN_bad_castling_field);
   RUN_TEST(test_validateFEN_bad_en_passant);

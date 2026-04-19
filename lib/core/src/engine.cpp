@@ -34,6 +34,15 @@ Engine::~Engine() {
 search::SearchResult Engine::calculateMove(Position& pos,
                                            const search::SearchLimits& limits,
                                            search::InfoCallback info) {
+  // Re-entry guard: if another task is already inside the engine, bail out
+  // rather than racing on TT / hash tables.  See busy_ comment in engine.h.
+  bool expected = false;
+  if (!busy_.compare_exchange_strong(expected, true,
+                                     std::memory_order_acquire,
+                                     std::memory_order_relaxed)) {
+    return search::SearchResult{};
+  }
+
   // Build internal limits with our stop flag wired in
   search::SearchLimits internalLimits;
   internalLimits.maxDepth = limits.maxDepth;
@@ -43,7 +52,10 @@ search::SearchResult Engine::calculateMove(Position& pos,
   searchStop_.store(false, std::memory_order_relaxed);
   internalLimits.stop = externalStop_ ? externalStop_ : &searchStop_;
 
-  return search::findBestMove(pos, internalLimits, searchState_, info);
+  search::SearchResult result =
+      search::findBestMove(pos, internalLimits, searchState_, info);
+  busy_.store(false, std::memory_order_release);
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -63,15 +75,33 @@ void Engine::setExternalStop(std::atomic<bool>* flag) {
 // ---------------------------------------------------------------------------
 
 void Engine::clearState() {
+  // Refuse to nuke state out from under an in-flight search.  Caller must
+  // wait for calculateMove() to return before clearing.
+  bool expected = false;
+  if (!busy_.compare_exchange_strong(expected, true,
+                                     std::memory_order_acquire,
+                                     std::memory_order_relaxed)) {
+    return;
+  }
   tt_.clear();
   pawnHash_.clear();
   evalHash_.clear();
   searchState_.clearHeuristics();
+  busy_.store(false, std::memory_order_release);
 }
 
 void Engine::resizeTT(int entries) {
+  // Same rationale as clearState(): reallocating the TT while a search holds
+  // pointers into it would free memory from under findBestMove().
+  bool expected = false;
+  if (!busy_.compare_exchange_strong(expected, true,
+                                     std::memory_order_acquire,
+                                     std::memory_order_relaxed)) {
+    return;
+  }
   tt_.free();
   tt_.resize(entries);
+  busy_.store(false, std::memory_order_release);
 }
 
 }  // namespace LibreChess
