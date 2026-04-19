@@ -5,11 +5,13 @@ CXXFLAGS  := -std=gnu++17 -O2 -DNDEBUG -Wall -Wextra -pthread
 CORE_DIR   := ../../lib/core/src
 INCLUDES   := -I$(CORE_DIR)
 
-# Source files — all core library .cpp files
+# Source files — all core library .cpp files (top-level + eval/ subfolder)
 CORE_SRCS  := $(wildcard $(CORE_DIR)/*.cpp)
+EVAL_SRCS  := $(wildcard $(CORE_DIR)/eval/*.cpp)
 
 # Object files
-CORE_OBJS  := $(patsubst $(CORE_DIR)/%.cpp, obj/core_%.o, $(CORE_SRCS))
+CORE_OBJS  := $(patsubst $(CORE_DIR)/%.cpp, obj/core_%.o, $(CORE_SRCS)) \
+              $(patsubst $(CORE_DIR)/eval/%.cpp, obj/core_eval_%.o, $(EVAL_SRCS))
 
 # Output executable name
 ifeq ($(OS),Windows_NT)
@@ -28,6 +30,9 @@ obj/main.o: main.cpp | obj
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 obj/core_%.o: $(CORE_DIR)/%.cpp | obj
+	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
+
+obj/core_eval_%.o: $(CORE_DIR)/eval/%.cpp | obj
 	$(CXX) $(CXXFLAGS) $(INCLUDES) -c $< -o $@
 
 obj:

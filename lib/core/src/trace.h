@@ -113,7 +113,7 @@ int getDefault(int idx);
 // ---------------------------------------------------------------------------
 // Eval param extern declarations — external linkage for all eval parameters.
 //
-// Under TUNING, eval_params.h defines parameters with external linkage
+// Under TUNING, eval/params.h defines parameters with external linkage
 // (EVAL_CONST expands to nothing).  These extern declarations let
 // trace.cpp and tune.cpp reference them.  (C++17 inline variables would
 // eliminate this block, but the tuner toolchain is GCC 5.1 which lacks
@@ -178,6 +178,7 @@ extern int SPACE_WEIGHT;
 
 // Mop-up.
 extern int MOPUP_CMD_WEIGHT, MOPUP_CLOSE_KING;
+extern int MOPUP_THRESHOLD;
 
 }  // namespace eval
 }  // namespace LibreChess

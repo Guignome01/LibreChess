@@ -13,7 +13,7 @@ Tapered evaluation returning centipawns (`int`), white-relative. Interpolates MG
 - `evaluatePosition(bb, pawnHash)` — full computation (material+PST from scratch)
 - `evaluatePosition(bb, mgMatPST, egMatPST, phase, pawnHash)` — with pre-computed material+PST + phase (hot path from search)
 
-**Extracted parameters** — all tunable evaluation constants (material values, PST tables, pawn structure bonuses, king safety weights, mobility tables, space terms) live in `eval_params.h`. The `EVAL_CONST`/`EVAL_FIXED`/`PST_ELEM`/`MAT_ELEM` macros are also defined there.
+**Extracted parameters** — all tunable evaluation constants (material values, PST tables, pawn structure bonuses, king safety weights, mobility tables, space terms) live in `eval/params.h`. The `EVAL_CONST`/`EVAL_FIXED`/`PST_ELEM`/`MAT_ELEM` macros are also defined there.
 
 **Material + PST**:
 - `PSQTPair pieceSquareMGEG(pieceIdx, sq)` — single lookup from flat `PSQT_MG/EG[12][64]` (production) or direct computation from raw arrays (TUNING)
@@ -32,7 +32,7 @@ Tapered evaluation returning centipawns (`int`), white-relative. Interpolates MG
 
 Each eval function (`evalThreats`, `evalMobility`, `evalKingDanger`, `evalSpace`) calls its compute helper, then applies parameter weights to accumulate scores. `extractTrace()` calls the same helpers, then emits gradient coefficients.  This eliminates ~200 lines of duplicated intermediate computation.
 
-**Accessors** — `tempoBonus()` returns `TEMPO_BONUS`, `kingDangerScore(weight)` clamps and looks up `KING_SAFETY_TABLE[weight]`.  Both avoid exposing `eval_params.h` (prevents TUNING ODR violations when other TUs need these values).  `kingDangerScore()` is used by trace extraction to add the non-tunable S-curve penalty to bias.
+**Accessors** — `tempoBonus()` returns `TEMPO_BONUS`, `kingDangerScore(weight)` clamps and looks up `KING_SAFETY_TABLE[weight]`.  Both avoid exposing `eval/params.h` (prevents TUNING ODR violations when other TUs need these values).  `kingDangerScore()` is used by trace extraction to add the non-tunable S-curve penalty to bias.
 
 **Distance helpers** (inline, `evaluation.h`):
 - `chebyshevDistance(a, b)` — king distance metric (max of file/rank deltas). Used by passed pawn king proximity and mop-up.
@@ -42,7 +42,7 @@ Each eval function (`evalThreats`, `evalMobility`, `evalKingDanger`, `evalSpace`
 1. **Data definitions** — TUNING: PST pointer tables for direct computation from mutable params. Production: `static constexpr PSQT_MG/EG[12][64]`.
 2. **pieceSquareMGEG** — TUNING: computes `MATERIAL[type] + PST[type][sq]` on each call (no caching). Production: reads constexpr PSQT.
 
-All tuning metadata (descriptors, param externs, accessor API) lives in `lib/core/src/trace.h/cpp` (`#ifdef TUNING` — compiles to nothing in production).  Only `evaluation.cpp` includes `eval_params.h` (EVAL_CONST vars have external linkage under TUNING — exactly one definition per program).  EVAL_FIXED params have `const` → internal linkage → inaccessible via extern from other TUs.
+All tuning metadata (descriptors, param externs, accessor API) lives in `lib/core/src/trace.h/cpp` (`#ifdef TUNING` — compiles to nothing in production).  Only `evaluation.cpp` includes `eval/params.h` (EVAL_CONST vars have external linkage under TUNING — exactly one definition per program).  EVAL_FIXED params have `const` → internal linkage → inaccessible via extern from other TUs.
 
 **Hash tables** (both inherit `HashTableBase` from `hash_table.h`):
 - `PawnHashTable` — caches pawn structure MG/EG + `passedPawns[2]` bitboards, keyed by `computePawnHash()`. Default 256 entries × 24B = 6 KiB. ~92%+ hit rate. Passed pawn bitboards are cached to avoid re-scanning pawns for rook-behind-passer evaluation.
@@ -80,7 +80,7 @@ All tuning metadata (descriptors, param externs, accessor API) lives in `lib/cor
 - **Rank-indexed pawn masks** — `static constexpr PawnRankMasks` struct, containing `ahead[2][8]` and `behindOrLevel[2][8]` (indexed by `[colorIndex][rank]`, 256 bytes in .rodata).  Replaces color-branched shift expressions in `isBackward()` and the candidate-passer block: both sites originally computed `(1 << 8*(rank±1)) − 1` variants per call, including one branch guarding UB (shift-by-64) at the promotion rank.  The LUT removes the branches and the UB case.
 - **Passed pawns cached in pawn hash** — `PawnEntry` stores `Bitboard passedPawns[2]` alongside MG/EG scores. `evalPawnStructure` builds the bitboards during its pawn loop and stores them in the hash. On pawn hash hit, bitboards are retrieved without re-scanning. Used by `evalRookBehindPasser()` and `evalPassedPawnKingDist()`. All pawn structure terms (passed, isolated, doubled, backward, connected, candidate, protected passer) are cached. King proximity is NOT cached (depends on king positions).
 - **King danger sign convention** — `evalKingDanger` uses the standard `SIDE_SIGN[c]` with `mgScore -= sign * penalty` (subtraction makes the penalty semantics explicit). Other eval terms use `mgScore += sign * bonus`.
-- **Tempo bonus** — `TEMPO_BONUS` defined in `eval_params.h` (EVAL_CONST, tunable), applied in search layer's `evaluate()` function (where STM is known), not in `evaluatePosition()`. Not in trace extraction (extractTrace has no STM context), so not Texel-tunable — optimize via SPRT.
+- **Tempo bonus** — `TEMPO_BONUS` defined in `eval/params.h` (EVAL_CONST, tunable), applied in search layer's `evaluate()` function (where STM is known), not in `evaluatePosition()`. Not in trace extraction (extractTrace has no STM context), so not Texel-tunable — optimize via SPRT.
 
 ## Testing
 

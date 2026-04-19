@@ -28,7 +28,7 @@
 //   6. Output C++ code with changed values
 //
 // After tuning, copy the formatted block from stdout into
-// eval_params.h, replacing the existing EVAL_CONST definitions.
+// eval/params.h, replacing the existing EVAL_CONST definitions.
 // Rebuild the tuner to start the next iteration from updated defaults.
 //
 // Usage: tune <corpus.epd> [maxPasses=500] [K]
@@ -65,7 +65,7 @@ using namespace LibreChess;
 // Constants
 // ===========================================================================
 
-// Mobility table sizes — mirrors EVAL_FIXED values in eval_params.h.
+// Mobility table sizes — mirrors EVAL_FIXED values in eval/params.h.
 // (EVAL_FIXED = const under TUNING → internal linkage, not accessible here.)
 static constexpr int MOB_KNIGHT_SIZE = 9;
 static constexpr int MOB_BISHOP_SIZE = 14;
@@ -552,7 +552,7 @@ static void localSearch(std::vector<eval::TrainingPosition>& trainSet,
 }
 
 // ---------------------------------------------------------------------------
-// Output helpers — format tuned values for copy-paste into eval_params.h.
+// Output helpers — format tuned values for copy-paste into eval/params.h.
 // ---------------------------------------------------------------------------
 
 /// Print a 64-element PST array formatted as 8 rows of 8 values.
@@ -578,7 +578,7 @@ static void printArray(const char* type, const char* name,
   printf("};\n");
 }
 
-/// Print changed parameters summary and eval_params.h copy-paste block.
+/// Print changed parameters summary and eval/params.h copy-paste block.
 static void printResults() {
   using namespace eval;
   int n = tuning::paramCount();
@@ -598,10 +598,10 @@ static void printResults() {
 
   // =====================================================================
   // Copy-paste block — replace values between the namespace opening
-  // and namespace closing in eval_params.h.
+  // and namespace closing in eval/params.h.
   // =====================================================================
   printf("\n// ===========================================================================\n");
-  printf("// Copy-paste block for eval_params.h\n");
+  printf("// Copy-paste block for eval/params.h\n");
   printf("// ===========================================================================\n\n");
 
   // --- Material ---

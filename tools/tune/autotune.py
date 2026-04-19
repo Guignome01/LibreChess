@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Iterative tuning loop for LibreChess.
 
-Cycles: build tuner -> run -> parse copy-paste block -> patch eval_params.h
+Cycles: build tuner -> run -> parse copy-paste block -> patch eval/params.h
 -> rebuild -> repeat.  Each iteration starts from the previous iteration's
 tuned values, allowing the optimizer to converge deeper.
 
@@ -25,13 +25,13 @@ from datetime import datetime
 # ---------------------------------------------------------------------------
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-EVAL_PARAMS_REL = os.path.join('..', '..', 'lib', 'core', 'src', 'eval_params.h')
+EVAL_PARAMS_REL = os.path.join('..', '..', 'lib', 'core', 'src', 'eval', 'params.h')
 
 # Platform-aware make command.
 MAKE = 'mingw32-make' if os.name == 'nt' else 'make'
 
 # Marker line emitted by tune.cpp that begins the copy-paste block.
-BLOCK_MARKER = 'Copy-paste block for eval_params.h'
+BLOCK_MARKER = 'Copy-paste block for eval/params.h'
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +133,7 @@ def parse_changed_count(stdout):
 # ---------------------------------------------------------------------------
 
 def patch_file(params, filepath):
-    """Replace parameter declarations in eval_params.h in-place.
+    """Replace parameter declarations in eval/params.h in-place.
 
     For each parameter in *params*, find the matching EVAL_CONST declaration
     in the file (by variable name) and replace the entire declaration with
@@ -208,7 +208,7 @@ def main():
         tune_exe += '.exe'
 
     if not os.path.isfile(eval_params):
-        print(f'ERROR: eval_params.h not found: {eval_params}', file=sys.stderr)
+        print(f'ERROR: eval/params.h not found: {eval_params}', file=sys.stderr)
         return 1
 
     K = args.K
@@ -234,7 +234,7 @@ def main():
         label = f'{it}/{max_iter}' if max_iter > 0 else str(it)
         print(f'--- Iteration {label} ---')
 
-        # 1. Build tuner (picks up patched eval_params.h)
+        # 1. Build tuner (picks up patched eval/params.h)
         print('  Building tuner...')
         subprocess.run([MAKE, 'clean'], cwd=SCRIPT_DIR,
                        capture_output=True, text=True)
@@ -266,7 +266,7 @@ def main():
             K = metrics['K']
             print(f'  Discovered K = {K:.6f} (reused hereafter)')
 
-        # 4. Parse copy-paste block & patch eval_params.h
+        # 4. Parse copy-paste block & patch eval/params.h
         block = find_copy_paste_block(r.stdout)
         if not block:
             print('  ERROR: no copy-paste block in tuner output',

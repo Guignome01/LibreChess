@@ -846,12 +846,12 @@ Trace extractTrace(const BitboardSet& bb) {
 // clang-format off
 const tuning::ScalarParam* tuning::scalarParams(int& count) {
   static const ScalarParam params[] = {
-    // --- Material MG (4) --- pawn pinned at 100 (see eval_params.h).
+    // --- Material MG (4) --- pawn pinned at 100 (see eval/params.h).
     {"MAT_KNIGHT_MG",           &MATERIAL[1]},
     {"MAT_BISHOP_MG",           &MATERIAL[2]},
     {"MAT_ROOK_MG",             &MATERIAL[3]},
     {"MAT_QUEEN_MG",            &MATERIAL[4]},
-    // --- Material EG (4) --- pawn pinned at 100 (see eval_params.h).
+    // --- Material EG (4) --- pawn pinned at 100 (see eval/params.h).
     {"MAT_KNIGHT_EG",           &MATERIAL_EG[1]},
     {"MAT_BISHOP_EG",           &MATERIAL_EG[2]},
     {"MAT_ROOK_EG",             &MATERIAL_EG[3]},
@@ -1018,7 +1018,7 @@ static std::vector<TuneEntry>& buildRegistry() {
 
   // ---- Mobility table entries (loop-generated, like PSTs) -----------------
   // 8 tables × variable size = 132 entries total.
-  // Sizes mirror EVAL_FIXED values in eval_params.h (const = internal linkage,
+  // Sizes mirror EVAL_FIXED values in eval/params.h (const = internal linkage,
   // not accessible via extern).
   struct ArrayInfo { const char* prefix; int* data; int size; };
   // clang-format off

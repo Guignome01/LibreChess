@@ -46,7 +46,7 @@ When a parameter is deliberately excluded from the registry (e.g. pawn material 
 
 This eliminates ~200 lines of duplicated intermediate computation.  Each helper computes intermediate values; the eval applies weights to get scores, while trace emits gradient coefficients referencing the same parameter addresses.
 
-`KING_SAFETY_TABLE` entries are `EVAL_FIXED` (not tunable), so the full table penalty (base + all active safe checks) is linearized at the **combined** operating point.  `kingDangerScore()` accessor exposes the table without including `eval_params.h`.  The shared local slope `(table[tw+1] - table[tw-1]) / 2` gives each active check the same per-unit marginal coefficient, while `bias += totalPenalty - Σ slope * val_i` absorbs the constant offset.  Reconstruction is exact: `bias + Σ coeff_i * val_i = table[totalWeight]`.
+`KING_SAFETY_TABLE` entries are `EVAL_FIXED` (not tunable), so the full table penalty (base + all active safe checks) is linearized at the **combined** operating point.  `kingDangerScore()` accessor exposes the table without including `eval/params.h`.  The shared local slope `(table[tw+1] - table[tw-1]) / 2` gives each active check the same per-unit marginal coefficient, while `bias += totalPenalty - Σ slope * val_i` absorbs the constant offset.  Reconstruction is exact: `bias + Σ coeff_i * val_i = table[totalWeight]`.
 
 ## Data Flow: passedPawns Bitboards
 

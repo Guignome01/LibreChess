@@ -38,7 +38,7 @@ via descriptor getters.  `buildRegistry()` iterates the descriptors.
 
 | Component | Location | Purpose |
 |-----------|----------|----------|
-| `EVAL_CONST` macro | `eval_params.h` | Expands to empty under `-DTUNING`, `constexpr` in production |
+| `EVAL_CONST` macro | `eval/params.h` | Expands to empty under `-DTUNING`, `constexpr` in production |
 | Descriptor structs | `trace.h` | `ScalarParam`, `PstDef` — metadata types |
 | `scalarParams(count)` | `trace.cpp` | Returns array of scalar descriptors (name, ptr) — material, pawn structure, piece bonuses, king safety, threats, space (mobility excluded — loop-generated in `buildRegistry()`) |
 | `pstDefs(count)` | `trace.cpp` | Returns array of 12 PST descriptors (prefix, data, isPawn) |
@@ -148,7 +148,7 @@ When K is provided (> 0), `findOptimalK()` is skipped entirely. Use this to lock
 - **stderr**: Progress (epoch number, train/test MSE, learning rate), gradient validation results, early stopping notification
 - **stdout**: Two sections:
   1. *Changed parameter values* — summary of params that differ from defaults, with old/new values
-  2. *Copy-paste block* — complete `eval_params.h`-ready output: material arrays (`MAT_ELEM`), PST arrays (`PST_ELEM`), pawn structure arrays & scalars, piece bonuses, rook bonuses, mobility tables, king safety, king proximity, space — all with correct `EVAL_CONST` macros and variable names, organized by section
+  2. *Copy-paste block* — complete `eval/params.h`-ready output: material arrays (`MAT_ELEM`), PST arrays (`PST_ELEM`), pawn structure arrays & scalars, piece bonuses, rook bonuses, mobility tables, king safety, king proximity, space — all with correct `EVAL_CONST` macros and variable names, organized by section
 
 ## Tuning Iteration Workflow
 
@@ -156,14 +156,14 @@ When K is provided (> 0), `findOptimalK()` is skipped entirely. Use this to lock
 
 1. Run the tuner on a labeled corpus
 2. Review the changed parameter values (first stdout section) for sanity
-3. Copy-paste the formatted block (second stdout section) into `eval_params.h`, replacing the corresponding `EVAL_CONST` definitions between the `namespace eval {` opening and the final `EVAL_FIXED` declarations
+3. Copy-paste the formatted block (second stdout section) into `eval/params.h`, replacing the corresponding `EVAL_CONST` definitions between the `namespace eval {` opening and the final `EVAL_FIXED` declarations
 4. Rebuild the tuner (`make clean && make`) — defaults are now the new values
 5. Run again — the next iteration starts from updated defaults
 6. Repeat until MSE improvement plateaus
 
 ### Automated (autotune.py)
 
-`tools/tune/autotune.py` automates the manual workflow above. Per iteration: build tuner → run → parse copy-paste block from stdout → regex-patch eval_params.h → log metrics → repeat.
+`tools/tune/autotune.py` automates the manual workflow above. Per iteration: build tuner → run → parse copy-paste block from stdout → regex-patch eval/params.h → log metrics → repeat.
 
 ```bash
 python autotune.py quiet-labeled.epd --iterations 10 --K 0.989836
@@ -178,7 +178,7 @@ Arguments:
 
 The script appends per-iteration metrics to `tools/tune/tune_log.txt` (changed count, train/test MSE, K).
 
-File patching: the script parses each `EVAL_CONST` declaration from the tuner's copy-paste block, finds the matching variable name in eval_params.h via regex, and replaces the declaration lines in-place. Comments and non-EVAL_CONST content are preserved.
+File patching: the script parses each `EVAL_CONST` declaration from the tuner's copy-paste block, finds the matching variable name in eval/params.h via regex, and replaces the declaration lines in-place. Comments and non-EVAL_CONST content are preserved.
 
 ## Design Constraints
 
@@ -190,7 +190,7 @@ File patching: the script parses each `EVAL_CONST` declaration from the tuner's 
 ## Modifying the Tuner
 
 When adding new eval terms:
-1. Add `EVAL_CONST` parameter(s) in `eval_params.h`
+1. Add `EVAL_CONST` parameter(s) in `eval/params.h`
 2. Add `extern` declaration(s) in `trace.h` (inside the extern block)
 3. Add descriptor entry to the appropriate getter in `trace.cpp` (`scalarParams` or `pstDefs`) — this handles registration automatically
 4. Add trace logic in `extractTrace()` (in `lib/core/src/trace.cpp`) using `pIdx(&PARAM)` — coefficients must exactly mirror how `evaluatePosition()` uses the parameter
@@ -205,5 +205,5 @@ When changing hyperparameters, adjust the constants at the top of `tune.cpp`. Th
 | File | Relationship |
 |------|--------------|
 | `trace.instructions.md` | `TraceEntry`, `Trace`, `TrainingPosition` types — trace is the primary input |
-| `evaluation.instructions.md` | Tuner reads/writes eval parameters defined in `eval_params.h` |
+| `evaluation.instructions.md` | Tuner reads/writes eval parameters defined in `eval/params.h` |
 | `epd.instructions.md` | Corpus format uses EPD parser types |

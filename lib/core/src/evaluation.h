@@ -132,12 +132,12 @@ bool isBackward(Square sq, Color color, Bitboard friendlyPawns,
                 Bitboard enemyPawns);
 
 // Tempo bonus applied by search (sideTomove * tempoBonus).
-// Accessor avoids exposing eval_params.h (which has TUNING ODR constraints).
+// Accessor avoids exposing eval/params.h (which has TUNING ODR constraints).
 int tempoBonus();
 
 // King danger table lookup — clamps weight to [0, KING_SAFETY_TABLE_SIZE-1]
 // and returns the corresponding penalty.  Used by trace extraction to add the
-// non-tunable S-curve penalty to bias without including eval_params.h.
+// non-tunable S-curve penalty to bias without including eval/params.h.
 int kingDangerScore(int weight);
 
 // Chebyshev distance (king distance metric) between two squares.
