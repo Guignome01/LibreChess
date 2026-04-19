@@ -13,7 +13,7 @@
 //   • evalThreats            — attacks on enemy pieces (4 categories).
 //
 // All functions live in namespace LibreChess::eval::detail and are composed
-// by evaluateImpl() in evaluation.cpp.
+// by evaluatePosition() in evaluation.cpp.
 // ---------------------------------------------------------------------------
 
 // See eval/pawn.cpp for the rationale behind the EVAL_DEFINER guard.

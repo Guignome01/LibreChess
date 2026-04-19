@@ -180,30 +180,6 @@ class Position {
   static const Piece INITIAL_BOARD[64];
 
  private:
-  // ---------------------------------------------------------------------------
-  // UndoCache — 1-deep cache for O(1) state restoration in reverseMove.
-  //
-  // Stores the Move + UndoInfo from the most recent makeMove(), plus the
-  // post-move hash for cache validation.  On cache-hit, reverseMove()
-  // delegates to unmake() — one well-tested path for both game and search.
-  // On cache-miss (multi-undo, FEN reload), falls back to manual board
-  // reversal + full recomputation.
-  //
-  // This is a pragmatic ESP32-optimized variant of the CPW-recommended
-  // undo-stack pattern.  The search path (make/unmake) stores a full UndoInfo
-  // per ply; the game path (makeMove/reverseMove) uses this 1-deep cache to
-  // avoid O(N) memory while still achieving O(1) restoration for the hot path
-  // (perft, immediate undo).
-  //
-  // Reference: https://www.chessprogramming.org/Copy-Make
-  // ---------------------------------------------------------------------------
-  struct UndoCache {
-    Move move;           // Move that was applied
-    UndoInfo undo;       // Full undo state from make()
-    uint64_t postHash;   // Zobrist hash after the move (validation key)
-    bool valid;          // Whether cache contains valid data
-  };
-
   BitboardSet bb_;
   Piece mailbox_[64];
   Color currentTurn_;
@@ -216,7 +192,6 @@ class Position {
   int material_; // incremental pure material accumulator (white-relative)
   int phase_;    // incremental game phase (sum of non-pawn piece weights)
   bool epIsLegal_ = false;  // cached EP legality for current position
-  UndoCache undoCache_{};  // 1-deep cache for reverseMove()
 
   void recordPosition();
   void initializeBoard();

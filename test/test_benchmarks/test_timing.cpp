@@ -125,8 +125,7 @@ static void test_bench_evaluate(void) {
   uint64_t start = nowUs();
 
   for (int i = 0; i < ITERS; i++) {
-    int score = eval::evaluatePosition(pos.bitboards(), pos.mgPST(),
-                                       pos.egPST(), pos.phase(), &pawnHash);
+    int score = eval::evaluatePosition(pos, &pawnHash);
     dummy += score;
   }
 
@@ -209,8 +208,7 @@ static void test_bench_evaluate_multi(void) {
     pawnHash.clear();
     uint64_t start = nowUs();
     for (int i = 0; i < ITERS_PER_POS; i++) {
-      dummy += eval::evaluatePosition(pos.bitboards(), pos.mgPST(),
-                                      pos.egPST(), pos.phase(), &pawnHash);
+      dummy += eval::evaluatePosition(pos, &pawnHash);
     }
     totalUs += nowUs() - start;
   }

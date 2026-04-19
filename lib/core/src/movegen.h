@@ -50,11 +50,17 @@ enum class FilterMode {
 // ---------------------------------------------------------------------------
 
 // Up to 8 absolute pins possible (4 orthogonal + 4 diagonal rays from king).
+//
+// Parallel arrays: `pinnedSq[i]` is the pinned piece's square, `pinRay[i]`
+// is its legal-move mask.  `pinned` bitboard is the union of `pinnedSq[]`
+// for O(1) early-out in pinRayFor.  Linear scan over ≤8 entries is fast
+// in practice because typical positions have 0–1 pins; the scan runs only
+// when the early-out bitmap test already confirmed `sq` is pinned.
 struct PinData {
-  Bitboard pinned;      // bitset of all pinned friendly piece squares
-  Bitboard pinRay[8];   // legal-move mask per pinned piece (king→pinner ray, inclusive)
-  Square pinnedSq[8];   // the pinned piece square corresponding to pinRay[i]
-  int count;            // number of recorded pins (≤ 8)
+  Bitboard pinned;      // bitset of all pinned friendly piece squares (early-out)
+  Square pinnedSq[8];   // pinned piece squares
+  Bitboard pinRay[8];   // legal-move mask per pinned piece (parallel to pinnedSq)
+  int count;            // number of entries in pinnedSq/pinRay
 };
 
 // Pre-computed legality context: checker info + pin data + check mask.

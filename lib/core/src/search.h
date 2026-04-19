@@ -26,6 +26,7 @@
 
 #include "hash_table.h"
 #include "move.h"
+#include "piece.h"
 #include "position.h"
 
 namespace LibreChess {
@@ -278,6 +279,41 @@ struct SearchResult {
 // incrementally).  Currently: node counter, stop control, TT.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// SearchStack — per-ply search state (Stockfish/Ethereal "Stack" convention).
+//
+// Separates per-ply fields from per-search state (SearchState).  A fixed
+// `SearchStack stack[MAX_PLY + 4]` array is stack-allocated in
+// findBestMove().  Root search uses `ss = &stack[1]` with `stack[0]` as a
+// sentinel so `(ss - 1)` at root safely yields Piece::NONE/0.  Recursion
+// advances by `ss + 1`, and each ss already carries its own `ply` so
+// callees rarely need to pass it explicitly.
+//
+// Reference: https://www.chessprogramming.org/Stack
+// ---------------------------------------------------------------------------
+
+struct SearchStack {
+  int         ply           = 0;                   // distance from root
+  int16_t     staticEval    = 0;                   // -INF_SCORE when in check
+  PackedMove  excludedMove  = 0;                   // non-zero during SE probe
+  PackedMove  killers[2]    = {0, 0};              // beta-cutoff quiet moves
+  PackedMove  pv[MAX_PV_LEN]{};                    // PV line starting here
+  int8_t      pvLength      = 0;                   // moves in pv[]
+  // Identity of the move played FROM this ply to reach (ss+1).  Read by
+  // the child via (ss-1)->movedPiece / (ss-1)->movedTo to index the
+  // countermove table and drive recapture extensions.
+  Piece       movedPiece    = Piece::NONE;
+  int16_t     movedTo       = 0;
+};
+
+// ---------------------------------------------------------------------------
+// SearchState — mutable per-search state (not per-ply).
+//
+// Holds infrastructure pointers, persistent heuristic tables, node counters,
+// and time-management transients.  Per-ply fields (killers, static eval,
+// PV, current move) now live in SearchStack, advanced by recursion.
+// ---------------------------------------------------------------------------
+
 struct SearchState {
   // Construct with infrastructure pointers (set once, persist across calls).
   // All parameters optional; omitted pointers default to nullptr.
@@ -306,11 +342,7 @@ struct SearchState {
   // Caches full evaluatePosition() results — avoids redundant evaluations.
   eval::EvalHashTable* evalHash = nullptr;
 
-  // --- Move ordering heuristics ---
-  // Killer moves: two per ply, quiet moves that caused beta cutoffs.
-  // Stored as PackedMove (2 bytes) for compactness; unpacked in MovePicker.
-  // Reference: https://www.chessprogramming.org/Killer_Move
-  PackedMove killers[MAX_PLY][2];
+  // --- Move ordering heuristics (per-search, not per-ply) ---
 
   // History heuristic: [color][pieceType-1][toSquare] — piece-to history.
   // Compact alternative to butterfly [from][to] boards.  ~1.5 KiB.
@@ -330,22 +362,6 @@ struct SearchState {
   // Indexed by [pieceIndex(0..11)][toSquare(0..63)].  ~1.5 KiB.
   // Reference: https://www.chessprogramming.org/Countermove_Heuristic
   PackedMove countermoves[12][64];
-
-  // Static eval at each ply — used to compute the "improving" flag.
-  // A position is improving if its static eval exceeds the eval from 2
-  // plies ago, informing RFP, LMP, and LMR decisions.
-  // Reference: https://www.chessprogramming.org/Improving
-  int16_t staticEvals[MAX_PLY];
-
-  // Triangular PV table — collects the principal variation during search.
-  // pv[ply] holds the PV line starting at that ply; pvLength[ply] holds
-  // the number of moves in that line.  Updated in negamax when alpha
-  // improves; copied to SearchResult after each completed iteration.
-  // Stored as PackedMove (2 bytes) to reduce heap footprint.
-  // Memory: MAX_PLY × MAX_PV_LEN × sizeof(PackedMove) ≈ 2.3 KiB (heap-allocated).
-  // Reference: https://www.chessprogramming.org/Triangular_PV-Table
-  PackedMove pv[MAX_PLY][MAX_PV_LEN];
-  int8_t pvLength[MAX_PLY];
 
   // --- Opening book ---
   // When true, findBestMove() probes the internal opening book before

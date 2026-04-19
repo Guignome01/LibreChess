@@ -379,7 +379,7 @@ std::string Game::getFen() const {
 
 int Game::getEvaluation() const {
   if (evalDirty_) {
-    cachedEval_ = eval::evaluatePosition(board_.bitboards());
+    cachedEval_ = eval::evaluatePosition(board_);
     evalDirty_ = false;
   }
   return cachedEval_;

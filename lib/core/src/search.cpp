@@ -59,12 +59,9 @@ static constexpr uint32_t CHECK_INTERVAL = 512;
 // ===========================================================================
 
 void SearchState::clearHeuristics() {
-  std::memset(killers, 0, sizeof(killers));
   std::memset(history, 0, sizeof(history));
   std::memset(captureHistory, 0, sizeof(captureHistory));
   std::memset(countermoves, 0, sizeof(countermoves));
-  std::memset(staticEvals, 0, sizeof(staticEvals));
-  std::memset(pvLength, 0, sizeof(pvLength));
 }
 
 SearchState::SearchState(TimeFunc tf, TranspositionTable* ttPtr,
@@ -126,13 +123,14 @@ inline int scoreFromTT(int score, int ply) {
 // Reference: https://www.chessprogramming.org/Triangular_PV-Table
 // ---------------------------------------------------------------------------
 
-inline void collectPV(SearchState& state, int ply, PackedMove move) {
-  state.pv[ply][0] = move;
-  int childLen = (ply + 1 < MAX_PLY) ? state.pvLength[ply + 1] : 0;
+inline void collectPV(SearchStack* ss, PackedMove move) {
+  ss->pv[0] = move;
+  const SearchStack* child = ss + 1;
+  int childLen = child->pvLength;
   childLen = std::max(0, std::min(childLen, MAX_PV_LEN - 1));
-  std::memcpy(&state.pv[ply][1], &state.pv[ply + 1][0],
+  std::memcpy(&ss->pv[1], &child->pv[0],
               childLen * sizeof(PackedMove));
-  state.pvLength[ply] = childLen + 1;
+  ss->pvLength = static_cast<int8_t>(childLen + 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -259,8 +257,7 @@ int evaluate(const Position& pos, SearchState& state) {
     if (cached) return cached->score;
   }
 
-  int score = eval::evaluatePosition(pos.bitboards(), pos.mgPST(), pos.egPST(),
-                                     pos.phase(), state.pawnHash);
+  int score = eval::evaluatePosition(pos, state.pawnHash);
   int stm = (pos.sideToMove() == Color::WHITE) ? score : -score;
   int result = stm + eval::tempoBonus();
 
@@ -445,19 +442,22 @@ int quiescence(Position& pos, int alpha, int beta, int ply, int qsPly,
 // ---------------------------------------------------------------------------
 
 int negamax(Position& pos, int depth, int alpha, int beta,
-            int ply, SearchState& state, Piece prevPiece, int prevTo,
-            Move excludedMove = Move()) {
+            SearchStack* ss, SearchState& state) {
   state.nodes++;
   STAT_INC(mainNodes);
 
+  int ply = ss->ply;
+  Move excludedMove = unpackMove(ss->excludedMove);
+  bool hasExcluded = ss->excludedMove != 0;
+
   // --- Ply overflow guard ---
-  // Check extensions can push ply beyond MAX_PLY.  All per-ply arrays
-  // (pvLength, staticEvals, killers, pv) are sized MAX_PLY, so we must
-  // bail out before writing out of bounds.
+  // Check extensions can push ply beyond MAX_PLY.  The SearchStack array
+  // is sized MAX_PLY + 4, so we bail out before writing (ss+1) out of
+  // bounds during recursion.
   // Reference: https://www.chessprogramming.org/Maximum_Search_Depth
   if (ply >= MAX_PLY - 1) return evaluate(pos, state);
 
-  state.pvLength[ply] = 0;  // no PV line yet at this ply
+  ss->pvLength = 0;  // no PV line yet at this ply
 
   // Periodic time / cancellation check
   state.checkTime();
@@ -535,8 +535,8 @@ int negamax(Position& pos, int depth, int alpha, int beta,
 
   // Store static eval for the improving heuristic.
   // In check, store a sentinel so children know this ply had no eval.
-  state.staticEvals[ply] = inCheck ? static_cast<int16_t>(-INF_SCORE)
-                                   : static_cast<int16_t>(staticEval);
+  ss->staticEval = inCheck ? static_cast<int16_t>(-INF_SCORE)
+                           : static_cast<int16_t>(staticEval);
 
   // --- Improving heuristic ---
   // A position is "improving" if its static eval is higher than the eval
@@ -548,10 +548,10 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // Reference: https://www.chessprogramming.org/Improving
   bool improving = false;
   if (!inCheck) {
-    if (ply >= 2 && state.staticEvals[ply - 2] > -INF_SCORE)
-      improving = staticEval > state.staticEvals[ply - 2];
-    else if (ply >= 4 && state.staticEvals[ply - 4] > -INF_SCORE)
-      improving = staticEval > state.staticEvals[ply - 4];
+    if (ply >= 2 && (ss - 2)->staticEval > -INF_SCORE)
+      improving = staticEval > (ss - 2)->staticEval;
+    else if (ply >= 4 && (ss - 4)->staticEval > -INF_SCORE)
+      improving = staticEval > (ss - 4)->staticEval;
   }
 
   // --- Razoring ---
@@ -585,7 +585,6 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   // --- TT probe ---
   const int origAlpha = alpha;
   Move ttMove{};
-  bool hasExcluded = !excludedMove.isNull();
 
   // TT entry pointer retained for singular extension check below.
   const TTEntry* ttEntry = nullptr;
@@ -655,12 +654,16 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     int ttScore = scoreFromTT(ttEntry->score, ply);
     int singularBeta = ttScore - SE_MARGIN_SCALE * depth;
     int halfDepth = depth / 2;
+    // Exclusion search: same ply, same ss — but ss->excludedMove filters
+    // the TT move from the move loop.  Restore before any further use.
+    ss->excludedMove = packMove(ttMove);
     int seScore = negamax(pos, halfDepth, singularBeta - 1, singularBeta,
-                          ply, state, prevPiece, prevTo, ttMove);
+                          ss, state);
+    ss->excludedMove = 0;
     // The exclusion search runs at the same ply and may have set
-    // pvLength[ply] via collectPV.  Reset to prevent stale PV data
+    // ss->pvLength via collectPV.  Reset to prevent stale PV data
     // from leaking into the main search's PV if no move raises alpha.
-    state.pvLength[ply] = 0;
+    ss->pvLength = 0;
     if (seScore < singularBeta) {
       singularExtension = 1;  // TT move is singular — extend it
       STAT_INC(singularExtensions);
@@ -688,10 +691,13 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     int R = std::min(NMP_REDUCTION + depth / 4 + evalBonus, depth - 1);
 
     UndoInfo nullUndo = pos.makeNullMove();
+    // Record the "null move" on this ply so the child's (ss-1) lookup
+    // yields a no-op previous-move context (no countermove, no recap).
+    ss->movedPiece = Piece::NONE;
+    ss->movedTo    = 0;
     // Zero-window search at reduced depth: just testing if score >= beta.
     int nullScore = -negamax(pos, depth - 1 - R,
-                             -beta, -beta + 1, ply + 1, state,
-                             Piece::NONE, 0);
+                             -beta, -beta + 1, ss + 1, state);
     pos.unmakeNullMove(nullUndo);
 
     if (state.stopped) return 0;
@@ -723,8 +729,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
   //
   // Reference: https://www.chessprogramming.org/Move_Ordering#Staged_Move_Generation
   MovePicker picker;
-  picker.init(pos.bitboards(), pos.mailbox(), pos.sideToMove(),
-              pos.positionState(), state, ply, ttMove, prevPiece, prevTo);
+  picker.init(pos, ss, state, ttMove);
 
   Move bestMove;
   int bestScore = -INF_SCORE;
@@ -828,7 +833,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     if (singularExtension && m == ttMove) {
       extension = 1;  // Singular: TT move is clearly best
     } else if (!inCheck && depth >= 2 && m.isCapture() &&
-        m.to == prevTo && ply < MAX_PLY - 10) {
+        m.to == (ss - 1)->movedTo && ply < MAX_PLY - 10) {
       // Use the picker's cached SEE if available; otherwise compute.
       int seVal = picker.lastSee != SEE_NOT_COMPUTED
                      ? picker.lastSee
@@ -876,10 +881,15 @@ int negamax(Position& pos, int depth, int alpha, int beta,
     //   https://www.chessprogramming.org/Principal_Variation_Search
     //   https://www.chessprogramming.org/Late_Move_Reductions
 
+    // Record the move identity on this ply's stack slot so the child's
+    // (ss-1) lookup sees the correct prev-move context (countermove,
+    // recapture detection).
+    ss->movedPiece = movingPiece;
+    ss->movedTo    = static_cast<int16_t>(m.to);
+
     if (movesSearched == 0) {
       // First move: always search with full window and full depth.
-      score = -negamax(pos, newDepth, -beta, -alpha, ply + 1, state,
-                       movingPiece, m.to);
+      score = -negamax(pos, newDepth, -beta, -alpha, ss + 1, state);
     } else {
       // --- LMR: determine if this move should be reduced ---
       // Conditions for reduction:
@@ -901,8 +911,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
                                             hist, improving, pvNode);
 
         score = -negamax(pos, newDepth - reduction,
-                         -alpha - 1, -alpha, ply + 1, state,
-                         movingPiece, m.to);
+                         -alpha - 1, -alpha, ss + 1, state);
       } else {
         // Not reducing — force a full-depth scout below.
         score = alpha + 1;
@@ -912,16 +921,14 @@ int negamax(Position& pos, int depth, int alpha, int beta,
       // re-search at full depth with a zero-window.
       if (score > alpha) {
         if (doLMR) STAT_INC(lmrReSearches);
-        score = -negamax(pos, newDepth, -alpha - 1, -alpha, ply + 1, state,
-                         movingPiece, m.to);
+        score = -negamax(pos, newDepth, -alpha - 1, -alpha, ss + 1, state);
       }
 
       // PVS re-search: if the zero-window scout failed high within the
       // PV window, we need an exact score — re-search with full window.
       if (score > alpha && score < beta) {
         STAT_INC(pvsReSearches);
-        score = -negamax(pos, newDepth, -beta, -alpha, ply + 1, state,
-                         movingPiece, m.to);
+        score = -negamax(pos, newDepth, -beta, -alpha, ss + 1, state);
       }
     }
 
@@ -946,7 +953,7 @@ int negamax(Position& pos, int depth, int alpha, int beta,
         alpha = score;
 
         // Collect principal variation: this move + the child's PV line.
-        collectPV(state, ply, packMove(m));
+        collectPV(ss, packMove(m));
 
         if (alpha >= beta) {
           STAT_INC(betaCutoffs);
@@ -957,9 +964,8 @@ int negamax(Position& pos, int depth, int alpha, int beta,
             updateCaptureCutoffHistory(m, pos, state, bonus,
                                        capturesSearched, captureCount);
           } else {
-            updateQuietCutoffHeuristics(m, pos, state, ply, bonus,
-                                        quietsSearched, quietCount,
-                                        prevPiece, prevTo);
+            updateQuietCutoffHeuristics(m, pos, state, ss, bonus,
+                                        quietsSearched, quietCount);
           }
           break;
         }
@@ -1036,10 +1042,18 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
   state.hardTimeMs   = limits.hardTimeMs;
   state.externalStop = limits.stop;
 
-  // Per-search PV/eval state must still be reset (these are ply-indexed
-  // and would contain stale data from the previous search's tree).
-  std::memset(state.staticEvals, 0, sizeof(state.staticEvals));
-  std::memset(state.pvLength, 0, sizeof(state.pvLength));
+  // Per-search SearchStack — per-ply state (ply, staticEval, killers, PV,
+  // current move identity).  Entry 0 acts as a sentinel so (ss-1) at the
+  // root safely yields Piece::NONE / movedTo=0.  Entry 1 is the root's ss
+  // (ply = 0), entry i holds the search state at ply i - 1.
+  //
+  // The array is zero-initialised (killers, excludedMove, pv, pvLength
+  // all start at 0), which is the correct state for every ply.
+  SearchStack stack[MAX_PLY + 4]{};
+  for (int i = 0; i < MAX_PLY + 4; ++i) {
+    stack[i].ply = i - 1;  // stack[0] = sentinel, stack[1] = root (ply 0)
+  }
+  SearchStack* rootSS = &stack[1];
 
   int maxDepth = limits.maxDepth;
   if (maxDepth <= 0) maxDepth = 1;
@@ -1144,8 +1158,12 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
       for (int i = 0; i < rootMoves.count; ++i) {
         Piece movingPiece = pos.mailbox()[rootMoves.moves[i].from];
         UndoInfo undo = pos.make(rootMoves.moves[i]);
-        int score = -negamax(pos, depth - 1, -beta, -alpha, 1, state,
-                             movingPiece, rootMoves.moves[i].to);
+        // Record root move identity on rootSS so the child's (ss-1)
+        // lookup resolves the correct countermove / recapture context.
+        rootSS->movedPiece = movingPiece;
+        rootSS->movedTo    = static_cast<int16_t>(rootMoves.moves[i].to);
+        int score = -negamax(pos, depth - 1, -beta, -alpha,
+                             rootSS + 1, state);
         pos.unmake(rootMoves.moves[i], undo);
         if (state.stopped) break;
 
@@ -1155,7 +1173,7 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
           iterBestMove = rootMoves.moves[i];
 
           // Build root PV: this root move + child PV from ply 1.
-          collectPV(state, 0, packMove(rootMoves.moves[i]));
+          collectPV(rootSS, packMove(rootMoves.moves[i]));
 
           if (score > alpha) alpha = score;
         } else if (score > secondBestScore) {
@@ -1198,9 +1216,9 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
         result.depth    = depth;
         result.nodes    = state.nodes;
         result.pvLength = std::max(0, std::min(
-            static_cast<int>(state.pvLength[0]), MAX_PV_LEN));
+            static_cast<int>(rootSS->pvLength), MAX_PV_LEN));
         for (int i = 0; i < result.pvLength; ++i)
-          result.pv[i] = unpackMove(state.pv[0][i]);
+          result.pv[i] = unpackMove(rootSS->pv[i]);
         validatePV(pos, result);
         if (info) info(result);
       }
@@ -1215,10 +1233,10 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
     prevScore       = iterBestScore;
 
     // Unpack principal variation from this iteration's PV table.
-    result.pvLength = std::max(0, std::min(static_cast<int>(state.pvLength[0]),
+    result.pvLength = std::max(0, std::min(static_cast<int>(rootSS->pvLength),
                                             MAX_PV_LEN));
     for (int i = 0; i < result.pvLength; ++i)
-      result.pv[i] = unpackMove(state.pv[0][i]);
+      result.pv[i] = unpackMove(rootSS->pv[i]);
 
     // Truncate PV at the first draw (twofold repetition / 50-move rule)
     // so the UCI info line never extends past a game-ending condition.

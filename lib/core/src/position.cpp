@@ -334,12 +334,9 @@ MoveResult Position::makeMove(Square from, Square to, char promotion) {
   uint8_t flags = buildMoveFlags(piece, from, to, promotion);
   Move m(from, to, flags);
 
-  // --- Delegate board mutation to make(), cache for reverseMove() ---
+  // --- Delegate board mutation to make() ---
   UndoInfo undo = make(m);
-  undoCache_.move = m;
-  undoCache_.undo = undo;
-  undoCache_.postHash = hash_;
-  undoCache_.valid = true;
+  (void)undo;  // game-path undo is handled by reverseMove() via MoveEntry.
 
   // --- Build MoveResult + detect game end ---
   MoveResult result = buildMoveResult(m, piece, to);
@@ -353,17 +350,12 @@ MoveResult Position::makeMove(Square from, Square to, char promotion) {
 // ---------------------------------------------------------------------------
 
 void Position::reverseMove(const MoveEntry& entry) {
-  // 1-deep undo cache: if the cache is from this exact forward move
-  // (validated by matching post-move hash), delegate to unmake() for O(1)
-  // restoration.  Otherwise fall back to manual board reversal + full
-  // recomputation (e.g. multi-undo or FEN reload).
-  if (undoCache_.valid && hash_ == undoCache_.postHash) {
-    unmake(undoCache_.move, undoCache_.undo);
-    undoCache_.valid = false;
-    return;
-  }
-
-  // --- Cache-miss fallback: manual board reversal ---
+  // Game-path undo: manual board reversal + full derived-state recomputation.
+  // The search hot path uses make()/unmake() with explicit UndoInfo; this
+  // slow-path exists because History stores only MoveEntry (no UndoInfo) to
+  // keep the log compact.
+  //
+  // Reference: https://www.chessprogramming.org/Unmake_Move
   Square from = entry.from;
   Square to = entry.to;
 

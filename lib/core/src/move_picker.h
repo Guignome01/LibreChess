@@ -216,7 +216,7 @@ struct MovePicker {
   const PositionState* posState;
 
   // Search heuristics (non-owning).
-  const SearchState* ss;
+  const SearchState* state;
   int ply;
 
   // Special moves — validated and yielded individually.
@@ -259,28 +259,34 @@ struct MovePicker {
 
   // -----------------------------------------------------------------------
   // Initialise the picker for a position.
+  //
+  // Reads position data from `pos`, per-ply data (ply, killers, previous
+  // move identity for countermove lookup) from `ss`, and persistent
+  // heuristic tables (captureHistory, countermoves, history) from `state`.
   // -----------------------------------------------------------------------
 
-  void init(const BitboardSet& bbRef, const Piece mail[], Color s,
-            const PositionState& ps, const SearchState& ssRef,
-            int p, Move tt, Piece prevPiece, int prevTo) {
-    bb       = &bbRef;
-    mailbox  = mail;
-    side     = s;
-    posState = &ps;
-    ss       = &ssRef;
-    ply      = p;
+  void init(const Position& pos, const SearchStack* ss,
+            const SearchState& stateRef, Move tt) {
+    bb       = &pos.bitboards();
+    mailbox  = pos.mailbox();
+    side     = pos.sideToMove();
+    posState = &pos.positionState();
+    state    = &stateRef;
+    ply      = ss->ply;
 
     ttMove = tt;
     hasTT  = !tt.isNull();
 
-    killer0 = unpackMove(ssRef.killers[p][0]);
-    killer1 = unpackMove(ssRef.killers[p][1]);
+    killer0 = unpackMove(ss->killers[0]);
+    killer1 = unpackMove(ss->killers[1]);
 
     hasCounter = false;
+    const SearchStack* prev = ss - 1;
+    Piece prevPiece = prev->movedPiece;
+    int   prevTo    = prev->movedTo;
     if (!isEmpty(prevPiece)) {
       int idx = pieceIndex(prevPiece);
-      PackedMove cpm = safeCountermove(ssRef, idx, prevTo);
+      PackedMove cpm = safeCountermove(stateRef, idx, prevTo);
       if (cpm != 0) {
         counterMove = unpackMove(cpm);
         hasCounter  = true;
@@ -482,7 +488,7 @@ private:
                                     : pieceType(mailbox[m.to]);
       PieceType attacker = pieceType(mailbox[m.from]);
       int mvvlva   = scoreMVVLVA(victim, attacker);
-      int capHist  = safeCaptureHistScore(*ss, attacker, victim, m.to);
+      int capHist  = safeCaptureHistScore(*state, attacker, victim, m.to);
       scores[i] = static_cast<int16_t>(mvvlva + capHist / 16);
     }
 
@@ -505,7 +511,7 @@ private:
     uint8_t c = raw(side);
     for (int i = beforeCount; i < moves.count; ++i) {
       const Move& m = moves.moves[i];
-      scores[i] = ss->history[c][raw(pieceType(mailbox[m.from])) - 1][m.to];
+      scores[i] = state->history[c][raw(pieceType(mailbox[m.from])) - 1][m.to];
     }
     quietIdx = totalCaps;
   }
@@ -515,13 +521,13 @@ private:
 // Heuristic update functions
 // ===========================================================================
 
-// Update killer moves: slot the new killer into position 0, shifting the
-// old one to position 1.  Avoids duplicates.
-inline void updateKillers(Move m, int ply, SearchState& state) {
+// Update killer moves on the per-ply stack slot: slot the new killer into
+// position 0, shifting the old one to position 1.  Avoids duplicates.
+inline void updateKillers(Move m, SearchStack* ss) {
   PackedMove pm = packMove(m);
-  if (pm != state.killers[ply][0]) {
-    state.killers[ply][1] = state.killers[ply][0];
-    state.killers[ply][0] = pm;
+  if (pm != ss->killers[0]) {
+    ss->killers[1] = ss->killers[0];
+    ss->killers[0] = pm;
   }
 }
 
@@ -586,10 +592,9 @@ inline void updateCaptureCutoffHistory(
 // ---------------------------------------------------------------------------
 
 inline void updateQuietCutoffHeuristics(
-    const Move& m, const Position& pos, SearchState& state, int ply,
-    int bonus, const PackedMove* quietsSearched, int quietCount,
-    Piece prevPiece, int prevTo) {
-  updateKillers(m, ply, state);
+    const Move& m, const Position& pos, SearchState& state, SearchStack* ss,
+    int bonus, const PackedMove* quietsSearched, int quietCount) {
+  updateKillers(m, ss);
   updateHistory(state.history[raw(pos.sideToMove())][raw(pieceType(pos.mailbox()[m.from])) - 1][m.to], bonus);
 
   // History gravity: penalize previously searched quiet moves that
@@ -601,7 +606,11 @@ inline void updateQuietCutoffHeuristics(
     updateHistory(state.history[raw(side)][raw(pieceType(pos.mailbox()[qm.from])) - 1][qm.to], -bonus);
   }
 
-  // Store as countermove for the opponent's previous (piece, toSq).
+  // Store as countermove for the opponent's previous (piece, toSq) — read
+  // from (ss-1), which records the move played from the parent ply.
+  const SearchStack* prev = ss - 1;
+  Piece prevPiece = prev->movedPiece;
+  int   prevTo    = prev->movedTo;
   if (!isEmpty(prevPiece)) {
     int idx = pieceIndex(prevPiece);
     if (isValidPieceIndex(idx))

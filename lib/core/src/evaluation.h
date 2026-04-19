@@ -14,7 +14,8 @@
 
 namespace LibreChess {
 
-// Forward declaration — avoids #include "attacks.h" in the eval header.
+// Forward declarations — avoid heavyweight #includes in the eval header.
+class Position;
 namespace attacks { struct AttackInfo; }
 
 namespace eval {
@@ -87,18 +88,17 @@ struct EvalHashTable : HashTableBase<EvalEntry> {
 // Evaluation API
 // ---------------------------------------------------------------------------
 
-// Evaluate board position using tapered evaluation.
-// Returns evaluation in centipawns (positive = White, negative = Black).
-// `pawnHash` is an optional pawn hash table for caching pawn structure scores.
-int evaluatePosition(const BitboardSet& bb,
+// Evaluate a position using tapered evaluation.
+// Returns score in centipawns (positive = White, negative = Black).
+//
+// Reads from the Position: bitboards, incremental mgPST/egPST accumulators,
+// game phase.  All are inline getters so there is no performance cost vs
+// passing the decomposed values directly.
+//
+// `pawnHash` is an optional pawn hash table for caching pawn structure
+// scores.  Caller supplies `nullptr` to disable pawn caching.
+int evaluatePosition(const Position& pos,
                      PawnHashTable* pawnHash = nullptr);
-
-// Evaluate with precomputed material+PST scores AND incremental phase.
-// Eliminates 4 popcount calls per eval by receiving the phase value from
-// Position's incremental accumulator.
-// Reference: https://www.chessprogramming.org/Incremental_Updates
-int evaluatePosition(const BitboardSet& bb, int mgMatPST, int egMatPST,
-                     int phase, PawnHashTable* pawnHash = nullptr);
 
 // Combined MG+EG material+PST score for a single piece.
 // Returns both scores in one call, halving index arithmetic when both

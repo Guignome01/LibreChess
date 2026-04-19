@@ -81,6 +81,7 @@ static constexpr int MOB_QUEEN_SIZE  = 28;
 struct RawEntry {
   BitboardSet bb;
   double result;
+  std::string fen;  // Retained for trace/eval validation (needs Position).
 };
 
 /// Parse the game result from a c9 operand string.
@@ -121,7 +122,7 @@ static bool loadCorpus(const char* filename, std::vector<RawEntry>& entries) {
 
     Position pos;
     if (!pos.loadFEN(rec.fen + " 0 1")) continue;
-    entries.push_back({pos.bitboards(), result});
+    entries.push_back({pos.bitboards(), result, rec.fen});
   }
 
   fprintf(stderr, "Loaded %d positions from %s\n",
@@ -766,7 +767,9 @@ int main(int argc, char* argv[]) {
     // Validate up to 5000 positions (enough to catch systematic errors).
     int sampleSize = std::min(5000, static_cast<int>(rawEntries.size()));
     for (int i = 0; i < sampleSize; ++i) {
-      int evalScore = eval::evaluatePosition(rawEntries[i].bb);
+      Position pos;
+      if (!pos.loadFEN(rawEntries[i].fen + " 0 1")) continue;
+      int evalScore = eval::evaluatePosition(pos);
       const auto& tp = (i < splitIdx) ? trainSet[i]
                                       : testSet[i - splitIdx];
       // Reconstruct the integer eval from the trace, matching the eval's

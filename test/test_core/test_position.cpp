@@ -47,7 +47,7 @@ void test_position_new_game_fen(void) {
 
 void test_position_initial_evaluation_zero(void) {
   setUpPosition();
-  TEST_ASSERT_EQUAL_INT(0, eval::evaluatePosition(pos.bitboards()));
+  TEST_ASSERT_EQUAL_INT(0, eval::evaluatePosition(pos));
 }
 
 // ---------------------------------------------------------------------------
@@ -600,13 +600,13 @@ void test_position_fen_cache_consistent(void) {
 
 void test_position_eval_cache_consistent(void) {
   setUpPosition();
-  int eval1 = eval::evaluatePosition(pos.bitboards());
-  int eval2 = eval::evaluatePosition(pos.bitboards());
+  int eval1 = eval::evaluatePosition(pos);
+  int eval2 = eval::evaluatePosition(pos);
   TEST_ASSERT_EQUAL_INT(eval1, eval2);
 
   // Load asymmetric position (white missing queen) and verify eval updates
   pos.loadFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR w KQkq - 0 1");
-  int eval3 = eval::evaluatePosition(pos.bitboards());
+  int eval3 = eval::evaluatePosition(pos);
   // White has no queen → clearly negative evaluation
   TEST_ASSERT_TRUE(eval3 < eval1);
 }
@@ -622,11 +622,11 @@ void test_position_end_game_preserves_fen(void) {
 
 void test_position_eval_after_capture(void) {
   setUpPosition();
-  int initialEval = eval::evaluatePosition(pos.bitboards());
+  int initialEval = eval::evaluatePosition(pos);
   // White captures black's e-pawn (material advantage for white)
   pos.loadFEN("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq e6 0 2");
   pos.makeMove(squareOf(4, 3), squareOf( 3, 4)); // d4xe5
-  int evalAfter = eval::evaluatePosition(pos.bitboards());
+  int evalAfter = eval::evaluatePosition(pos);
   TEST_ASSERT_TRUE(evalAfter > initialEval); // white gained material
 }
 
@@ -1225,17 +1225,17 @@ void test_position_reverse_move_restores_fen(void) {
 void test_position_reverse_move_restores_eval(void) {
   setUpPosition();
   pos.loadFEN("rnbqkbnr/ppp1pppp/8/3p4/4P3/8/PPPP1PPP/RNBQKBNR w KQkq d6 0 2");
-  int evalBefore = eval::evaluatePosition(pos.bitboards());
+  int evalBefore = eval::evaluatePosition(pos);
   PositionState before = pos.positionState();
   MoveResult r = pos.makeMove(squareOf(4, 4), squareOf( 3, 3));  // exd5 capture
   TEST_ASSERT_TRUE(r.valid());
   // Eval should change after capture
-  TEST_ASSERT_FALSE(evalBefore == eval::evaluatePosition(pos.bitboards()));
+  TEST_ASSERT_FALSE(evalBefore == eval::evaluatePosition(pos));
 
   MoveEntry e = makeBoardEntry(4, 4, 3, 3, Piece::W_PAWN, Piece::B_PAWN, before);
   pos.reverseMove(e);
 
-  TEST_ASSERT_EQUAL_INT(evalBefore, eval::evaluatePosition(pos.bitboards()));
+  TEST_ASSERT_EQUAL_INT(evalBefore, eval::evaluatePosition(pos));
 }
 
 // ---------------------------------------------------------------------------

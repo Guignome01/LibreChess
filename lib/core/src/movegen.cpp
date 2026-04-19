@@ -25,16 +25,16 @@ struct MoveAdder {
 };
 
 // Returns the pin-ray mask for a piece on `sq`.
-// If pinned, only targets on the ray are legal. If not pinned, returns ~0ULL
-// (all targets valid from a pin perspective — checkMask still applies).
+// If pinned, only targets on the ray are legal.  Not pinned → ~0ULL (full
+// board; checkMask still applies separately).  The `pinned` bitboard gives
+// an O(1) early-out; the linear scan runs only in the rare case (≤8 pins,
+// typically 0–1) and stops at the first match.
 static Bitboard pinRayFor(const PinData& pinData, Square sq) {
   if (!(pinData.pinned & squareBB(sq))) return ~0ULL;
   for (int i = 0; i < pinData.count; i++)
     if (pinData.pinnedSq[i] == sq) return pinData.pinRay[i];
   return ~0ULL;  // defensive fallback (should not be reached)
 }
-
-
 
 // Detects all absolute pins against `kingSq` for `sideToMove`.
 static PinData computePinData(const BitboardSet& bb, Square kingSq, Color sideToMove) {

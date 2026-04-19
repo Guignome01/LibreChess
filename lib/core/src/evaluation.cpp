@@ -3,6 +3,7 @@
 #include "eval/params.h"
 #include "attacks.h"
 #include "piece.h"
+#include "position.h"
 #include "utils.h"
 #include "zobrist.h"
 
@@ -623,7 +624,7 @@ static int applyOCBScaling(int score, const BitboardSet& bb, int phase) {
 //
 // Applied to EG score only; the tapered blend phases it in naturally.
 // Material is recomputed from bitboards (~12 popcounts) rather than passed
-// as a parameter to avoid changing the evaluateImpl API surface.
+// as a parameter to avoid changing the evaluatePosition API surface.
 //
 // Reference: https://www.chessprogramming.org/Mop-up_Evaluation
 // ---------------------------------------------------------------------------
@@ -649,8 +650,10 @@ static void evalMopUp(const BitboardSet& bb, int& egScore) {
   egScore += sign * (cmdBonus + closeBonus);
 }
 
-static int evaluateImpl(const BitboardSet& bb, int mgScore, int egScore,
-                        PawnHashTable* pawnHash, int precomputedPhase = -1) {
+int evaluatePosition(const Position& pos, PawnHashTable* pawnHash) {
+  const BitboardSet& bb = pos.bitboards();
+  int mgScore = pos.mgPST();
+  int egScore = pos.egPST();
   // Full attack computation first — shared by pawn structure, mobility,
   // king danger, knight outposts, and space evaluation.
   // Attack tables are constexpr — no initialization required.
@@ -681,24 +684,12 @@ static int evaluateImpl(const BitboardSet& bb, int mgScore, int egScore,
   evalSpace(bb, mgScore);
   evalMopUp(bb, egScore);
 
-  int phase = (precomputedPhase >= 0) ? precomputedPhase
-                                     : computeGamePhase(bb);
+  int phase = pos.phase();
   int score = (mgScore * phase + egScore * (MAX_PHASE - phase)) / MAX_PHASE;
 
   score = applyOCBScaling(score, bb, phase);
 
   return score;
-}
-
-int evaluatePosition(const BitboardSet& bb,
-                     PawnHashTable* pawnHash) {
-  PSQTPair p = computeMaterialPST(bb);
-  return evaluateImpl(bb, p.mg, p.eg, pawnHash);
-}
-
-int evaluatePosition(const BitboardSet& bb, int mgMatPST, int egMatPST,
-                     int phase, PawnHashTable* pawnHash) {
-  return evaluateImpl(bb, mgMatPST, egMatPST, pawnHash, phase);
 }
 
 }  // namespace eval

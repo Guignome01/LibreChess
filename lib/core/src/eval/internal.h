@@ -18,7 +18,7 @@
 //   • Color-loop lookup tables (SIDE_SIGN, COLORS).
 //   • Inline helpers passedMask / forwardMask.
 //   • Forward declarations for the eval::detail sub-evaluators implemented
-//     across the three eval/*.cpp TUs and composed by evaluateImpl in
+//     across the three eval/*.cpp TUs and composed by evaluatePosition in
 //     evaluation.cpp.
 //
 // Reference: https://www.chessprogramming.org/Evaluation
@@ -130,7 +130,7 @@ inline Bitboard forwardMask(Color c, Square sq) {
 // Sub-evaluator forward declarations.
 //
 // Each function mutates mgScore/egScore (white-relative centipawns).
-// Grouped by TU.  Composed by evaluateImpl() in evaluation.cpp.
+// Grouped by TU.  Composed by evaluatePosition() in evaluation.cpp.
 // ---------------------------------------------------------------------------
 
 // ---- pawn.cpp -------------------------------------------------------------

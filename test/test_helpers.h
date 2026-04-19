@@ -212,4 +212,25 @@ inline Piece pieceOn(const BitboardSet& bs, Square sq) {
   return Piece::NONE;
 }
 
+/// Evaluate a test bitboard/mailbox pair.  Since evaluatePosition() now
+/// takes a Position reference, tests that hold loose BitboardSet+mailbox
+/// fixtures round-trip through FEN to build a temporary Position.
+inline int evalBB(const BitboardSet& bbIn, const Piece mbIn[64],
+                  Color turn = Color::WHITE) {
+  std::string fenStr = fen::boardToFEN(mbIn, turn) + " 0 1";
+  Position pos;
+  if (!pos.loadFEN(fenStr)) return 0;
+  return eval::evaluatePosition(pos);
+}
+inline int evalBB() { return evalBB(bb, mailbox); }
+
+/// Variant of evalBB() that forwards a pawn-hash pointer.  Used by tests
+/// that exercise the pawn-hash caching path.
+inline int evalBB_ph(eval::PawnHashTable* ph) {
+  std::string fenStr = fen::boardToFEN(mailbox, Color::WHITE) + " 0 1";
+  Position pos;
+  if (!pos.loadFEN(fenStr)) return 0;
+  return eval::evaluatePosition(pos, ph);
+}
+
 #endif // TEST_HELPERS_H

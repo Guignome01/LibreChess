@@ -15,7 +15,7 @@ using namespace LibreChess::piece;
 
 static void test_evaluation_initial_is_zero(void) {
   setupInitialBoard(bb, mailbox);
-  int eval = eval::evaluatePosition(bb);
+  int eval = evalBB();
   TEST_ASSERT_EQUAL_INT(0, eval);
 }
 
@@ -23,7 +23,7 @@ static void test_evaluation_white_up_queen(void) {
   placePiece(bb, mailbox, Piece::W_KING, "e1");
   placePiece(bb, mailbox, Piece::W_QUEEN, "d1");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int eval = eval::evaluatePosition(bb);
+  int eval = evalBB();
   TEST_ASSERT_TRUE(eval > 800);  // 900 material - PST penalty for queen on d1
 }
 
@@ -32,7 +32,7 @@ static void test_evaluation_equal_material(void) {
   placePiece(bb, mailbox, Piece::W_ROOK, "a1");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_ROOK, "a8");
-  int eval = eval::evaluatePosition(bb);
+  int eval = evalBB();
   TEST_ASSERT_EQUAL_INT(0, eval);  // symmetric placement → zero
 }
 
@@ -40,13 +40,16 @@ static void test_evaluation_black_advantage(void) {
   placePiece(bb, mailbox, Piece::W_KING, "e1");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_QUEEN, "d8"); // black queen, no white queen
-  int eval = eval::evaluatePosition(bb);
+  int eval = evalBB();
   TEST_ASSERT_TRUE(eval < 0); // negative = black advantage
 }
 
 static void test_evaluation_empty_board(void) {
-  // board is already cleared by setUp
-  int eval = eval::evaluatePosition(bb);
+  // Minimal symmetric position: just the two kings (required for a valid
+  // Position).  With symmetric king placement the evaluation must be 0.
+  placePiece(bb, mailbox, Piece::W_KING, "e1");
+  placePiece(bb, mailbox, Piece::B_KING, "e8");
+  int eval = evalBB();
   TEST_ASSERT_EQUAL_INT(0, eval);
 }
 
@@ -64,7 +67,7 @@ static void test_eval_pawn_structure_symmetry(void) {
   placePiece(bb, mailbox, Piece::B_PAWN, "d7");
   placePiece(bb, mailbox, Piece::B_PAWN, "e7");
   placePiece(bb, mailbox, Piece::B_PAWN, "f7");
-  int eval = eval::evaluatePosition(bb);
+  int eval = evalBB();
   TEST_ASSERT_EQUAL_INT(0, eval);
 }
 
@@ -75,7 +78,7 @@ static void test_eval_passed_pawn_bonus(void) {
   placePiece(bb, mailbox, Piece::W_KING, "e1");
   placePiece(bb, mailbox, Piece::W_PAWN, "e5");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int eval = eval::evaluatePosition(bb);
+  int eval = evalBB();
   TEST_ASSERT_TRUE(eval > 50);
 }
 
@@ -85,7 +88,7 @@ static void test_eval_doubled_pawns_worse(void) {
   placePiece(bb, mailbox, Piece::W_PAWN, "d4");
   placePiece(bb, mailbox, Piece::W_PAWN, "e4");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int separate = eval::evaluatePosition(bb);
+  int separate = evalBB();
 
   // Position B: doubled pawns on the e-file (e3, e4).
   clearBoard(bb, mailbox);
@@ -93,7 +96,7 @@ static void test_eval_doubled_pawns_worse(void) {
   placePiece(bb, mailbox, Piece::W_PAWN, "e3");
   placePiece(bb, mailbox, Piece::W_PAWN, "e4");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int doubled = eval::evaluatePosition(bb);
+  int doubled = evalBB();
 
   TEST_ASSERT_TRUE(separate > doubled);
 }
@@ -104,7 +107,7 @@ static void test_eval_isolated_pawns_worse(void) {
   placePiece(bb, mailbox, Piece::W_PAWN, "d4");
   placePiece(bb, mailbox, Piece::W_PAWN, "e4");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int connected = eval::evaluatePosition(bb);
+  int connected = evalBB();
 
   // Position B: two white pawns on distant files (a4, h4) — both isolated.
   clearBoard(bb, mailbox);
@@ -112,7 +115,7 @@ static void test_eval_isolated_pawns_worse(void) {
   placePiece(bb, mailbox, Piece::W_PAWN, "a4");
   placePiece(bb, mailbox, Piece::W_PAWN, "h4");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int isolated = eval::evaluatePosition(bb);
+  int isolated = evalBB();
 
   TEST_ASSERT_TRUE(connected > isolated);
 }
@@ -126,7 +129,7 @@ static void test_eval_tapered_opening_vs_endgame_king(void) {
   // should score better than king on d4 (center).
   // With full material the MG king table dominates: e1 = 0, d4 = -40.
   setupInitialBoard(bb, mailbox);
-  int fullBoard = eval::evaluatePosition(bb);
+  int fullBoard = evalBB();
   // Starting position is symmetric → still zero regardless of phase.
   TEST_ASSERT_EQUAL_INT(0, fullBoard);
 }
@@ -136,14 +139,14 @@ static void test_eval_tapered_phase_affects_king(void) {
   // No non-pawn material → phase = 0 → pure endgame weights.
   placePiece(bb, mailbox, Piece::W_KING, "d4");
   placePiece(bb, mailbox, Piece::B_KING, "h8");
-  int endgameEval = eval::evaluatePosition(bb);
+  int endgameEval = evalBB();
 
   // Add symmetric queen pair → large phase swing (phase 8 vs 0).
   // Queens produce enough MG/EG blending difference (including king danger
   // asymmetry) to avoid accidental coincidence with the endgame score.
   placePiece(bb, mailbox, Piece::W_QUEEN, "a1");
   placePiece(bb, mailbox, Piece::B_QUEEN, "a8");
-  int midgameEval = eval::evaluatePosition(bb);
+  int midgameEval = evalBB();
 
   // Phase change shifts the king PST blend, producing different eval.
   TEST_ASSERT_TRUE(endgameEval != midgameEval);
@@ -237,7 +240,7 @@ static void test_eval_bishop_pair_bonus(void) {
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_BISHOP, "c8");
   placePiece(bb, mailbox, Piece::B_KNIGHT, "b8");
-  int eval = eval::evaluatePosition(bb);
+  int eval = evalBB();
   // White should be favored due to bishop pair bonus.
   TEST_ASSERT_TRUE(eval > 0);
 }
@@ -250,7 +253,7 @@ static void test_eval_bishop_pair_both_sides(void) {
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_BISHOP, "c8");
   placePiece(bb, mailbox, Piece::B_BISHOP, "f8");
-  int eval = eval::evaluatePosition(bb);
+  int eval = evalBB();
   // Symmetric → should be 0.
   TEST_ASSERT_EQUAL_INT(0, eval);
 }
@@ -268,7 +271,7 @@ static void test_eval_rook_open_file(void) {
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_ROOK, "h8");
   placePiece(bb, mailbox, Piece::B_PAWN, "h7");
-  int eval = eval::evaluatePosition(bb);
+  int eval = evalBB();
   // White rook gets open-file bonus (+20), black rook gets nothing.
   // Plus black pawn is worth -100 material (Black extra pawn = eval more negative).
   // Actually black has an extra pawn so eval is negative from material alone.
@@ -280,7 +283,7 @@ static void test_eval_rook_open_file(void) {
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_ROOK, "h8");
   placePiece(bb, mailbox, Piece::B_PAWN, "d7");
-  int openEval = eval::evaluatePosition(bb);
+  int openEval = evalBB();
 
   // Now put white rook on the d-file (blocked by own pawn).
   clearBoard(bb, mailbox);
@@ -290,7 +293,7 @@ static void test_eval_rook_open_file(void) {
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_ROOK, "h8");
   placePiece(bb, mailbox, Piece::B_PAWN, "d7");
-  int closedEval = eval::evaluatePosition(bb);
+  int closedEval = evalBB();
 
   // White rook on open a-file should evaluate at least as well as closed d-file.
   TEST_ASSERT_TRUE(openEval >= closedEval);
@@ -305,7 +308,7 @@ static void test_eval_rook_semi_open_file(void) {
   placePiece(bb, mailbox, Piece::B_ROOK, "h8");
   placePiece(bb, mailbox, Piece::B_PAWN, "d7");
   placePiece(bb, mailbox, Piece::B_PAWN, "e7");
-  int semiOpen = eval::evaluatePosition(bb);
+  int semiOpen = evalBB();
 
   // White rook on closed e-file (white e-pawn + black e-pawn).
   clearBoard(bb, mailbox);
@@ -317,7 +320,7 @@ static void test_eval_rook_semi_open_file(void) {
   placePiece(bb, mailbox, Piece::B_ROOK, "h8");
   placePiece(bb, mailbox, Piece::B_PAWN, "d7");
   placePiece(bb, mailbox, Piece::B_PAWN, "e7");
-  int closed = eval::evaluatePosition(bb);
+  int closed = evalBB();
 
   // Semi-open should favor white more (rook semi-open bonus = +10).
   // The closed position has an extra white pawn (100cp material +
@@ -336,7 +339,7 @@ static void test_eval_rook_semi_open_file(void) {
   placePiece(bb, mailbox, Piece::B_ROOK, "h8");
   placePiece(bb, mailbox, Piece::B_PAWN, "c7");
   placePiece(bb, mailbox, Piece::B_PAWN, "e7");
-  semiOpen = eval::evaluatePosition(bb);
+  semiOpen = evalBB();
 
   // Position B: White rook on e-file with own pawn on e2 (closed).
   clearBoard(bb, mailbox);
@@ -347,7 +350,7 @@ static void test_eval_rook_semi_open_file(void) {
   placePiece(bb, mailbox, Piece::B_ROOK, "h8");
   placePiece(bb, mailbox, Piece::B_PAWN, "c7");
   placePiece(bb, mailbox, Piece::B_PAWN, "e7");
-  closed = eval::evaluatePosition(bb);
+  closed = evalBB();
 
   // Same material both sides. Semi-open rook (+10) should make position A better.
   TEST_ASSERT_TRUE(semiOpen > closed);
@@ -362,14 +365,14 @@ static void test_eval_rook_on_seventh(void) {
   placePiece(bb, mailbox, Piece::W_KING, "a1");
   placePiece(bb, mailbox, Piece::W_ROOK, "d7");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int seventh = eval::evaluatePosition(bb);
+  int seventh = evalBB();
 
   // White rook on 5th rank (same file, no 7th bonus).
   clearBoard(bb, mailbox);
   placePiece(bb, mailbox, Piece::W_KING, "a1");
   placePiece(bb, mailbox, Piece::W_ROOK, "d5");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int fifth = eval::evaluatePosition(bb);
+  int fifth = evalBB();
 
   // 7th rank should score higher.
   TEST_ASSERT_TRUE(seventh > fifth);
@@ -386,7 +389,7 @@ static void test_eval_mobility_centralized_better(void) {
   placePiece(bb, mailbox, Piece::W_KNIGHT, "e4");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_KNIGHT, "a8");
-  int eval = eval::evaluatePosition(bb);
+  int eval = evalBB();
   // White's knight has ~8 squares, black's has ~2 → white favored.
   TEST_ASSERT_TRUE(eval > 0);
 }
@@ -408,7 +411,7 @@ static void test_eval_king_safety_intact_shield(void) {
   // Add some non-pawn material so MG weight matters.
   placePiece(bb, mailbox, Piece::W_QUEEN, "d1");
   placePiece(bb, mailbox, Piece::B_QUEEN, "d8");
-  int intact = eval::evaluatePosition(bb);
+  int intact = evalBB();
 
   // Now damage white's shield: remove g2 and h2 pawns.
   clearBoard(bb, mailbox);
@@ -421,7 +424,7 @@ static void test_eval_king_safety_intact_shield(void) {
   placePiece(bb, mailbox, Piece::B_PAWN, "h7");
   placePiece(bb, mailbox, Piece::W_QUEEN, "d1");
   placePiece(bb, mailbox, Piece::B_QUEEN, "d8");
-  int damaged = eval::evaluatePosition(bb);
+  int damaged = evalBB();
 
   // Intact shield should score higher for white.
   TEST_ASSERT_TRUE(intact > damaged);
@@ -437,7 +440,7 @@ static void test_eval_knight_outpost(void) {
   placePiece(bb, mailbox, Piece::W_KNIGHT, "e5");
   placePiece(bb, mailbox, Piece::W_PAWN, "d4");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int outpost = eval::evaluatePosition(bb);
+  int outpost = evalBB();
 
   // Same but knight on a1 (no outpost).
   clearBoard(bb, mailbox);
@@ -445,7 +448,7 @@ static void test_eval_knight_outpost(void) {
   placePiece(bb, mailbox, Piece::W_KNIGHT, "a1");
   placePiece(bb, mailbox, Piece::W_PAWN, "d4");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int corner = eval::evaluatePosition(bb);
+  int corner = evalBB();
 
   // Outpost knight should score much higher.
   TEST_ASSERT_TRUE(outpost > corner);
@@ -465,7 +468,7 @@ static void test_eval_king_danger_close_piece(void) {
   placePiece(bb, mailbox, Piece::W_ROOK, "d2");    // attacks d7/d8 in king zone
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_ROOK, "a8");
-  int close = eval::evaluatePosition(bb);
+  int close = evalBB();
 
   clearBoard(bb, mailbox);
   placePiece(bb, mailbox, Piece::W_KING, "a1");
@@ -473,7 +476,7 @@ static void test_eval_king_danger_close_piece(void) {
   placePiece(bb, mailbox, Piece::W_ROOK, "d2");    // attacks d7/d8 in king zone
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_ROOK, "a8");
-  int far = eval::evaluatePosition(bb);
+  int far = evalBB();
 
   // Queen near enemy king should score higher for white.
   TEST_ASSERT_TRUE(close > far);
@@ -538,9 +541,9 @@ static void test_pawn_hash_integration(void) {
   placePiece(bb, mailbox, Piece::B_PAWN, "e5");
   placePiece(bb, mailbox, Piece::B_PAWN, "d5");
 
-  int without = eval::evaluatePosition(bb);
-  int with1   = eval::evaluatePosition(bb, &ph);
-  int with2   = eval::evaluatePosition(bb, &ph);  // Cache hit
+  int without = evalBB();
+  int with1   = evalBB_ph(&ph);
+  int with2   = evalBB_ph(&ph);  // Cache hit
 
   TEST_ASSERT_EQUAL_INT(without, with1);
   TEST_ASSERT_EQUAL_INT(with1, with2);
@@ -562,7 +565,7 @@ static void test_eval_trapped_bishop_a7(void) {
   placePiece(bb, mailbox, Piece::W_BISHOP, "a7");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_PAWN, "b6");
-  int trapped = eval::evaluatePosition(bb);
+  int trapped = evalBB();
 
   // Same bishop on d3 (not trapped, not attacked by b6 pawn), same black pawn.
   clearBoard(bb, mailbox);
@@ -570,7 +573,7 @@ static void test_eval_trapped_bishop_a7(void) {
   placePiece(bb, mailbox, Piece::W_BISHOP, "d3");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_PAWN, "b6");
-  int free = eval::evaluatePosition(bb);
+  int free = evalBB();
 
   // The trapped bishop should score worse for white.
   TEST_ASSERT_TRUE(free > trapped);
@@ -582,7 +585,7 @@ static void test_eval_trapped_bishop_h7(void) {
   placePiece(bb, mailbox, Piece::W_BISHOP, "h7");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_PAWN, "g6");
-  int trapped = eval::evaluatePosition(bb);
+  int trapped = evalBB();
 
   // Bishop on e3 (not trapped, not attacked by g6 pawn).
   clearBoard(bb, mailbox);
@@ -590,7 +593,7 @@ static void test_eval_trapped_bishop_h7(void) {
   placePiece(bb, mailbox, Piece::W_BISHOP, "e3");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_PAWN, "g6");
-  int free = eval::evaluatePosition(bb);
+  int free = evalBB();
 
   TEST_ASSERT_TRUE(free > trapped);
 }
@@ -604,7 +607,7 @@ static void test_eval_trapped_rook_by_king(void) {
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_QUEEN, "d8");
   placePiece(bb, mailbox, Piece::B_ROOK, "a8");
-  int trapped = eval::evaluatePosition(bb);
+  int trapped = evalBB();
 
   // Same material with rook on e1 (not trapped) and king on g1.
   clearBoard(bb, mailbox);
@@ -614,7 +617,7 @@ static void test_eval_trapped_rook_by_king(void) {
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_QUEEN, "d8");
   placePiece(bb, mailbox, Piece::B_ROOK, "a8");
-  int free = eval::evaluatePosition(bb);
+  int free = evalBB();
 
   TEST_ASSERT_TRUE(free > trapped);
 }
@@ -628,7 +631,7 @@ static void test_eval_trapped_bishop_symmetric(void) {
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_BISHOP, "a2");
   placePiece(bb, mailbox, Piece::W_PAWN, "b3");
-  int eval = eval::evaluatePosition(bb);
+  int eval = evalBB();
   // Symmetric trapped bishops → score should be near zero.
   // Allow small PST asymmetry but the trapped penalties must cancel.
   TEST_ASSERT_TRUE(eval > -30 && eval < 30);
@@ -709,7 +712,7 @@ static void test_eval_king_danger_multiple_attackers(void) {
   placePiece(bb, mailbox, Piece::B_QUEEN, "a4");
   placePiece(bb, mailbox, Piece::B_ROOK, "a5");
   placePiece(bb, mailbox, Piece::B_BISHOP, "a6");
-  int evalSafe = eval::evaluatePosition(bb);
+  int evalSafe = evalBB();
 
   // Position B: black pieces attacking white king zone.
   clearBoard(bb, mailbox);
@@ -721,7 +724,7 @@ static void test_eval_king_danger_multiple_attackers(void) {
   placePiece(bb, mailbox, Piece::B_QUEEN, "d4");
   placePiece(bb, mailbox, Piece::B_ROOK, "f8");
   placePiece(bb, mailbox, Piece::B_BISHOP, "h3");
-  int evalDanger = eval::evaluatePosition(bb);
+  int evalDanger = evalBB();
 
   // White should be worse when pieces attack the king zone.
   TEST_ASSERT_TRUE(evalSafe > evalDanger);
@@ -740,7 +743,7 @@ static void test_eval_king_danger_no_attackers(void) {
   placePiece(bb, mailbox, Piece::B_PAWN, "g7");
   placePiece(bb, mailbox, Piece::B_PAWN, "h7");
   placePiece(bb, mailbox, Piece::B_KNIGHT, "c6");
-  int eval = eval::evaluatePosition(bb);
+  int eval = evalBB();
   // Symmetric (except mirrored pawns) — eval should be near zero.
   TEST_ASSERT_TRUE(eval > -50 && eval < 50);
 }
@@ -761,7 +764,7 @@ static void test_eval_mobility_mg_eg_split(void) {
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_ROOK, "a8");
   placePiece(bb, mailbox, Piece::B_PAWN, "a7");
-  int eval = eval::evaluatePosition(bb);
+  int eval = evalBB();
   // White's centralized rook has more mobility than the restricted black
   // rook.  With EG rook mobility weight 3, this should produce a positive
   // eval for white.
@@ -783,7 +786,7 @@ static void test_eval_bad_bishop(void) {
   placePiece(bb, mailbox, Piece::W_PAWN, "b2");   // dark square
   placePiece(bb, mailbox, Piece::W_PAWN, "f2");   // dark square
   placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int badBishop = eval::evaluatePosition(bb);
+  int badBishop = evalBB();
 
   // Good bishop: same setup but pawns on light squares — bishop unobstructed.
   clearBoard(bb, mailbox);
@@ -793,7 +796,7 @@ static void test_eval_bad_bishop(void) {
   placePiece(bb, mailbox, Piece::W_PAWN, "e2");   // light square
   placePiece(bb, mailbox, Piece::W_PAWN, "g2");   // light square
   placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int goodBishop = eval::evaluatePosition(bb);
+  int goodBishop = evalBB();
 
   // 3 pawns on same color → 3 × BAD_BISHOP penalty → bad position scores lower.
   TEST_ASSERT_TRUE(goodBishop > badBishop);
@@ -812,7 +815,7 @@ static void test_eval_rook_behind_passer(void) {
   placePiece(bb, mailbox, Piece::W_ROOK, "d2");
   placePiece(bb, mailbox, Piece::W_PAWN, "d5");
   placePiece(bb, mailbox, Piece::B_KING, "a8");
-  int behind = eval::evaluatePosition(bb);
+  int behind = evalBB();
 
   // Same material, rook in FRONT of the passer on d6 (same file, no bonus).
   clearBoard(bb, mailbox);
@@ -820,7 +823,7 @@ static void test_eval_rook_behind_passer(void) {
   placePiece(bb, mailbox, Piece::W_ROOK, "d6");
   placePiece(bb, mailbox, Piece::W_PAWN, "d5");
   placePiece(bb, mailbox, Piece::B_KING, "a8");
-  int inFront = eval::evaluatePosition(bb);
+  int inFront = evalBB();
 
   // Rook behind passer should get EG bonus → score higher.
   TEST_ASSERT_TRUE(behind > inFront);
@@ -838,7 +841,7 @@ static void test_eval_candidate_passer(void) {
   placePiece(bb, mailbox, Piece::W_PAWN, "d4");
   placePiece(bb, mailbox, Piece::B_PAWN, "e5");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int candidateScore = eval::evaluatePosition(bb);
+  int candidateScore = evalBB();
 
   // Non-candidate: white pawn d4, two black blockers on d5 and e5.
   clearBoard(bb, mailbox);
@@ -847,7 +850,7 @@ static void test_eval_candidate_passer(void) {
   placePiece(bb, mailbox, Piece::B_PAWN, "d5");
   placePiece(bb, mailbox, Piece::B_PAWN, "e5");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
-  int nonCandidateScore = eval::evaluatePosition(bb);
+  int nonCandidateScore = evalBB();
 
   // Candidate passer gets bonus → should score higher.
   TEST_ASSERT_TRUE(candidateScore > nonCandidateScore);
@@ -867,7 +870,7 @@ static void test_eval_opposite_color_bishops_scaling(void) {
   placePiece(bb, mailbox, Piece::W_PAWN, "d4");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_BISHOP, "c8");  // light square
-  int ocbScore = eval::evaluatePosition(bb);
+  int ocbScore = evalBB();
 
   // Same-color bishops: White B c1 (dark), Black B a3 (dark).
   clearBoard(bb, mailbox);
@@ -876,7 +879,7 @@ static void test_eval_opposite_color_bishops_scaling(void) {
   placePiece(bb, mailbox, Piece::W_PAWN, "d4");
   placePiece(bb, mailbox, Piece::B_KING, "e8");
   placePiece(bb, mailbox, Piece::B_BISHOP, "a3");  // dark square
-  int sameCBScore = eval::evaluatePosition(bb);
+  int sameCBScore = evalBB();
 
   // Both should be positive (white has material advantage), but OCB
   // should be scaled down (×0.75) so has a smaller advantage.

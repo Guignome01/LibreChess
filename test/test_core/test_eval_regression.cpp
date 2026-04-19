@@ -4,6 +4,7 @@
 #include <evaluation.h>
 #include <fen.h>
 #include <piece.h>
+#include <position.h>
 
 #include "../test_helpers.h"
 
@@ -21,13 +22,9 @@ using namespace LibreChess;
 
 // Helper: evaluate a FEN position and return the raw (white-relative) score.
 static int evalFEN(const char* fen) {
-  BitboardSet board;
-  Piece mbox[64];
-  Color turn;
-  board.clear();
-  memset(mbox, 0, 64);
-  fen::fenToBoard(fen, board, mbox, turn);
-  return eval::evaluatePosition(board);
+  Position pos;
+  if (!pos.loadFEN(fen)) return 0;
+  return eval::evaluatePosition(pos);
 }
 
 // ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@
 //                       shared public eval::computeKingDanger() helper.
 //
 // All functions live in namespace LibreChess::eval::detail and are composed
-// by evaluateImpl() in evaluation.cpp.
+// by evaluatePosition() in evaluation.cpp.
 //
 // Reference: https://www.chessprogramming.org/King_Safety
 // ---------------------------------------------------------------------------
