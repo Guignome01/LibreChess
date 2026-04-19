@@ -163,26 +163,22 @@ Piece Position::removeCapture(Piece piece, Square to, bool isEP,
 // The king has already been moved by the caller; this handles only the rook.
 // Updates bitboards, mailbox, and Zobrist hash incrementally.
 //
-// The rank+kingSide→rookFrom/rookTo derivation appears in moveCastlingRook,
-// unmakeCastlingRook, and updateAccumulators.  Kept inline at each site to
-// avoid a struct return in the make/unmake hot path (only 4 lines each).
+// Rook square derivation is centralised in Position::castlingRookSquares()
+// (header-inline) so the rank+side→from/to formula lives in one place.
 //
 // Reference: https://www.chessprogramming.org/Castling
 // ---------------------------------------------------------------------------
 void Position::moveCastlingRook(Color color, Square kingFrom, Square kingTo) {
-  int rank = rankOf(kingFrom);
-  bool kingSide = fileOf(kingTo) > fileOf(kingFrom);
-  Square rookFrom = makeSquare(rank, kingSide ? 7 : 0);
-  Square rookTo   = makeSquare(rank, kingSide ? 5 : 3);
+  auto rs = castlingRookSquares(kingFrom, kingTo);
   Piece rook = piece::makePiece(color, PieceType::ROOK);
 
-  bb_.movePiece(rookFrom, rookTo, rook);
-  mailbox_[rookFrom] = Piece::NONE;
-  mailbox_[rookTo]   = rook;
+  bb_.movePiece(rs.from, rs.to, rook);
+  mailbox_[rs.from] = Piece::NONE;
+  mailbox_[rs.to]   = rook;
 
   int rookZIdx = piece::pieceIndex(rook);
-  hash_ ^= zobrist::KEYS.pieces[rookZIdx][rookFrom];
-  hash_ ^= zobrist::KEYS.pieces[rookZIdx][rookTo];
+  hash_ ^= zobrist::KEYS.pieces[rookZIdx][rs.from];
+  hash_ ^= zobrist::KEYS.pieces[rookZIdx][rs.to];
 }
 
 // ---------------------------------------------------------------------------
@@ -218,14 +214,11 @@ Piece Position::applyPromotion(Move m, Piece pawn, Square to) {
 // Reference: https://www.chessprogramming.org/Castling
 // ---------------------------------------------------------------------------
 void Position::unmakeCastlingRook(Piece king, Square kingFrom, Square kingTo) {
-  int rank = rankOf(kingFrom);
-  bool kingSide = fileOf(kingTo) > fileOf(kingFrom);
-  Square rookFrom = makeSquare(rank, kingSide ? 7 : 0);
-  Square rookTo   = makeSquare(rank, kingSide ? 5 : 3);
+  auto rs = castlingRookSquares(kingFrom, kingTo);
   Piece rook = piece::makePiece(piece::pieceColor(king), PieceType::ROOK);
-  bb_.movePiece(rookTo, rookFrom, rook);
-  mailbox_[rookFrom] = rook;
-  mailbox_[rookTo] = Piece::NONE;
+  bb_.movePiece(rs.to, rs.from, rook);
+  mailbox_[rs.from] = rook;
+  mailbox_[rs.to] = Piece::NONE;
 }
 
 // ---------------------------------------------------------------------------
@@ -466,14 +459,11 @@ void Position::updateAccumulators(Piece piece, Square from, Square to,
 
   // Castling rook: derive rook squares from king movement.
   if (isCastling) {
-    int rank = rankOf(from);
-    bool kingSide = fileOf(to) > fileOf(from);
-    Square rookFromSq = makeSquare(rank, kingSide ? 7 : 0);
-    Square rookToSq   = makeSquare(rank, kingSide ? 5 : 3);
+    auto rs = castlingRookSquares(from, to);
     Piece rook = piece::makePiece(piece::pieceColor(piece), PieceType::ROOK);
     int rookZIdx = piece::pieceIndex(rook);
-    auto rF = eval::pieceSquareMGEG(rookZIdx, rookFromSq);
-    auto rT = eval::pieceSquareMGEG(rookZIdx, rookToSq);
+    auto rF = eval::pieceSquareMGEG(rookZIdx, rs.from);
+    auto rT = eval::pieceSquareMGEG(rookZIdx, rs.to);
     mgPST_ += rT.mg - rF.mg;
     egPST_ += rT.eg - rF.eg;
   }
@@ -750,6 +740,12 @@ bool Position::isDraw() const {
 //
 // Reference: https://www.chessprogramming.org/Repetitions
 // ---------------------------------------------------------------------------
+
+// Named thresholds for hasRepeated(): twofold claim for the search (any
+// repetition = forced draw), threefold for FIDE rules.
+static constexpr int REPETITION_TWOFOLD   = 2;
+static constexpr int REPETITION_THREEFOLD = 3;
+
 static bool hasRepeated(const HashHistory& hashes, int halfmoveClock,
                         int minCount) {
   int minEntries = minCount * 2 - 1;
@@ -775,7 +771,7 @@ bool Position::isRepetition() const {
   // can be forced to a draw.  The search treats this as a draw because
   // either side can force the third occurrence.
   // Reference: https://www.chessprogramming.org/Repetitions
-  return hasRepeated(hashHistory_, state_.halfmoveClock, 2);
+  return hasRepeated(hashHistory_, state_.halfmoveClock, REPETITION_TWOFOLD);
 }
 
 // ---------------------------------------------------------------------------
@@ -841,7 +837,7 @@ bool Position::isInsufficientMaterial(const BitboardSet& bb) {
 
 bool Position::isThreefoldRepetition(const HashHistory& hashes,
                                      int halfmoveClock) {
-  return hasRepeated(hashes, halfmoveClock, 3);
+  return hasRepeated(hashes, halfmoveClock, REPETITION_THREEFOLD);
 }
 
 bool Position::isFiftyMoveRule(const PositionState& state) {

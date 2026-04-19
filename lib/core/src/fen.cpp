@@ -133,16 +133,11 @@ void fenToBoard(const std::string& fen, BitboardSet& bb, Piece mailbox[],
 
   // En passant target square
   std::string enPassantSquare = nextToken(remaining);
-  if (!enPassantSquare.empty() && enPassantSquare != "-" && enPassantSquare.length() >= 2) {
-    char file = enPassantSquare[0];
-    char rankCh = enPassantSquare[1];
-    if (file >= 'a' && file <= 'h' && rankCh >= '1' && rankCh <= '8') {
-      int epFile = utils::fileIndex(file);
-      int epRank = utils::rankIndexFromChar(rankCh);
-      if (state != nullptr) {
-        state->epSquare = makeSquare(epRank, epFile);
-      }
-    }
+  if (!enPassantSquare.empty() && enPassantSquare != "-" && enPassantSquare.length() >= 2
+      && state != nullptr) {
+    Square epSq;
+    if (utils::parseSquareAlgebraic(enPassantSquare[0], enPassantSquare[1], epSq))
+      state->epSquare = epSq;
   }
 
   // Halfmove clock

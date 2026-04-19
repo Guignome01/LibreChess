@@ -56,6 +56,10 @@ constexpr int homeRank(Color c) {
   return c == Color::WHITE ? 0 : 7;
 }
 
+/// King's starting file in standard chess (e-file = index 4).
+/// Used for castling eligibility — a king on any other file cannot castle.
+constexpr int KING_START_FILE = 4;
+
 /// Promotion rank in LERF: rank 7 for white, rank 0 for black.
 constexpr int promotionRank(Color c) {
   return c == Color::WHITE ? 7 : 0;

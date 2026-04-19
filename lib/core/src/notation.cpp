@@ -246,22 +246,8 @@ bool parseCoordinate(const std::string& move,
   size_t len = move.length();
   if (len < 4 || len > 5) return false;
 
-  char fromFile = move[0];
-  char fromRank = move[1];
-  char toFile = move[2];
-  char toRank = move[3];
-
-  int ff = utils::fileIndex(fromFile);
-  int fr = utils::rankIndexFromChar(fromRank);
-  int tf = utils::fileIndex(toFile);
-  int tr = utils::rankIndexFromChar(toRank);
-
-  if ((unsigned)ff >= 8 || (unsigned)fr >= 8 ||
-      (unsigned)tf >= 8 || (unsigned)tr >= 8)
-    return false;
-
-  from = makeSquare(fr, ff);
-  to   = makeSquare(tr, tf);
+  if (!utils::parseSquareAlgebraic(move[0], move[1], from)) return false;
+  if (!utils::parseSquareAlgebraic(move[2], move[3], to))   return false;
 
   // From and to squares must differ
   if (from == to) return false;

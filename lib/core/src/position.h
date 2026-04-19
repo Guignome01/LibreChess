@@ -283,6 +283,20 @@ class Position {
   // Symmetric counterpart to moveCastlingRook().
   // Reference: https://www.chessprogramming.org/Castling
   void unmakeCastlingRook(Piece king, Square kingFrom, Square kingTo);
+
+  // Derive castling rook squares from king movement.  Shared by
+  // moveCastlingRook, unmakeCastlingRook, and updateAccumulators so the
+  // rank+side→rookFrom/rookTo logic lives in one place.
+  //   kingside:  rook h-file (col 7) → f-file (col 5)
+  //   queenside: rook a-file (col 0) → d-file (col 3)
+  struct CastlingRookSquares { Square from; Square to; };
+  static CastlingRookSquares castlingRookSquares(Square kingFrom,
+                                                 Square kingTo) {
+    int rank = rankOf(kingFrom);
+    bool kingSide = fileOf(kingTo) > fileOf(kingFrom);
+    return {makeSquare(rank, kingSide ? 7 : 0),
+            makeSquare(rank, kingSide ? 5 : 3)};
+  }
 };
 
 }  // namespace LibreChess

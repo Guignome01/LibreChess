@@ -206,7 +206,7 @@ static bool filterPieceMoves(const BitboardSet& bb, const Piece mailbox[],
       int rank = piece::homeRank(color);
       Piece kingPiece = piece::makePiece(color, PieceType::KING);
       Piece rookPiece = piece::makePiece(color, PieceType::ROOK);
-      if (rankOf(sq) == rank && fileOf(sq) == 4 &&
+      if (rankOf(sq) == rank && fileOf(sq) == piece::KING_START_FILE &&
           mailbox[sq] == kingPiece &&
           !attacks::isSquareUnderAttack(bb, sq, color)) {
         // King-side (e → g)

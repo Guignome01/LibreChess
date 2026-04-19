@@ -59,6 +59,16 @@ inline constexpr char rankCharFromRank(int rank) { return '1' + rank; }
 inline constexpr int fileIndex(char file) { return file - 'a'; }
 inline constexpr int rankIndexFromChar(char rank) { return rank - '1'; }
 
+/// Parse an algebraic square ("e4" style) into a LERF Square.
+/// Returns true on valid input (file in 'a'..'h', rank in '1'..'8');
+/// returns false without writing `sq` otherwise.  Shared by coordinate-move
+/// parsing (notation.cpp) and FEN en-passant-square parsing (fen.cpp).
+inline bool parseSquareAlgebraic(char file, char rank, Square& sq) {
+  if (file < 'a' || file > 'h' || rank < '1' || rank > '8') return false;
+  sq = makeSquare(rankIndexFromChar(rank), fileIndex(file));
+  return true;
+}
+
 /// Square name from LERF Square (e.g. SQ_E4 → "e4").
 /// Reference: https://www.chessprogramming.org/Square_Mapping_Considerations
 inline std::string squareName(Square sq) {
