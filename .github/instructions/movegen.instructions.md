@@ -13,7 +13,7 @@ Stateless namespace — all context (board, turn, state) passed as decomposed pa
 **Bulk**: `generateMoves<N>(bb, mailbox, color, state, moves, filter)` — self-contained (build own LegalityContext). Template on `MoveListBase<N>` (works with both `MoveList` and `QSMoveList`).
 **Staged** (reuse context): `buildLegalityContext(bb, color, kingSq) → LegalityContext`, then `generateMoves(bb, mailbox, color, state, ctx, moves, filter)` — avoids double pin/check computation in staged move pickers.
 **Append-mode**: `generateMovesAppend(bb, mailbox, color, state, ctx, moves, filter)` — appends moves to existing `MoveList` without clearing (used by `MovePicker::initQuiets()`).
-**Validation**: `isValidMove(bb, mailbox, from, to, state)`, overload with `kingSq` — builds `LegalityContext` and delegates to `filterPieceMoves` with early-exit handler
+**Validation**: `isValidMove(bb, mailbox, from, to, state)`, overload with `kingSq`, and overload with pre-built `LegalityContext` (used by `MovePicker` to share its cached ctx across TT/killer/countermove validation — avoids rebuilding pin/check masks per call) — all delegate to `filterPieceMoves` with early-exit handler
 **Queries**: `hasAnyLegalMove(...)`, `hasLegalEnPassantCapture(...)`
 
 ## Key Structs

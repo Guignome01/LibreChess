@@ -88,15 +88,17 @@ constexpr int SEE_NOT_COMPUTED = -32000;
 // ---------------------------------------------------------------------------
 
 inline bool isMoveValid(const BitboardSet& bb, const Piece mailbox[],
-                        Move& m, const PositionState& state, Color side) {
+                        Move& m, const PositionState& state, Color side,
+                        const movegen::LegalityContext& ctx) {
   // Reject moves where the piece doesn't belong to the current side.
   Piece piece = mailbox[m.from];
   if (piece == Piece::NONE || pieceColor(piece) != side)
     return false;
 
   // Step 1: validate from→to is legal (pseudo-legal + does not leave
-  //         own king in check).
-  if (!movegen::isValidMove(bb, mailbox, m.from, m.to, state))
+  //         own king in check).  Uses caller-supplied LegalityContext
+  //         to avoid rebuilding pin/check masks per call.
+  if (!movegen::isValidMove(bb, mailbox, m.from, m.to, state, ctx))
     return false;
 
   // Step 2: reconstruct flags from the current position.
@@ -250,7 +252,8 @@ struct MovePicker {
   int badCapIdx;     // next bad capture index
   int quietIdx;      // next quiet move index
 
-  // Legality context built once per position (in INIT_CAPTURES stage).
+  // Legality context built once per position (in init()).  Shared across
+  // TT / killer / countermove validation and INIT_CAPTURES / INIT_QUIETS.
   // Reused by INIT_QUIETS to avoid recomputing pin/check masks.
   movegen::LegalityContext legalCtx;
 
@@ -273,6 +276,11 @@ struct MovePicker {
     posState = &pos.positionState();
     state    = &stateRef;
     ply      = ss->ply;
+
+    // Build LegalityContext eagerly: shared by TT / killer / countermove
+    // validation (saves one buildLegalityContext per isMoveValid call) and
+    // by initCaptures / initQuiets.  Net gain when TT hit rate ≥ 1/node.
+    legalCtx = movegen::buildLegalityContext(*bb, side, pos.kingSq(side));
 
     ttMove = tt;
     hasTT  = !tt.isNull();
@@ -321,7 +329,7 @@ struct MovePicker {
         // --- TT move: highest priority, validated for legality ----------
         case STAGE_TT:
           stage = STAGE_INIT_CAPTURES;
-          if (hasTT && isMoveValid(*bb, mailbox, ttMove, *posState, side)) {
+          if (hasTT && isMoveValid(*bb, mailbox, ttMove, *posState, side, legalCtx)) {
             lastSee = SEE_NOT_COMPUTED;
             ttYielded = true;
             return ttMove;
@@ -383,7 +391,7 @@ struct MovePicker {
             // Skip if this is a capture in the current position
             if (mailbox[km.to] != Piece::NONE) continue;
             // Validate legality
-            if (!isMoveValid(*bb, mailbox, km, *posState, side)) continue;
+            if (!isMoveValid(*bb, mailbox, km, *posState, side, legalCtx)) continue;
             lastSee = SEE_NOT_COMPUTED;
             if (killerPhase == 1)
               killer0Yielded = true;
@@ -404,7 +412,7 @@ struct MovePicker {
                 !(killer1Yielded && cm == killer1) &&
                 !cm.isNull() && // not null
                 mailbox[cm.to] == Piece::NONE &&
-                isMoveValid(*bb, mailbox, cm, *posState, side)) {
+                isMoveValid(*bb, mailbox, cm, *posState, side, legalCtx)) {
               lastSee = SEE_NOT_COMPUTED;
               counterYielded = true;
               return cm;
@@ -471,10 +479,8 @@ private:
   // -----------------------------------------------------------------------
 
   void initCaptures() {
-    // Build the legality context once — reused in initQuiets().
-    Square kingSq = 0;
-    utils::resolveKingSquare(*bb, side, kingSq);
-    legalCtx = movegen::buildLegalityContext(*bb, side, kingSq);
+    // LegalityContext is already built by init() — shared with TT/killer/
+    // countermove validation and with initQuiets().
 
     movegen::generateMoves(*bb, mailbox, side, *posState, legalCtx, moves,
                             movegen::FilterMode::CAPTURES_PROMOS);

@@ -164,8 +164,10 @@ static void validatePV(Position& pos, SearchResult& result) {
     // (EP, castling, promotion type).  This catches stale PV entries
     // from TT hash collisions, SE exclusion search leakage, or inter-
     // iteration staleness, while ensuring make/unmake uses correct flags.
+    movegen::LegalityContext ctx = movegen::buildLegalityContext(
+        pos.bitboards(), pos.sideToMove(), pos.kingSq(pos.sideToMove()));
     if (!isMoveValid(pos.bitboards(), pos.mailbox(),
-                     m, pos.positionState(), pos.sideToMove()))
+                     m, pos.positionState(), pos.sideToMove(), ctx))
       break;
 
     // Write back the flag-corrected move so UCI output is accurate.

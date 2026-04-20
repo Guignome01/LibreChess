@@ -78,6 +78,8 @@ Callers must own and pass a `SearchState&` to `findBestMove`. The `Engine` facad
 
 TT move → good captures (MVV-LVA + captureHistory, lazy SEE ≥ 0; cached SEE stored in scores[] for bad captures) → killer moves (2/ply) → countermove → history (append-mode quiet generation via `generateMovesAppend()`) → bad captures (ordered by cached SEE, least-negative first). Score arrays use `int16_t` (~1.7 KiB saved per ply). `pickBestInRange()` — selection sort, O(N) per move.
 
+**Shared LegalityContext**: `MovePicker::init()` builds one `movegen::LegalityContext` eagerly using `pos.kingSq(side)` and stores it in `legalCtx`. The same context is reused by (a) `isMoveValid()` during TT / killer / countermove validation via the ctx-aware overload `movegen::isValidMove(bb, mailbox, from, to, state, ctx)`, and (b) `initCaptures()` / `initQuiets()` for staged generation. This eliminates the previous 2–4 redundant `buildLegalityContext` calls per node (one per validated pseudo-move plus one for generation).
+
 Also contains heuristic update functions: `updateKillers`, `updateHistory` (gravity formula), `updateCaptureCutoffHistory`, `updateQuietCutoffHeuristics`.
 
 ## Search Techniques

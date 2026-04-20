@@ -486,6 +486,27 @@ bool isValidMove(const BitboardSet& bb, const Piece mailbox[],
   return found;
 }
 
+// Ctx-aware overload: reuses a pre-built LegalityContext from the caller.
+// MovePicker shares one context across its TT / killer / countermove
+// validation, saving a full buildLegalityContext call per validation.
+bool isValidMove(const BitboardSet& bb, const Piece mailbox[],
+                 Square from, Square to,
+                 const PositionState& state, const LegalityContext& ctx) {
+  Piece piece = mailbox[from];
+  if (piece == Piece::NONE) return false;
+
+  // Double check: only king can move.
+  if (ctx.checkerCount >= 2 && from != ctx.kingSq) return false;
+
+  bool found = false;
+  filterPieceMoves(bb, mailbox, from, state, ctx, FilterMode::ALL,
+      [&](Move m) -> bool {
+        if (static_cast<Square>(m.to) == to) { found = true; return true; }
+        return false;
+      });
+  return found;
+}
+
 bool hasAnyLegalMove(const BitboardSet& bb, const Piece mailbox[],
                      Color color, const PositionState& state) {
   Square kingSq;

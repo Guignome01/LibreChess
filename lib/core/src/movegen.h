@@ -131,6 +131,13 @@ bool isValidMove(const BitboardSet& bb, const Piece mailbox[],
                  Square from, Square to,
                  const PositionState& state, Square kingSq);
 
+// Validate with a pre-built LegalityContext (avoids rebuilding pin/check
+// masks).  Used by MovePicker to share its cached context across TT/killer/
+// countermove validation — each call saves one full buildLegalityContext.
+bool isValidMove(const BitboardSet& bb, const Piece mailbox[],
+                 Square from, Square to,
+                 const PositionState& state, const LegalityContext& ctx);
+
 // ---------------------------------------------------------------------------
 // Utility queries
 // ---------------------------------------------------------------------------
