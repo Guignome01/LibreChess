@@ -1,7 +1,6 @@
 #ifndef WIFI_MANAGER_ESP32_H
 #define WIFI_MANAGER_ESP32_H
 
-#include "board_driver.h"
 #include "observer.h"
 #include <Arduino.h>
 #include <AsyncTCP.h>
@@ -17,6 +16,7 @@ namespace LibreChess { class Game; }
 using namespace LibreChess;
 
 struct LichessConfig;
+class Board;
 class LittleFSStorage;
 
 // ---------------------------
@@ -75,7 +75,7 @@ class WiFiManagerESP32 : public IGameObserver {
   String botEngine = "stockfish"; // "stockfish" or "librechess"
 
   LittleFSStorage* storage_;
-  BoardDriver* boardDriver;
+  Board* board_;
   std::string currentFen;
   float boardEvaluation;
 
@@ -157,7 +157,7 @@ class WiFiManagerESP32 : public IGameObserver {
   void handleDeleteGame(AsyncWebServerRequest* request);
 
  public:
-  WiFiManagerESP32(BoardDriver* boardDriver, LittleFSStorage* storage);
+  WiFiManagerESP32(Board* board, LittleFSStorage* storage);
   void begin();
   void update(); // Called from loop() — handles reconnection
 

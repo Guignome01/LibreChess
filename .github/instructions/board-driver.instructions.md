@@ -1,37 +1,49 @@
 ---
-description: "Use when modifying BoardDriver, LED animations, sensor reading, calibration, or any hardware interaction code. Covers LED mutex rules, animation queue lifecycle, color semantics, sensor debounce, and NVS persistence."
-applyTo: "src/board_driver.*, src/led_colors.h, src/sensor_test.*, src/system_utils.*"
+description: "Use when modifying BoardDriver, BoardDiagnostics, LED animations, sensor reading, calibration, or any hardware interaction code. Covers LED mutex rules, animation queue lifecycle, color semantics, sensor debounce, and NVS persistence."
+applyTo: "src/board/**, src/system_utils.*"
 ---
 
-# BoardDriver & Hardware Patterns
+# Board Firmware & Hardware Patterns
+
+`src/board/board.*` is the firmware-facing facade. It composes `BoardDriver`, `BoardFeedback`, `BoardAssistance`, and a `LibreChess::board::BoardState` snapshot. External firmware modules should depend on `Board*`; `src/board/driver.*` remains the low-level hardware owner. `src/board/animations.*` owns animation job definitions and visual animation execution through driver drawing primitives; `src/board/lifecycle.*` owns the FreeRTOS queue/task, LED mutex, stop flags, and queue barrier.
+
+`src/board/assistance.*` owns physical chess guidance: setup prompts, configurable legal-move assistance (`BoardAssistanceLevel`), castling prompts, remote-move completion prompts, and capture placement prompts. It may read `Game` through public APIs for display decisions, but it must not mutate chess state, talk to engine providers, or call WiFi APIs.
+
+`src/board/feedback.*` owns always-on visual feedback: illegal move blink, resign progress, post-move confirmation, capture/promotion/check/game-end effects, thinking/waiting status animations, remote game-end display, and error flashes.
+
+`src/board/calibration.*` owns the serial-guided calibration workflow and NVS mapping persistence. It is board-internal and uses `BoardDriver` friendship for raw GPIO scanning, strip writes, mapping arrays, and `boardCal` persistence. `BoardDriver::begin()` delegates `load()`/`run()`/`save()` to `BoardCalibration`; `BoardDriver` applies the resulting mapping during normal sensor and LED operations.
+
+`src/board/diagnostics.*` owns board diagnostic workflows such as the user-facing Sensor Test mode. It depends on the `Board` facade, not `BoardDriver`; after an initial occupancy snapshot it consumes `BoardState` changed-square entries (`changedCount()`/`changedSquare()`) to record newly visited squares.
 
 ## LED Access
 
-The LED strip is shared between the main loop and a dedicated animation FreeRTOS task, guarded by `ledMutex`.
+The LED strip is shared between the main loop and a dedicated animation FreeRTOS task, guarded by the mutex owned by `BoardAnimationLifecycle`.
 
 ### LedGuard (RAII Mutex)
 
-Multi-step LED writes from the main loop **must** use a scoped `BoardDriver::LedGuard`:
+Multi-step LED writes from the main loop **must** use a scoped `Board::LedGuard` through the facade:
 
 ```cpp
 {
-    BoardDriver::LedGuard guard(boardDriver);
-    boardDriver.clearAllLEDs();
-    boardDriver.setSquareLED(row, col, LedColors::Cyan);
-    boardDriver.showLEDs();
+    Board::LedGuard guard(board);
+    board->clearAllLEDs();
+    board->setSquareLED(row, col, LedColors::Cyan);
+    board->showLEDs();
 }
 ```
+
+Use `BoardDriver::LedGuard` only inside board-internal driver code.
 
 Single queued animations (`blinkSquare`, `captureAnimation`, etc.) acquire the mutex internally — no guard needed by the caller.
 
 ### Animation Queue
 
-Animations run on a dedicated FreeRTOS task (`animationWorkerTask`) that dequeues `AnimationJob` structs from `animationQueue`. Each job has a type and type-specific params.
+Animations run on a dedicated FreeRTOS task owned by `BoardAnimationLifecycle` that dequeues `AnimationJob` structs. Each job has a type and type-specific params.
 
 **Short animations** (capture, promotion, blink, firework, flash) — fire-and-forget. Enqueue and return.
 
 **Long-running animations** (thinking, waiting) — return `std::atomic<bool>*` (heap-allocated stop flag). The animation checks the flag each frame. To stop:
-1. Call `stopAndWaitForAnimation(flag)` — sets the flag, blocks on `animationDoneSemaphore`, then deletes the flag.
+1. Call `stopAndWaitForAnimation(flag)` — sets the flag, blocks on the lifecycle completion semaphore, then deletes the flag.
 2. **Never** set the flag directly or delete it without waiting — the animation task may still hold the LED mutex mid-frame.
 
 **Barrier**: Call `waitForAnimationQueueDrain()` before writing LEDs directly. It enqueues a `SYNC` no-op and blocks until the worker processes it. Without this, a stale queued animation can overwrite your direct LED writes.
@@ -51,7 +63,7 @@ Animations run on a dedicated FreeRTOS task (`animationWorkerTask`) that dequeue
 
 ## Color Semantics
 
-Colors in `LedColors` (`led_colors.h`) have **fixed semantic meanings**. Never use a color for a different purpose.
+Colors in `LedColors` (`src/board/colors.h`) have **fixed semantic meanings**. Never use a color for a different purpose.
 
 | Color | Meaning | Usage |
 |-------|---------|-------|
@@ -75,13 +87,13 @@ Colors in `LedColors` (`led_colors.h`) have **fixed semantic meanings**. Never u
 
 - **Polling**: `SENSOR_READ_DELAY_MS` = 40ms interval
 - **Debounce**: `DEBOUNCE_MS` = 125ms — piece must be stable for the full window
-- **Triple-buffered state**: `sensorRaw` (latest read) → `sensorState` (debounced) → `sensorPrev` (snapshot for change detection)
-- **Always call `boardDriver.readSensors()` before checking state** — arrays update only on explicit read
+- **Sensor ownership split**: `BoardDriver` owns raw/debounced current state (`sensorRaw` → `sensorState`); the facade's `BoardState` owns previous/current snapshots and derived transitions.
+- **Always call `board->readSensors()` before checking state** — hardware state updates only on explicit read. This also refreshes the facade's `BoardState` transition snapshot.
 - Efficient sequential column shifting via `lastEnabledCol` optimization
 
 ## Calibration
 
-Interactive serial-guided process mapping physical pins to logical `[row][col]` coordinates. Results persisted in NVS namespace `"calibration"`:
+Interactive serial-guided process implemented by `BoardCalibration`, mapping physical pins to logical `[row][col]` coordinates. Results persisted in NVS namespace `"boardCal"`:
 - `toLogicalRow[]`, `toLogicalCol[]` — sensor mapping
 - `ledIndexMap[8][8]` — LED position mapping
 - `swapAxes` — handles boards with swapped shift register / row pin axes
@@ -91,25 +103,29 @@ Runs on first boot or via web UI trigger. Board repeats calibration prompt until
 ## NVS Persistence
 
 Settings stored via Arduino `Preferences`. Always call `SystemUtils::ensureNvsInitialized()` before first use. Key namespaces:
-- `"calibration"` — sensor/LED mapping tables
-- `"settings"` — LED brightness, dim multiplier, other user preferences
+- `"boardCal"` — sensor/LED mapping tables
+- `"ledSettings"` — LED brightness and dim multiplier
 
 ## Design Decisions
 
-- **LED mutex exists because of the animation task** — the LED strip is shared between the main loop (direct LED writes in `tryPlayerMove`, `waitForBoardSetup`) and the dedicated animation FreeRTOS task. Without the mutex, concurrent writes corrupt the strip state. `LedGuard` makes this safe by scoping the lock.
+- **LED mutex exists because of the animation task** — the LED strip is shared between the main loop (direct LED writes in `tryPlayerMove`, `waitForBoardSetup`) and the dedicated animation FreeRTOS task. Without the mutex, concurrent writes corrupt the strip state. `BoardAnimationLifecycle` owns the mutex and `LedGuard` makes direct writes safe by scoping the lock.
 
-- **Animation queue, not direct calls** — animations run on a separate task to keep `update()` non-blocking. If `captureAnimation()` ran inline, the main loop would freeze for ~1s. The queue also provides natural sequencing: multiple animations play in order without explicit coordination.
+- **Animation queue lifecycle is separate from hardware scanning** — animations run on a separate task to keep `update()` non-blocking. `BoardAnimationLifecycle` owns the queue/task/semaphore details so `BoardDriver` can stay focused on sensors, strip writes, settings, and calibration mapping. The queue provides natural sequencing: multiple animations play in order without explicit coordination.
 
 - **Long-running animations use atomic stop flags** — thinking/waiting animations loop indefinitely. A heap-allocated `std::atomic<bool>*` is returned to the caller who controls when it stops. The flag is heap-allocated because both the caller and the animation task need to access it, and either might outlive the other during shutdown. `stopAndWaitForAnimation()` ensures the animation has fully released the LED mutex before the caller continues.
 
 - **`waitForAnimationQueueDrain()` prevents race conditions** — without the drain barrier, queued animations from a previous move can overwrite LED highlights for the current piece-in-hand. The SYNC job ensures all pending work completes before direct LED writes begin.
 
-- **Triple-buffered sensors prevent glitch reads** — `sensorRaw` (latest hardware read) → `sensorState` (debounced, stable) → `sensorPrev` (previous frame snapshot). Change detection compares `sensorState` vs `sensorPrev`. The debounce window (125ms) eliminates false triggers from magnet edge effects when pieces slide between squares.
+- **Driver debounce plus `BoardState` transitions prevent glitch reads** — `sensorRaw` captures the latest hardware read, `sensorState` exposes only debounced stable occupancy, and `BoardState` compares previous/current stable snapshots for `wasLifted()`/`wasPlaced()` queries. The debounce window (125ms) eliminates false triggers from magnet edge effects when pieces slide between squares.
 
-- **Colors have fixed semantics** — the color table in `led_colors.h` is a project-wide contract. Cyan always means "piece origin", red always means "capture/error", etc. This consistency lets players learn the visual language once and apply it everywhere. Never reuse a color for a different meaning.
+- **Colors have fixed semantics** — the color table in `src/board/colors.h` is a project-wide contract. Cyan always means "piece origin", red always means "capture/error", etc. This consistency lets players learn the visual language once and apply it everywhere. Never reuse a color for a different meaning.
+
+- **Guidance and feedback are separate board concerns** — `BoardAssistance` owns optional/physical guidance such as legal-move hints and sensor-blocking prompts, while `BoardFeedback` owns mandatory outcomes and status visuals. This lets assistance levels evolve without disabling core mode feedback or duplicating guidance logic between local and bot modes.
+
+- **Calibration is separate from low-level scanning** — `BoardCalibration` owns the interactive serial workflow and persistence schema, while `BoardDriver` owns the hardware primitives and applies the saved mapping. This keeps first-boot/calibration UX out of the steady-state sensor scan path.
 
 ## Related Instruction Files
 
 | File | Relationship |
 |------|--------------|
-| `game-mode.instructions.md` | Primary consumer of `BoardDriver` — LED feedback and sensor reading |
+| `game-mode.instructions.md` | Primary consumer of the `Board` facade — LED feedback and sensor reading |

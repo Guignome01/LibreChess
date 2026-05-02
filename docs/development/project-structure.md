@@ -28,18 +28,25 @@ A comprehensive map of the codebase, covering firmware, web frontend, build tool
 | File | Purpose |
 |------|---------|
 | `main.cpp` | Entry point: `setup()` and `loop()`. Game mode selection, menu routing, WiFi/resign/board-edit relay, and game lifecycle management. |
-| `board_driver.h/.cpp` | Hardware abstraction: LED strip (NeoPixelBus, I2S DMA), sensor grid (shift register scan + GPIO reads), calibration (NVS-persisted), LED settings (brightness, dimming), and async animation queue (FreeRTOS task + queue). GPIO pin definitions. |
-| `system_utils.h/.cpp` | Arduino/ESP32 utility functions: `colorLed()` (piece char → LED color), `ensureNvsInitialized()` (Preferences guard). Not available in native tests. |
-| `led_colors.h` | `LedRGB` struct and named color constants (Cyan, White, Red, Green, Yellow, Purple, Orange, Blue, etc.) with `scaleColor()` brightness helper. |
+| `board/board.h/.cpp` | Firmware-facing physical-board facade. Composes `BoardDriver`, `BoardFeedback`, `BoardAssistance`, and `BoardState`; exposes sensor polling, LED writes, animations, calibration, and settings to the rest of firmware. |
+| `board/colors.h` | `LedRGB` struct, named color constants (Cyan, White, Red, Green, Yellow, Purple, Orange, Blue, etc.), chess-side color mapping, and `scaleColor()` brightness helper. |
+| `board/state.h/.cpp` | `BoardState`: current/previous physical occupancy snapshots, lifted/placed/changed predicates, changed-square collection, and safe display-coordinate queries. |
+| `board/driver.h/.cpp` | Hardware abstraction: LED strip (NeoPixelBus, I2S DMA), sensor grid (shift register scan + GPIO reads), saved calibration mapping application, LED settings (brightness, dimming), and GPIO pin definitions. |
+| `board/lifecycle.h/.cpp` | Async animation lifecycle: FreeRTOS queue/task, LED mutex, stop flags, completion semaphore, and queue-drain barrier. |
+| `board/assistance.h/.cpp` | Physical chess guidance: board setup prompts, configurable legal-move assistance, castling/remote move completion, and capture placement prompts. Reads `Game` only through public APIs and never mutates chess state. |
+| `board/feedback.h/.cpp` | Visual feedback/status layer: illegal move blink, resign progress, move-result animations, check/game-end effects, thinking/waiting animations, remote game-end display, and error flashes. |
+| `board/calibration.h/.cpp` | Board-internal serial-guided calibration workflow and NVS mapping persistence (`boardCal` namespace). Uses `BoardDriver` raw scan/strip primitives and writes the mapping tables that the driver applies during normal operation. |
+| `board/animations.h/.cpp` | Animation job definitions and visual animation execution through `BoardDriver` drawing primitives. `board/lifecycle.*` owns queueing/concurrency; this module owns animation visuals. |
+| `board/diagnostics.h/.cpp` | Board-owned diagnostic workflows. The Sensor Test mode records an initial occupancy snapshot, tracks newly visited squares through `BoardState` changed-square entries, lights them white, and completes when all 64 are visited. |
+| `system_utils.h/.cpp` | Arduino/ESP32 utility functions such as `ensureNvsInitialized()` (Preferences guard). Not available in native tests. |
 
 ### Game Modes
 
 | File | Purpose |
 |------|---------|
-| `game_mode/game_mode.h/.cpp` | Abstract base class for all game modes. Holds a `Game*` that orchestrates chess state, recording, and observer notification. Implements shared logic: `tryPlayerMove()`, `applyMove()` (delegates to `Game::makeMove()`; the string overload parses coordinate notation), `waitForBoardSetup()`, `tryResumeGame()`, resign gesture handling, and LED feedback helpers. No longer includes `movegen.h` directly — all chess queries go through the game orchestrator. |
-| `game_mode/bot_mode.h/.cpp` | Concrete class for human-vs-engine play (composition pattern). Composes an `EngineProvider*` via strategy injection. Non-blocking `update()` drives an async state machine (`BotState::PLAYER_TURN` / `BotState::ENGINE_THINKING`): player turn → `tryPlayerMove()` → `applyMove()` → `provider_->onPlayerMoveApplied()`; engine turn → `provider_->requestMove()` (spawns FreeRTOS task) → polls `provider_->checkResult()` each tick. Provides thinking animation helpers, remote-move LED guidance (`waitForRemoteMoveCompletion()`), and resign hooks that delegate to the provider. |
+| `game_mode/game_mode.h/.cpp` | Abstract base class for all game modes. Holds a `Game*` that orchestrates chess state, recording, and observer notification. Implements shared logic: `tryPlayerMove()`, `applyMove()` (delegates to `Game::makeMove()`; the string overload parses coordinate notation), `waitForBoardSetup()`, `tryResumeGame()`, and resign gesture handling. Physical guidance is delegated to `BoardAssistance`, outcome/status visuals to `BoardFeedback`; all chess queries go through the game orchestrator. |
+| `game_mode/bot_mode.h/.cpp` | Concrete class for human-vs-engine play (composition pattern). Composes an `EngineProvider*` via strategy injection. Non-blocking `update()` drives an async state machine (`BotState::PLAYER_TURN` / `BotState::ENGINE_THINKING`): player turn → `tryPlayerMove()` → `applyMove()` → `provider_->onPlayerMoveApplied()`; engine turn → `provider_->requestMove()` (spawns FreeRTOS task) → polls `provider_->checkResult()` each tick. Delegates thinking/waiting animations, game-end fireworks, and error flashes to `BoardFeedback`; remote-move physical guidance remains in `BoardAssistance`; resign hooks still notify the provider. |
 | `game_mode/player_mode.h/.cpp` | Human vs Human mode. Minimal subclass of `GameMode` — implements `begin()` (board setup, game recording) and `update()` (sensor polling, move processing). |
-| `sensor_test.h/.cpp` | Standalone sensor diagnostic mode (does not inherit `GameMode`). Tracks visited squares, lights them white, completes when all 64 are visited. |
 
 ### Engine Providers
 
@@ -61,9 +68,9 @@ A comprehensive map of the codebase, covering firmware, web frontend, build tool
 | `wifi_manager_esp32.h/.cpp` | WiFi connection management (state machine with AP/STA modes), async web server (ESPAsyncWebServer), all HTTP API endpoints, mDNS, known-networks registry (NVS), OTA password management, and board state relay to the web UI. |
 | `storage/littrefs.h/.cpp` | Concrete `IGameStorage` backed by LittleFS. The dedicated `storage/` folder leaves room for additional persistence backends without crowding the firmware root. Manages `/games/` directory, binary game files (header + moves + FEN table), storage limits enforcement, and JSON game list API for the web UI. |
 | `serial_logger.h/.cpp` | Concrete `ILogger` using Arduino `Serial`. |
-| `board_menu.h/.cpp` | Reusable board menu primitive. Displays options as colored LEDs, uses two-phase debounce for selection, supports orientation flipping, back buttons, and blink feedback. Also provides `boardConfirm()` dialog. |
-| `menu_navigator.h/.cpp` | Stack-based menu orchestrator (max depth 4). Push/pop navigation, auto back-button handling, parent menu re-display. |
-| `menu_config.h/.cpp` | Menu layout definitions. `MenuId` namespace with ID ranges per level, `constexpr MenuItem[]` arrays for each menu, extern menu/navigator instances, and `initMenus()` two-phase initializer. |
+| `board/menu.h/.cpp` | Reusable board menu primitive. Displays options as colored LEDs, owns its empty-then-occupied selection debounce and orientation transform, supports orientation flipping, back buttons, and blink feedback. Also provides `boardConfirm()` dialog. |
+| `board/navigator.h/.cpp` | Stack-based menu orchestrator (max depth 4). Push/pop navigation, auto back-button handling, parent menu re-display. |
+| `board/config.h/.cpp` | Menu layout definitions. `MenuId` namespace with ID ranges per level, `constexpr MenuItem[]` arrays for each menu, extern menu/navigator instances, and `initMenus()` two-phase initializer. |
 
 ## Web Frontend (`src/web/`)
 
@@ -98,9 +105,9 @@ The ESP32 serves a web interface directly from flash storage. The frontend is bu
 - `src/web/pieces/` — SVG chess piece images (12 files: `wK.svg`, `bQ.svg`, etc.)
 - `src/web/sounds/` — Move sounds (`move.nogz.mp3`, `capture.nogz.mp3`). The `.nogz.` naming convention prevents gzip compression in the build pipeline — these are served as raw binary files.
 
-## Chess Libraries (`lib/`)
+## Libraries (`lib/`)
 
-Two PlatformIO libraries with clean dependency boundaries: `core ← game`. Game never imports engine internals directly. All use `std::string` (not Arduino `String`); firmware bridges with `.c_str()` / `std::string()`. PlatformIO's Library Dependency Finder auto-discovers both for the ESP32 and native test environments.
+Two PlatformIO libraries keep reusable chess logic outside the firmware layer. `lib/core/` and `lib/game/` use the dependency boundary `core ← game`. Game never imports engine internals directly. All use `std::string` (not Arduino `String`) where strings are needed; firmware bridges with `.c_str()` / `std::string()`. PlatformIO's Library Dependency Finder auto-discovers these libraries for the ESP32 and native test environments.
 
 ### Foundation (`lib/core/`)
 
@@ -147,7 +154,7 @@ Game lifecycle, history, recording, and DI interfaces. Depends on `lib/core/`.
 
 ## Unit Tests (`test/`)
 
-Native unit tests using the PlatformIO Unity framework. Two test suites mirror the two-library structure, plus perft, position, benchmark, and statistics suites.
+Native unit tests using the PlatformIO Unity framework. Library suites mirror `lib/core/` and `lib/game/`, plus perft, position, benchmark, and statistics suites.
 
 ```
 test/
@@ -275,9 +282,9 @@ LibreChess has no editable configuration file. All settings are persisted in ESP
 | WiFi networks (up to 3) | NVS `"wifiNets"` | Web UI WiFi Settings |
 | Lichess API token | NVS `"wifiCreds"` | Web UI Lichess Settings |
 | OTA password | NVS `"ota"` (salted SHA-256) | Web UI Security Settings |
-| LED brightness | NVS `"boardSettings"` | Web UI Board Settings |
-| Dark square dimming | NVS `"boardSettings"` | Web UI Board Settings |
-| Calibration data | NVS `"calibration"` | Auto (first boot) or Web UI recalibrate button |
-| GPIO pin assignments | `board_driver.h` `#define`s | Edit source code |
+| LED brightness | NVS `"ledSettings"` | Web UI Board Settings |
+| Dark square dimming | NVS `"ledSettings"` | Web UI Board Settings |
+| Calibration data | NVS `"boardCal"` | Auto (first boot) or Web UI recalibrate button |
+| GPIO pin assignments | `src/board/driver.h` `#define`s | Edit source code |
 | Board, framework, libraries | `platformio.ini` | Edit file |
 | Factory reset | `platformio.ini` build flag | Add `-DFACTORY_RESET` to `build_flags` |

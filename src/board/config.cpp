@@ -1,15 +1,14 @@
-#include "menu_config.h"
+#include "config.h"
 
 BoardMenu gameMenu;
 BoardMenu botDifficultyMenu;
 BoardMenu botColorMenu;
 MenuNavigator navigator;
 
-void initMenus(BoardDriver* bd) {
-    gameMenu.setBoardDriver(bd);
-    botDifficultyMenu.setBoardDriver(bd);
-    botColorMenu.setBoardDriver(bd);
-    navigator.setBoardDriver(bd);
+void initMenus(Board* board) {
+    gameMenu.setBoard(board);
+    botDifficultyMenu.setBoard(board);
+    botColorMenu.setBoard(board);
 
     gameMenu.setItems(gameMenuItems);
     botDifficultyMenu.setItems(botDifficultyItems);

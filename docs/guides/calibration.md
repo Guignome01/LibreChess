@@ -1,6 +1,6 @@
 # Calibration
 
-The calibration process maps physical hardware positions (sensor pins, shift register outputs, LED pixel indices) to logical board coordinates. It runs on first boot or when triggered manually.
+The `BoardCalibration` process maps physical hardware positions (sensor pins, shift register outputs, LED pixel indices) to logical board coordinates. It runs on first boot or when triggered manually.
 
 ## Purpose
 
@@ -81,7 +81,7 @@ The calibration produces three mappings stored in NVS:
 - **Row/column mapping tables** — physical pin/output → logical row/column index
 - **LED index map** — pixel index → logical (row, col) coordinate
 
-This data is used by `BoardDriver` for every sensor read and LED write operation throughout normal operation.
+`BoardCalibration` owns the workflow and writes the mapping to NVS. `BoardDriver` loads and applies that mapping for every sensor read and LED write operation throughout normal operation.
 
 ## Troubleshooting
 

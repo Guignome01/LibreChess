@@ -1,9 +1,12 @@
 #ifndef BOARD_MENU_H
 #define BOARD_MENU_H
 
-#include "board_driver.h"
-#include "led_colors.h"
+#include "colors.h"
+#include "state.h"
+
 #include <stdint.h>
+
+class Board;
 
 // ---------------------------
 // Board Menu System
@@ -30,16 +33,16 @@ class BoardMenu {
   static constexpr int RESULT_BACK = -2;
   static constexpr int MAX_ITEMS = 16;
 
-  BoardMenu() : bd_(nullptr), items_(nullptr), itemCount_(0),
-    flipped_(false), hasBack_(false), backRow_(0), backCol_(0), states_{} {}
-  explicit BoardMenu(BoardDriver* bd);
+  BoardMenu() : board_(nullptr), items_(nullptr), itemCount_(0),
+    flipped_(false), hasBack_(false), backRow_(0), backCol_(0) {}
+  explicit BoardMenu(Board* board);
 
   // Delete copy — menus should not be duplicated
   BoardMenu(const BoardMenu&) = delete;
   BoardMenu& operator=(const BoardMenu&) = delete;
 
-  /// Set or change the BoardDriver pointer (for two-phase init).
-  void setBoardDriver(BoardDriver* bd) { bd_ = bd; }
+  /// Set or change the Board pointer (for two-phase init).
+  void setBoard(Board* board) { board_ = board; }
 
   /// Configure menu options. Items pointer must outlive the menu
   /// (use constexpr file-scoped arrays). Does NOT copy the array.
@@ -68,7 +71,7 @@ class BoardMenu {
   /// Reset all debounce counters for a fresh selection cycle.
   void reset();
 
-  /// Non-blocking poll. Call after boardDriver->readSensors().
+  /// Non-blocking poll. Call after board->readSensors().
   /// Returns:
   ///   - MenuItem::id on confirmed selection (with blink feedback)
   ///   - RESULT_BACK if back button selected
@@ -81,13 +84,28 @@ class BoardMenu {
   int waitForSelection();
 
  private:
-  struct SelectorState {
-    uint8_t emptyCount;
-    uint8_t occupiedCount;
-    bool readyForSelection;
+  static constexpr uint8_t DEFAULT_DEBOUNCE_CYCLES = 5;
+
+  /// Debounces one menu-selection square through empty-then-occupied phases.
+  class SelectionDebouncer {
+   public:
+    explicit SelectionDebouncer(uint8_t stableCycles = DEFAULT_DEBOUNCE_CYCLES);
+
+    /// Reset counters and require a fresh empty phase before selection.
+    void reset();
+
+    /// Update with current occupancy. Returns true exactly once per selection.
+    bool update(bool occupied);
+
+   private:
+    uint8_t stableCycles_;
+    uint8_t emptyCount_;
+    uint8_t occupiedCount_;
+    bool readyForSelection_;
+    bool selectionLatched_;
   };
 
-  BoardDriver* bd_;
+  Board* board_;
   const MenuItem* items_;
   uint8_t itemCount_;
   bool flipped_;
@@ -96,24 +114,19 @@ class BoardMenu {
   int8_t backCol_;
 
   // +1 slot for the back button
-  SelectorState states_[MAX_ITEMS + 1];
+  SelectionDebouncer states_[MAX_ITEMS + 1];
 
-  int8_t transformRow(int8_t row) const;
-  int8_t transformCol(int8_t col) const;
-
-  /// Apply two-phase debounce to a single square.
-  /// Returns true when the occupied-after-empty transition is confirmed.
-  bool updateDebounce(SelectorState& state, bool occupied);
+  LibreChess::board::BoardSquare transformSquare(int8_t row, int8_t col) const;
 
   /// Check one square for a confirmed selection. Handles debounce,
   /// blink feedback, and waiting for piece removal.
   /// Returns the given id on selection, or RESULT_NONE.
-  int trySelect(SelectorState& state, int8_t row, int8_t col, LedRGB color, int id);
+  int trySelect(SelectionDebouncer& state, int8_t row, int8_t col, LedRGB color, int id);
 };
 
 /// Blocking yes/no confirmation dialog.
 /// Shows two center squares (green = yes, red = no), waits for selection.
 /// Returns true for yes, false for no.
-bool boardConfirm(BoardDriver* bd, bool flipped = false);
+bool boardConfirm(Board* board, bool flipped = false);
 
 #endif // BOARD_MENU_H

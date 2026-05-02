@@ -13,7 +13,7 @@ Formatting is enforced via `.clang-format` at the project root (Google style bas
 | Classes | PascalCase | `BoardDriver`, `Position`, `WiFiManagerESP32` |
 | Methods & variables | camelCase | `readSensors()`, `sideToMove`, `isGameOver` |
 | Constants & macros | UPPER_SNAKE_CASE | `LED_COUNT`, `SENSOR_READ_DELAY_MS`, `DEBOUNCE_MS` |
-| File names | snake_case | `board_driver.cpp`, `game.h`, `storage/littrefs.cpp` |
+| File names | snake_case | `driver.cpp`, `game.h`, `storage/littrefs.cpp` |
 | Enum values | UPPER_SNAKE_CASE | `GameResult::CHECKMATE`, `Axis::ROWS` |
 
 ## Architecture Principles
@@ -22,7 +22,7 @@ Formatting is enforced via `.clang-format` at the project root (Google style bas
 
 Each class owns a single responsibility and never crosses into another's domain:
 
-- `BoardDriver` handles all hardware interaction (LEDs, sensors, calibration). No chess logic.
+- `Board` is the firmware-facing physical-board facade; `BoardDriver` handles low-level hardware interaction (LEDs, sensors, settings); `BoardAnimationLifecycle` owns animation queue concurrency; `BoardCalibration` owns the calibration workflow; `BoardAssistance` owns physical chess guidance. No board module mutates chess state.
 - `movegen`/`rules` namespaces implement chess rules and move generation. No hardware access, no network calls.
 - `WiFiManagerESP32` manages WiFi, the web server, and API endpoints. Doesn't touch the board hardware directly.
 - `History` + concrete storage backends such as `LittleFSStorage` own game persistence. Don't know about sensors or LEDs.
@@ -41,7 +41,7 @@ New features should build on existing infrastructure. For example, `LichessProvi
 
 ## LED Access Rules
 
-- Multi-step LED updates require a scoped `BoardDriver::LedGuard` (RAII mutex).
+- Multi-step LED updates outside board internals require a scoped `Board::LedGuard` (RAII mutex facade).
 - Single animations (`blinkSquare`, `captureAnimation`) are queued and acquire the mutex automatically — no guard needed.
 - Long-running animations return `std::atomic<bool>*` — cancel via `stopAndWaitForAnimation(flag)`.
 - Call `waitForAnimationQueueDrain()` as a barrier before writing LEDs directly.

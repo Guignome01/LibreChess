@@ -26,6 +26,15 @@ Game (lib/game/):
    └─ uses IGameObserver (notification)
 
 Firmware (src/):
+  Board facade (src/board/board.* — firmware-facing composition root)
+  Board primitives (src/board/colors.h, state.*)
+  BoardDriver (src/board/driver.* — low-level hardware)
+  BoardAnimationLifecycle (src/board/lifecycle.* — animation queue/concurrency)
+  BoardAssistance (src/board/assistance.* — physical chess guidance)
+  BoardFeedback (src/board/feedback.* — visual feedback/status)
+  BoardCalibration (src/board/calibration.* — serial-guided mapping + NVS persistence)
+  BoardAnimations (src/board/animations.* — animation job definitions + visual execution)
+  BoardDiagnostics (src/board/diagnostics.* — physical sensor coverage diagnostics)
   GameMode (abstract base, src/game_mode/)
    ├─ PlayerMode (human vs human)
    └─ BotMode (concrete, composes EngineProvider*)
@@ -34,15 +43,13 @@ Firmware (src/):
    ├─ StockfishProvider (src/engine/stockfish/)
    ├─ LichessProvider (src/engine/lichess/)
    └─ LibreChessProvider (src/engine/librechess/)
-
-  SensorTest (standalone, does not inherit GameMode)
 ```
 
-`GameMode` defines the shared game infrastructure and common logic: `tryPlayerMove()`, `applyMove()` (delegates to `Game::makeMove()`; the string overload parses coordinate notation via `Game::parseCoordinate()`), `waitForBoardSetup()`, `tryResumeGame()`, resign gesture handling, and LED feedback helpers. Each `GameMode` instance holds a `Game*` (`chess_`) which orchestrates board state, recording, and observer notification. All chess mutations flow through `Game`; the firmware never modifies the board or turn directly. Each subclass overrides `begin()` and `update()` to implement mode-specific behavior.
+`GameMode` defines the shared game infrastructure and common logic: `tryPlayerMove()`, `applyMove()` (delegates to `Game::makeMove()`; the string overload parses coordinate notation via `Game::parseCoordinate()`), `waitForBoardSetup()`, `tryResumeGame()`, and resign gesture handling. Physical guidance is delegated through `BoardAssistance`; outcome/status LED feedback is delegated through `BoardFeedback`. Each `GameMode` instance holds a `Game*` (`chess_`) which orchestrates board state, recording, and observer notification. All chess mutations flow through `Game`; the firmware never modifies the board or turn directly. Each subclass overrides `begin()` and `update()` to implement mode-specific behavior.
 
-`BotMode` is a concrete class that composes an `EngineProvider*` (strategy pattern). Its `update()` implements a non-blocking state machine (`BotState::PLAYER_TURN` / `BotState::ENGINE_THINKING`): on the player's turn it calls `tryPlayerMove()` → `applyMove()` → `provider_->onPlayerMoveApplied()`; when the turn flips to the engine it calls `provider_->requestMove()` (spawns a FreeRTOS task) and transitions to `ENGINE_THINKING`. In the thinking state, it polls `provider_->checkResult()` each tick — sensors, resign gestures, and web UI remain responsive while the engine computes. `BotMode` also provides shared infrastructure: thinking animation management (`startThinking()`/`stopThinking()`), remote move guidance (`waitForRemoteMoveCompletion()` — LED cues + sensor blocking), engine move application (`applyEngineMove()`), remote game-end handling (`handleRemoteGameEnd()`), error abort (`abortWithError()`), and resign hooks (`onBeforeResignConfirm()` cancels the engine request, `onResignCancelled()` re-requests, `onResignConfirmed()` delegates to the provider).
+`BotMode` is a concrete class that composes an `EngineProvider*` (strategy pattern). Its `update()` implements a non-blocking state machine (`BotState::PLAYER_TURN` / `ENGINE_THINKING`): on the player's turn it calls `tryPlayerMove()` → `applyMove()` → `provider_->onPlayerMoveApplied()`; when the turn flips to the engine it calls `provider_->requestMove()` (spawns a FreeRTOS task) and transitions to `ENGINE_THINKING`. In the thinking state, it polls `provider_->checkResult()` each tick — sensors, resign gestures, and web UI remain responsive while the engine computes. `BotMode` also provides shared infrastructure: thinking/waiting animation start/stop via `BoardFeedback`, remote move guidance (`waitForRemoteMoveCompletion()` — LED cues + sensor blocking delegated to `BoardAssistance`), engine move application (`applyEngineMove()`), remote game-end handling (`handleRemoteGameEnd()`), error abort (`abortWithError()`), and resign hooks (`onBeforeResignConfirm()` cancels the engine request, `onResignCancelled()` re-requests, `onResignConfirmed()` delegates to the provider).
 
-`EngineProvider` is the base class in `src/engine/engine_provider.h`. It defines the contract for all chess engines: `initialize()` (blocking setup, returns `EngineInitResult` with player color, FEN, mode ID), `requestMove()` / `checkResult()` (async move computation via FreeRTOS tasks), plus optional hooks `onPlayerMoveApplied()` (Lichess sends the move to the server), `onResignConfirmed()` (Lichess resigns on the server), and `getEvaluation()` (Stockfish returns engine eval). It also owns the shared FreeRTOS task lifecycle: `activeTask_` pointer (a `BaseTaskContext*` with `std::atomic<bool>` cancel/ready flags and an `EngineResult`), `spawnTask()` (creates + launches a FreeRTOS task), `pollResult()` / `peekResult()` (non-destructive ready check), `finishTask()` (deletes the context), and `cancelRequest()`. Providers never touch `Game`, `BoardDriver`, or any hardware — they only do HTTP and return data.
+`EngineProvider` is the base class in `src/engine/engine_provider.h`. It defines the contract for all chess engines: `initialize()` (blocking setup, returns `EngineInitResult` with player color, FEN, mode ID), `requestMove()` / `checkResult()` (async move computation via FreeRTOS tasks), plus optional hooks `onPlayerMoveApplied()` (Lichess sends the move to the server), `onResignConfirmed()` (Lichess resigns on the server), and `getEvaluation()` (Stockfish returns engine eval). It also owns the shared FreeRTOS task lifecycle: `activeTask_` pointer (a `BaseTaskContext*` with `std::atomic<bool>` cancel/ready flags and an `EngineResult`), `spawnTask()` (creates + launches a FreeRTOS task), `pollResult()` / `peekResult()` (non-destructive ready check), `finishTask()` (deletes the context), and `cancelRequest()`. Providers never touch the `Board` facade, `BoardDriver`, or any hardware — they only compute/communicate and return data.
 
 `StockfishProvider` extends `EngineProvider` by spawning a one-shot FreeRTOS task per move that calls the Stockfish API. The task performs the HTTP GET with retry logic, parses the JSON response, and stores the result in its `TaskContext` (extends `BaseTaskContext` with FEN, depth, and evaluation fields).
 
@@ -50,20 +57,20 @@ Firmware (src/):
 
 `LibreChessProvider` extends `EngineProvider`. It runs the on-board chess engine entirely in-process via `Game::calculateMove()` — no network, no string serialization required. The provider receives a `Game*` at construction (non-owning). `initialize()` calls `game->initSearch(ttEntries)` with a heap-sized TT (capped at 64 KiB) and `game->setTimeFunc(millis)`, allocating an `Engine` instance inside Game that persists across moves — no per-move heap fragmentation. Search allocation is non-throwing; Game exposes initialization/hash diagnostics and LibreChessProvider logs degraded heap-pressure cases while preserving fallback-move behavior. Each `requestMove()` spawns a FreeRTOS task (64 KiB stack) that wires `ctx->cancel` to `game->setExternalStop()` for cooperative cancellation, builds `SearchLimits` with depth, and calls `game->calculateMove(limits)`. `Game::calculateMove()` snapshots the current `Position` and searches the copy, preserving the live board while search make/unmake recursion runs. The Game already holds the correct position because BotMode makes all moves through Game. The `SearchResult` (bestMove, score, depth, nodes) is converted to `EngineResult` using `notation::toCoordinate()`. `initialize()` always succeeds, reports `mode = GameModeId::BOT`, `canResume = true`.
 
-`SensorTest` follows the same `begin()`/`update()`/`isComplete()` lifecycle but is not a `GameMode` subclass — it doesn't need chess logic, FEN state, or move history.
+`BoardDiagnostics` follows the same `begin()`/`update()`/`isComplete()` lifecycle as the former sensor-test mode but lives inside the board firmware module. It does not inherit `GameMode` because it needs only physical sensor coverage and LED feedback, not chess logic, FEN state, or move history.
 
 ### Dependency Injection
 
 Components are wired through pointer injection at construction time. No global state or singletons:
 
 ```cpp
-BoardDriver boardDriver;
+Board physicalBoard;
 SerialLogger logger;
 LittleFSStorage storage(&logger);
-WiFiManagerESP32 wifiManager(&boardDriver, &storage);
+WiFiManagerESP32 wifiManager(&physicalBoard, &storage);
 Game chess(&storage, &wifiManager, &logger);
 auto* provider = new StockfishProvider(stockfishSettings, playerColor);
-BotMode botGame(&boardDriver, &wifiManager, &chess, provider);
+BotMode botGame(&physicalBoard, &wifiManager, &chess, provider);
 ```
 
 `Game` owns the `Position` internally — there is no shared chess state. All game mode classes interact with chess state through the `Game` orchestrator. `BotMode` takes ownership of the `EngineProvider*` (deletes it in its destructor). `History` handles both in-memory tracking and persistent recording — when constructed without an `IGameStorage*`, recording is silently skipped (used by Lichess games since they are recorded on the server).
@@ -72,19 +79,39 @@ BotMode botGame(&boardDriver, &wifiManager, &chess, provider);
 
 Core internals use **LERF (Little-Endian Rank-File)** square indexing natively: a1=0, b1=1, ..., h8=63. Primary conversions: `rankOf(sq) = sq / 8`, `fileOf(sq) = sq % 8`, `makeSquare(rank, file) = rank * 8 + file`. The game layer and firmware use **row/col** display coordinates (row 0 = rank 8, col 0 = file a). Bridge functions (`rowColToSquare`, `squareToRow`, `squareToCol`, `rankChar`, `squareName`) live in `game/types.h`. Board mailbox is a flat `[64]` LERF-indexed array; `INITIAL_BOARD[64]` holds the starting position.
 
-The LED strip is wired in a serpentine (zigzag) pattern across the physical board, but the `BoardDriver` calibration system maps physical LED indices to logical `[row][col]` coordinates. The calibration mapping is stored in NVS and applied transparently — all code above `BoardDriver` works exclusively in logical coordinates.
+The LED strip is wired in a serpentine (zigzag) pattern across the physical board, but `BoardCalibration` maps physical LED indices to logical `[row][col]` coordinates and persists that mapping in NVS. `BoardDriver` applies the saved mapping transparently during normal sensor reads and LED writes, so all code above the board subsystem works exclusively in logical coordinates.
 
 ## Component Details
 
+### Board Primitives
+
+`src/board/colors.h` and `src/board/state.*` are firmware-local physical-board primitives. They model semantic LED colors and logical display row/col occupancy only: no GPIO scanning, FreeRTOS tasks, NeoPixel driver calls, NVS persistence, FEN, legal moves, or game lifecycle state live there.
+
+`BoardState` is physical occupancy state, not chess position state. It owns current and previous 8x8 occupancy snapshots, consumes already-debounced sensor snapshots, and derives transitions such as `wasLifted(row, col)`, `wasPlaced(row, col)`, `changed(row, col)`, and `changedSquare(index)`. Raw debounce still belongs to `BoardDriver`; `BoardState` only compares stable snapshots.
+
+`src/board/colors.h` provides the semantic `LedRGB` vocabulary and chess-side color mapping used by board assistance, feedback, menus, and animations. Menu orientation and empty-then-occupied selection debounce live inside `src/board/menu.*` because they are only used by the board menu primitive.
+
+### Board Facade
+
+`src/board/board.*` is the firmware-facing physical-board facade. It composes the low-level `BoardDriver`, `BoardFeedback`, `BoardAssistance`, and `LibreChess::board::BoardState`. Main-loop callers such as `GameMode`, `WiFiManagerESP32`, menus, and `BoardDiagnostics` depend on `Board*`; `BoardDriver*` is kept inside board-internal code.
+
+`Board::readSensors()` polls the driver and updates the facade's physical occupancy snapshot. Public callers query physical state through `BoardState`-backed facade methods such as `occupied()`, `wasLifted()`, `wasPlaced()`, `changedCount()`, and `changedSquare()`. `syncOccupancyBaseline()` resets transition detection after a loop has consumed the current physical state.
+
+`src/board/diagnostics.*` owns the user-facing Sensor Test workflow. It polls through `Board::readSensors()`, records an initial occupancy snapshot, then consumes `BoardState` changed-square entries to mark newly visited squares. Visited squares are lit white under `Board::LedGuard`, and the workflow completes with the standard firework animation when all 64 squares have been detected.
+
+`src/board/assistance.*` owns physical chess guidance: setup prompts, legal-move assistance levels, castling prompts, remote-move completion instructions, and capture placement prompts. `src/board/feedback.*` owns always-on visual outcomes and status: resign progress, move confirmation, check/game-end effects, thinking/waiting animations, remote game-end display, and error flashes. Both may read `Game` through public APIs for display decisions, but all chess mutation remains in `GameMode`/`Game`.
+
 ### BoardDriver
 
-Hardware abstraction layer. Owns three subsystems:
+Hardware abstraction layer in `src/board/driver.*`. Owns low-level hardware: sensor scanning/debounce, LED strip writes, settings, and saved calibration mapping. Animation job definitions and visual animation bodies live in `src/board/animations.*`; queue/task/mutex/stop-flag lifecycle lives in `src/board/lifecycle.*`. Animation visuals draw through `BoardDriver` primitives while the lifecycle owns queueing and LED mutexing.
+
+Owns three subsystems:
 
 **LED strip** — a 64-LED WS2812B strip driven by `NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp32I2s0800KbpsMethod>`. The I2S peripheral with DMA offloads timing-critical signal generation to hardware, avoiding conflicts with WiFi interrupts and keeping the main loop responsive. The strip is connected to GPIO 32 (`LED_PIN`). Global brightness is adjustable (0–255, default 255), and dark squares are automatically dimmed by a configurable multiplier (default 70%, stored in NVS as `dimMultiplier`). The `currentColors[8][8]` array tracks the current color of every square so dim multiplier changes can be applied retroactively.
 
-**Sensor grid** — 64 A3144 hall-effect sensors arranged in an 8×8 matrix, read through column-scanning multiplexing. A 74HC595 shift register activates one column at a time (via transistor switches), and 8 row GPIOs are read simultaneously. This uses only 11 GPIO pins (3 shift register control + 8 row inputs) to scan all 64 sensors. Sensor state is triple-buffered: `sensorRaw[8][8]` (latest physical read), `sensorState[8][8]` (debounced current state), and `sensorPrev[8][8]` (snapshot for change detection). The `lastEnabledCol` field enables efficient sequential column shifting — instead of clocking through all 8 bits each time, the driver detects sequential column advances and shifts by one bit.
+**Sensor grid** — 64 A3144 hall-effect sensors arranged in an 8×8 matrix, read through column-scanning multiplexing. A 74HC595 shift register activates one column at a time (via transistor switches), and 8 row GPIOs are read simultaneously. This uses only 11 GPIO pins (3 shift register control + 8 row inputs) to scan all 64 sensors. The driver owns raw/debounced current state (`sensorRaw[8][8]` → `sensorState[8][8]`); the facade's `BoardState` owns previous/current physical snapshots for change detection. The `lastEnabledCol` field enables efficient sequential column shifting — instead of clocking through all 8 bits each time, the driver detects sequential column advances and shifts by one bit.
 
-GPIO pin definitions are `#define`d at the top of `board_driver.h`:
+GPIO pin definitions are `#define`d at the top of `src/board/driver.h`:
 - Shift register: `SR_CLK_PIN` (14), `SR_LATCH_PIN` (26), `SR_SER_DATA_PIN` (33)
 - Row inputs: `ROW_PIN_0` through `ROW_PIN_7` (GPIOs 4, 16, 17, 18, 19, 21, 22, 23)
 - LED data: `LED_PIN` (32)
@@ -92,9 +119,9 @@ GPIO pin definitions are `#define`d at the top of `board_driver.h`:
 
 The physical order of pin connections **does not matter** — the calibration process maps physical pins to logical board coordinates.
 
-**Calibration** — an interactive serial-guided process that runs on first boot (or when triggered via the web UI). It maps physical sensor/LED positions to logical `[row][col]` coordinates by asking the user to place pieces in specific patterns. The resulting mapping tables (`toLogicalRow[]`, `toLogicalCol[]`, `ledIndexMap[8][8]`, `swapAxes`) are persisted in NVS namespace `"calibration"`. The `swapAxes` flag handles boards where the shift register and row pins are wired to the opposite physical axis. Until calibration completes, the board repeats the calibration prompt on every boot (with a `skip` option that defers but doesn't persist).
+**Calibration** — `BoardCalibration` runs the interactive serial-guided process on first boot (or when triggered via the web UI). It maps physical sensor/LED positions to logical `[row][col]` coordinates by asking the user to place pieces in specific patterns. The resulting mapping tables (`toLogicalRow[]`, `toLogicalCol[]`, `ledIndexMap[8][8]`, `swapAxes`) are persisted in NVS namespace `"boardCal"`. The `swapAxes` flag handles boards where the shift register and row pins are wired to the opposite physical axis. Until calibration completes, the board repeats the calibration prompt on every boot (with a `skip` option that defers but doesn't persist). `BoardDriver` keeps the raw scan and strip primitives; `BoardCalibration` owns the workflow and persistence schema.
 
-**Sensor polling parameters**: `SENSOR_READ_DELAY_MS` = 40ms (polling interval), `DEBOUNCE_MS` = 125ms (state change debounce window). A piece must be present (or absent) for the full debounce duration before the change is registered, preventing false triggers from sliding pieces or magnetic interference. Always call `boardDriver.readSensors()` before reading state — the state arrays are only updated on explicit read calls.
+**Sensor polling parameters**: `SENSOR_READ_DELAY_MS` = 40ms (polling interval), `DEBOUNCE_MS` = 125ms (state change debounce window). A piece must be present (or absent) for the full debounce duration before the change is registered, preventing false triggers from sliding pieces or magnetic interference. External callers use `Board::readSensors()` before reading state; the facade polls the driver and refreshes its physical `BoardState` snapshot.
 
 ### movegen
 
@@ -168,7 +195,7 @@ Notation convenience methods: `makeMove(const std::string& move)` parses a coord
 
 `utils` (in `lib/core/`, `utils.h`, header-only) is a namespace providing stateless board-level helper functions: LERF-native coordinate helpers (`squareName(Square)`, `fileChar`, `rankCharFromRank`, `fileIndex`, `rankIndexFromChar`), validation (`isValidPromotionChar`), castling rights string formatting/parsing (`castlingRightsToString`/`castlingRightsFromString`), `hasCastlingRight()` via `BIT[2][2]` lookup, `castlingCharToBit()`, `updateCastlingRights()` (pure lookup-table function returning updated castling rights bitmask), `resolveKingSquare()` (inline king-square finder used by movegen + search). Display-coordinate helpers (`rankChar(row)`, `squareName(row,col)`) live in `game/types.h`. `gameResultName()` lives in `types.h` next to `GameResult`. `checkEnPassant(mailbox, from, to)` and `checkCastling(mailbox, from, to)` are Square-based free functions for EP/castling detection from a mailbox + square pair — shared by both `Position` member methods (row/col API) and `movegen` (Square API). `boardToText` is a `Position` member method. `EnPassantInfo` and `CastlingInfo` structs live in `types.h`. `fen` (in `lib/core/`, `fen.h/cpp`) centralizes all FEN string handling: `boardToFEN()` (mailbox → FEN string), `fenToBoard()` (FEN string → `BitboardSet` + `mailbox` + state), and `validateFEN()` (format validation). FEN validation also enforces storage-compatible clock ranges: halfmove `0..100` and fullmove `1..65535`, preventing integer wrap in `PositionState`. `notation` (in `lib/core/`, `notation.h/cpp`) provides Square-native move notation conversion: coordinate notation (`"e2e4"`), SAN (`"Nf3"`), and LAN (`"Ng1-f3"`) output and parsing. Parse functions output `Square` (LERF) directly; format functions take `Square`. All functions are pure — `const BitboardSet&` and `const Piece mailbox[]` are passed in as parameters. Output functions omit check/checkmate suffixes; the caller appends them. `Game` provides row/col wrappers (`toCoordinate()`, `parseCoordinate()`) for firmware callers that work in display coordinates. All functions use `std::string` (not Arduino `String`). Internal APIs (`updateBoardState`, `addFen`, `setBoardStateFromFEN`) accept `std::string` directly; Arduino `String` conversion happens only at the hardware/network boundary (e.g., HTTP responses, LittleFS reads).
 
-`SystemUtils` (in `src/`) contains the Arduino/ESP32-dependent functions that were separated from the core library: `colorLed()` (piece char → LED color) and `ensureNvsInitialized()` (Arduino Preferences guard). Board debug output uses `Position::boardToText()`. These are not available in native tests.
+`SystemUtils` (in `src/`) contains Arduino/ESP32-dependent utility functions shared by firmware modules, currently `ensureNvsInitialized()` for guarding Arduino `Preferences` use. Player-color LED mapping lives in `LedColors` inside the board subsystem. Board debug output uses `Position::boardToText()`. These helpers are not available in native tests.
 
 ### WiFiManagerESP32
 
@@ -228,9 +255,9 @@ The `GameHeader` struct (exactly 16 bytes, `#pragma pack(push, 1)`) contains:
 
 ### Game Mode Interaction with Core
 
-The `GameMode` base class coordinates between `BoardDriver` (hardware) and `Game` (chess state + recording + notification):
+The `GameMode` base class coordinates between `Board` (physical board facade) and `Game` (chess state + recording + notification):
 
-1. `tryPlayerMove()` — polls sensors for a piece lift, shows valid moves via `chess_->getPossibleMoves(row, col, ...)` (which delegates to `movegen::getPossibleMoves()`), waits for placement, validates the move, then calls `applyMove()`.
+1. `tryPlayerMove()` — consumes `BoardState` changed-square entries for piece lift, placement, and capture-removal detection, shows valid moves via `chess_->getPossibleMoves(row, col, ...)` (which delegates to `movegen::getPossibleMoves()`), validates the move, then calls `applyMove()`.
 2. `applyMove()` — calls `chess_->makeMove()` which atomically updates the board, records the move in history, persists via History's recording, and notifies the observer. Returns a `MoveResult` struct with all move metadata. The firmware then uses the `MoveResult` to drive LED feedback, sounds, remote-move guidance, and game-end animations.
 3. Turn advancement, castling rights, and game-end detection are all handled internally by `Position::makeMove()` — the firmware never modifies the board or turn directly.
 
@@ -242,9 +269,9 @@ The `GameMode` base class coordinates between `BoardDriver` (hardware) and `Game
 2. (Optional) Factory reset if `-DFACTORY_RESET` build flag is set
 3. `LittleFS.begin()` — mount filesystem
 4. `storage.initialize()` — create `/games/` directory if needed
-5. `boardDriver.begin()` — initialize LED strip, GPIO pins, calibration (may block for interactive serial calibration on first boot), and start the animation FreeRTOS task
+5. `physicalBoard.begin()` — initialize LED strip, GPIO pins, calibration (may block for interactive serial calibration on first boot), start the animation FreeRTOS task, and sync the physical occupancy baseline
 6. `wifiManager.begin()` — start AP, load saved networks, begin STA connection attempts, start web server, configure mDNS
-7. `initMenus(&boardDriver)` — two-phase menu initialization (set `BoardDriver*` on all menus, configure items and back buttons)
+7. `initMenus(&physicalBoard)` — two-phase menu initialization (set `Board*` on all menus, configure items and back buttons)
 8. `configTime(0, 0, "pool.ntp.org", "time.nist.gov")` — non-blocking NTP sync
 9. `checkForResumableGame()` — if a live game exists on flash, show a confirm dialog and optionally resume
 10. If not resuming, `enterGameSelection()` — push the root menu onto the navigator stack
@@ -266,7 +293,7 @@ Every iteration of `loop()`:
 `initializeSelectedMode()` performs cleanup and setup:
 
 1. If not resuming, discard any leftover live game file
-2. `delete` the previous `activeGame` and `sensorTest` objects
+2. `delete` the previous `activeGame` and `boardDiagnostics` objects
 3. Create the new game object via `new` (the only heap allocation for game modes)
 4. Call `begin()` — which typically calls `waitForBoardSetup()` to wait for correct piece placement, then `chess_->startNewGame(playerColor, metaBytes(meta))` to begin recording
 
@@ -276,7 +303,7 @@ For game resume: `begin()` detects the `resumingGame` flag, skips piece setup, c
 
 The `MenuNavigator` manages a stack of `BoardMenu` instances (max depth 4):
 
-- **Game selection** (root) → 4 center squares: Blue (ChessMoves), Green (Bot), Yellow (Lichess), Red (SensorTest)
+- **Game selection** (root) → 4 center squares: Blue (ChessMoves), Green (Bot), Yellow (Lichess), Red (Sensor Test via `BoardDiagnostics`)
 - **Bot difficulty** (pushed on Bot selection) → 8 squares across row 3, colors green→blue, levels 1–8 (engine resolves level → depth)
 - **Bot color** (pushed on difficulty selection) → 3 squares: White, DimWhite (play as Black), Yellow (random)
 
@@ -332,29 +359,29 @@ Move history navigation is server-driven: the web UI sends navigation commands v
 
 ### Animation Queue
 
-Animations run on a dedicated FreeRTOS task (`animationWorkerTask`) with its own queue (`animationQueue`, type `QueueHandle_t`). The task runs in an infinite loop: dequeue an `AnimationJob`, acquire the LED mutex, execute the animation, release the mutex, and signal the done semaphore if applicable.
+Animations run on a dedicated FreeRTOS task owned by `BoardAnimationLifecycle` with its own queue (`QueueHandle_t`). The task runs in an infinite loop: dequeue an `AnimationJob`, acquire the LED mutex, execute the animation, release the mutex, and signal the done semaphore if applicable.
 
-`AnimationJob` is a struct with a `type` field (`AnimationType` enum: `CAPTURE`, `PROMOTION`, `BLINK`, `WAITING`, `THINKING`, `FIREWORK`, `FLASH`, `SYNC`) and a `params` union containing type-specific data. The `SYNC` type is a no-op barrier — `waitForAnimationQueueDrain()` enqueues a SYNC job and blocks on the `animationDoneSemaphore` until the worker reaches it.
+`AnimationJob` is a struct with a `type` field (`AnimationType` enum: `CAPTURE`, `PROMOTION`, `BLINK`, `WAITING`, `THINKING`, `FIREWORK`, `FLASH`, `SYNC`) and a `params` union containing type-specific data. The `SYNC` type is a no-op barrier: `waitForAnimationQueueDrain()` enqueues a SYNC job and blocks on the lifecycle completion semaphore until the worker reaches it.
 
 **Short animations** (capture, promotion, blink, firework, flash) — fire-and-forget. The caller enqueues the job and returns immediately. The animation task dequeues and executes it.
 
 **Long-running animations** (thinking, waiting) — return an `std::atomic<bool>*` stop flag (heap-allocated). The animation task checks the flag on each frame. The caller owns the flag and must use `stopAndWaitForAnimation(flag)` to:
 1. Set the flag to `true`
-2. Block on `animationDoneSemaphore` until the worker finishes the current frame and releases the LED mutex
+2. Block on the lifecycle completion semaphore until the worker finishes the current frame and releases the LED mutex
 3. `delete` the flag and null the pointer
 
 Never set the flag directly or `delete` it without waiting — the animation task may still be mid-frame with the LED mutex held.
 
 ### LedGuard (RAII Mutex)
 
-The LED strip is a shared resource between the main loop and the animation task, guarded by `ledMutex` (FreeRTOS semaphore). `BoardDriver::LedGuard` is an RAII wrapper:
+The LED strip is a shared resource between the main loop and the animation task, guarded by `ledMutex` (FreeRTOS semaphore). External callers use the facade-level `Board::LedGuard` RAII wrapper:
 
 ```cpp
 {
-    BoardDriver::LedGuard guard(boardDriver);
-    boardDriver.clearAllLEDs();
-    boardDriver.setSquareLED(row, col, LedColors::Cyan);
-    boardDriver.showLEDs();
+    Board::LedGuard guard(board);
+    board->clearAllLEDs();
+    board->setSquareLED(row, col, LedColors::Cyan);
+    board->showLEDs();
 }
 ```
 
@@ -364,7 +391,7 @@ Single animation calls (`blinkSquare`, `captureAnimation`, etc.) are queued and 
 
 ### Color Semantics
 
-Colors in the `LedColors` namespace (`led_colors.h`) have fixed meanings:
+Colors in the `LedColors` namespace (`src/board/colors.h`) have fixed meanings:
 
 | Color | RGB | Meaning |
 |-------|-----|---------|
@@ -400,9 +427,9 @@ Colors in the `LedColors` namespace (`led_colors.h`) have fixed meanings:
 
 ### BoardMenu
 
-A reusable menu primitive for the 8×8 LED grid. State is stack-allocated — no heap usage.
+A reusable menu primitive for the 8×8 LED grid in `src/board/menu.*`. State is stack-allocated — no heap usage. Orientation and empty-then-occupied debounce are private menu helpers, while LED output and sensor polling go through the `Board` facade.
 
-**Item definition** — `MenuItem` struct: `{row, col, color, id}`. Coordinates are authored in white-side orientation (row 7 = rank 1). Arrays are `constexpr` file-scoped statics in `menu_config.h`, stored in flash with zero RAM cost. The menu does not copy the array — the pointer must outlive the menu.
+**Item definition** — `MenuItem` struct: `{row, col, color, id}`. Coordinates are authored in white-side orientation (row 7 = rank 1). Arrays are `constexpr` file-scoped statics in `src/board/config.h`, stored in flash with zero RAM cost. The menu does not copy the array — the pointer must outlive the menu.
 
 **Two-phase debounce** — prevents pieces already on the board from triggering selections when a menu appears:
 1. Phase 1 (empty): the square must read empty for `DEBOUNCE_CYCLES` (5) consecutive sensor polls (~200ms)
@@ -423,11 +450,11 @@ Stack-based orchestrator with max depth 4 (`std::array<BoardMenu*, MAX_DEPTH>`).
 
 ### Menu Configuration
 
-All menu layout data lives in `menu_config.h/cpp`:
+All menu layout data lives in `src/board/config.h/.cpp`:
 - `MenuId` namespace: distinct ID ranges per menu level (0–9 root, 10–19 difficulty, 20–29 color)
 - `constexpr MenuItem[]` arrays: `gameMenuItems`, `botDifficultyItems`, `botColorItems`
 - `extern` instances: `gameMenu`, `botDifficultyMenu`, `botColorMenu`, `navigator`
-- `initMenus(BoardDriver* bd)`: two-phase initializer — sets `BoardDriver*`, configures items, sets back buttons. Called once in `setup()`.
+- `initMenus(Board* board)`: two-phase initializer — sets `Board*`, configures items, sets back buttons. Called once in `setup()`.
 
 ## External API Integration
 

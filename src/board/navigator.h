@@ -1,7 +1,7 @@
-#ifndef MENU_NAVIGATOR_H
-#define MENU_NAVIGATOR_H
+#ifndef BOARD_NAVIGATOR_H
+#define BOARD_NAVIGATOR_H
 
-#include "board_menu.h"
+#include "menu.h"
 #include <array>
 #include <stdint.h>
 
@@ -19,15 +19,11 @@ class MenuNavigator {
  public:
   static constexpr int8_t MAX_DEPTH = 4;
 
-  MenuNavigator() : bd_(nullptr), stack_{}, depth_(-1) {}
-  explicit MenuNavigator(BoardDriver* bd);
+  MenuNavigator();
 
   // Delete copy
   MenuNavigator(const MenuNavigator&) = delete;
   MenuNavigator& operator=(const MenuNavigator&) = delete;
-
-  /// Set or change the BoardDriver pointer (for two-phase init).
-  void setBoardDriver(BoardDriver* bd) { bd_ = bd; }
 
   /// Push a menu onto the stack. Calls menu->reset() and menu->show().
   /// Asserts depth < MAX_DEPTH.
@@ -59,9 +55,8 @@ class MenuNavigator {
   void clear();
 
  private:
-  BoardDriver* bd_;
   std::array<BoardMenu*, MAX_DEPTH> stack_;
   int8_t depth_; // Index of top element, -1 = empty
 };
 
-#endif // MENU_NAVIGATOR_H
+#endif // BOARD_NAVIGATOR_H

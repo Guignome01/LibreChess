@@ -6,10 +6,6 @@ extern "C" {
 #include "nvs_flash.h"
 }
 
-LedRGB SystemUtils::colorLed(Color color) {
-  return (color == Color::WHITE) ? LedColors::White : LedColors::Blue;
-}
-
 bool SystemUtils::ensureNvsInitialized() {
   esp_err_t err = nvs_flash_init();
   if (err != ESP_OK) {

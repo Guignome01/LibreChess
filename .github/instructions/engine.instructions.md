@@ -7,7 +7,7 @@ description: "Firmware engine providers: EngineProvider base class, StockfishPro
 
 ## Overview
 
-`EngineProvider` (abstract base) → `StockfishProvider` | `LichessProvider` | `LibreChessProvider`. Each provider handles all computation/communication in FreeRTOS background tasks and returns data only — providers never touch `Game`, `BoardDriver`, or any hardware.
+`EngineProvider` (abstract base) → `StockfishProvider` | `LichessProvider` | `LibreChessProvider`. Each provider handles computation/communication in FreeRTOS background tasks and returns data only. Providers never touch the `Board` facade, `BoardDriver`, or any hardware; `LibreChessProvider` is the exception that receives a non-owning `Game*` for on-board search through public Game APIs.
 
 Providers are composed into `BotMode` via pointer injection (`BotMode` owns the pointer).
 
@@ -82,7 +82,7 @@ Max depth 8 + extensions (~6) + 16 QS plies ≈ 45 KiB (fits in 64 KiB). See `do
 
 ## Design Decisions
 
-- **Providers never touch hardware** — providers return `EngineResult` structs only. All LED, sensor, and animation logic stays in `BotMode`. This means providers can be tested or replaced without any hardware dependency, and `BotMode` controls the full user interaction sequence.
+- **Providers never touch hardware** — providers return `EngineResult` structs only. All LED, sensor, and animation logic stays in `BotMode` and the board subsystem (`BoardAssistance`/`Board`). This means providers can be tested or replaced without any hardware dependency, and `BotMode` controls the game-flow sequence without exposing hardware to providers.
 
 - **Heap-allocated task contexts** — `BaseTaskContext` is always allocated with `new(std::nothrow)` before `spawnTask()` and `delete`'d in `pollResult()`/`finishTask()`. Never stack-allocate: the FreeRTOS task outlives the spawning function's scope. Allocation or `xTaskCreate()` failure publishes an immediate `EngineResult::NONE` so `BotMode` can retry/abort instead of waiting forever.
 

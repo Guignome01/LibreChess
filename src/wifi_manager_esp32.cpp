@@ -1,4 +1,5 @@
 #include "wifi_manager_esp32.h"
+#include "board/board.h"
 #include "game.h"
 #include "engine/lichess/lichess_config.h"
 #include "system_utils.h"
@@ -45,7 +46,7 @@ WiFiManagerESP32* WiFiManagerESP32::instance = nullptr;
 // WiFiManagerESP32
 // ===========================
 
-WiFiManagerESP32::WiFiManagerESP32(BoardDriver* bd, LittleFSStorage* st) : boardDriver(bd), storage_(st), server(AP_PORT), gameMode("0"), lichessToken(""), botPlayerColor('w'), currentFen(INITIAL_FEN), hasPendingEdit(false), boardEvaluation(0.0f) {}
+WiFiManagerESP32::WiFiManagerESP32(Board* board, LittleFSStorage* st) : board_(board), storage_(st), server(AP_PORT), gameMode("0"), lichessToken(""), botPlayerColor('w'), currentFen(INITIAL_FEN), hasPendingEdit(false), boardEvaluation(0.0f) {}
 
 void WiFiManagerESP32::begin() {
   Serial.println("=== Starting LibreChess WiFi Manager (ESP32) ===");
@@ -350,7 +351,7 @@ bool WiFiManagerESP32::connectToNetwork(uint8_t index) {
 
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 10) {
-    boardDriver->showConnectingAnimation();
+    board_->showConnectingAnimation();
     attempts++;
     Serial.printf("  Attempt %d/10 — status: %d\n", attempts, WiFi.status());
   }
@@ -737,8 +738,8 @@ void WiFiManagerESP32::handleSaveLichessToken(AsyncWebServerRequest* request) {
 
 String WiFiManagerESP32::getBoardSettingsJSON() {
   JsonDocument doc;
-  doc["brightness"] = boardDriver->getBrightness();
-  doc["dimMultiplier"] = boardDriver->getDimMultiplier();
+  doc["brightness"] = board_->getBrightness();
+  doc["dimMultiplier"] = board_->getDimMultiplier();
   String output;
   serializeJson(doc, output);
   return output;
@@ -750,7 +751,7 @@ void WiFiManagerESP32::handleBoardSettings(AsyncWebServerRequest* request) {
   if (request->hasArg("brightness")) {
     int brightness = request->arg("brightness").toInt();
     if (brightness >= 0 && brightness <= 255) {
-      boardDriver->setBrightness((uint8_t)brightness);
+      board_->setBrightness((uint8_t)brightness);
       changed = true;
     }
   }
@@ -758,13 +759,13 @@ void WiFiManagerESP32::handleBoardSettings(AsyncWebServerRequest* request) {
   if (request->hasArg("dimMultiplier")) {
     int dimMult = request->arg("dimMultiplier").toInt();
     if (dimMult >= 0 && dimMult <= 100) {
-      boardDriver->setDimMultiplier((uint8_t)dimMult);
+      board_->setDimMultiplier((uint8_t)dimMult);
       changed = true;
     }
   }
 
   if (changed) {
-    boardDriver->saveLedSettings();
+    board_->saveLedSettings();
     Serial.println("Board settings updated via web interface");
     sendJsonOk(request);
   } else {
@@ -773,7 +774,7 @@ void WiFiManagerESP32::handleBoardSettings(AsyncWebServerRequest* request) {
 }
 
 void WiFiManagerESP32::handleBoardCalibration(AsyncWebServerRequest* request) {
-  boardDriver->triggerCalibration();
+  board_->triggerCalibration();
   sendJsonOk(request);
 }
 

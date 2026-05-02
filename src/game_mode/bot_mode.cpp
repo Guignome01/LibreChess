@@ -1,14 +1,13 @@
 #include "bot_mode.h"
+#include "../board/board.h"
 #include "game.h"
 
-#include "led_colors.h"
-#include "system_utils.h"
 #include "wifi_manager_esp32.h"
 #include <Arduino.h>
 
-BotMode::BotMode(BoardDriver* bd, WiFiManagerESP32* wm, Game* cg, EngineProvider* provider,
+BotMode::BotMode(Board* board, WiFiManagerESP32* wm, Game* cg, EngineProvider* provider,
                  ILogger* logger)
-    : GameMode(bd, wm, cg, logger), provider_(provider) {}
+  : GameMode(board, wm, cg, logger), provider_(provider) {}
 
 BotMode::~BotMode() {
   delete provider_;
@@ -27,12 +26,12 @@ void BotMode::begin() {
   }
 
   // Provider may block (e.g., Lichess game discovery). Show waiting animation.
-  std::atomic<bool>* waitAnim = boardDriver_->startWaitingAnimation();
+  std::atomic<bool>* waitAnim = board_->feedback().startWaiting();
 
   EngineInitResult initResult;
   bool ok = provider_->initialize(initResult);
 
-  boardDriver_->stopAndWaitForAnimation(waitAnim);
+  board_->feedback().stopAnimation(waitAnim);
 
   if (!ok) {
     abortWithError("Engine initialization failed");
@@ -78,7 +77,7 @@ bool BotMode::isNavigationAllowed() const {
 void BotMode::update() {
   if (chess_->isGameOver()) return;
 
-  boardDriver_->readSensors();
+  board_->readSensors();
 
   if (processResign()) return;
 
@@ -130,7 +129,7 @@ void BotMode::update() {
     }
   }
 
-  boardDriver_->updateSensorPrev();
+  board_->syncOccupancyBaseline();
 }
 
 // ---------------------------------------------------------------
@@ -161,16 +160,13 @@ bool BotMode::applyEngineMove(const std::string& move) {
 }
 
 void BotMode::handleRemoteGameEnd(const EngineResult& result) {
-  LedRGB color = (result.winnerColor == 'd')
-                     ? LedColors::Cyan
-                     : SystemUtils::colorLed(result.winnerColor == 'w' ? Color::WHITE : Color::BLACK);
-  boardDriver_->fireworkAnimation(color);
+  board_->feedback().showRemoteGameEnd(result.winnerColor);
   chess_->endGame(result.gameResult, result.winnerColor);
 }
 
 void BotMode::abortWithError(const char* message) {
   logger_.errorf("BotMode ABORT: %s", message);
-  boardDriver_->flashBoardAnimation(LedColors::Red);
+  board_->feedback().showError();
   chess_->endGame(GameResult::ABORTED, ' ');
 }
 
@@ -203,14 +199,12 @@ void BotMode::onResignConfirmed(Color resignColor) {
 // ---------------------------------------------------------------
 
 void BotMode::startThinking() {
-  boardDriver_->waitForAnimationQueueDrain();
-  thinkingAnimation_ = boardDriver_->startThinkingAnimation();
+  thinkingAnimation_ = board_->feedback().startThinking();
 }
 
 void BotMode::stopThinking() {
   if (thinkingAnimation_) {
-    boardDriver_->stopAndWaitForAnimation(thinkingAnimation_);
-    thinkingAnimation_ = nullptr;
+    board_->feedback().stopAnimation(thinkingAnimation_);
   }
 }
 
@@ -220,60 +214,5 @@ void BotMode::stopThinking() {
 // ---------------------------------------------------------------
 
 void BotMode::waitForRemoteMoveCompletion(int fromRow, int fromCol, int toRow, int toCol, bool isCapture, bool isEnPassant, int enPassantCapturedPawnRow) {
-  BoardDriver::LedGuard guard(boardDriver_);
-  boardDriver_->clearAllLEDs(false);
-  // Show source square (where to pick up from)
-  boardDriver_->setSquareLED(fromRow, fromCol, LedColors::Cyan);
-  // Show destination square (where to place)
-  if (isCapture)
-    boardDriver_->setSquareLED(toRow, toCol, LedColors::Red);
-  else
-    boardDriver_->setSquareLED(toRow, toCol, LedColors::White);
-  if (isEnPassant)
-    boardDriver_->setSquareLED(enPassantCapturedPawnRow, toCol, LedColors::Purple);
-  boardDriver_->showLEDs();
-
-  bool piecePickedUp = false;
-  bool capturedPieceRemoved = false;
-  bool moveCompleted = false;
-
-  logger_.info("Waiting for you to complete the remote move...");
-
-  while (!moveCompleted) {
-    boardDriver_->readSensors();
-
-    // For capture moves, ensure captured piece is removed first
-    // For en passant, check the actual captured pawn square (not the destination)
-    if (isCapture && !capturedPieceRemoved) {
-      int captureCheckRow = isEnPassant ? enPassantCapturedPawnRow : toRow;
-      if (!boardDriver_->getSensorState(captureCheckRow, toCol)) {
-        capturedPieceRemoved = true;
-        if (isEnPassant) {
-          logger_.info("En passant captured pawn removed, now complete the move...");
-        } else {
-          logger_.info("Captured piece removed, now complete the move...");
-        }
-      }
-    }
-
-    // Check if piece was picked up from source
-    if (!piecePickedUp && !boardDriver_->getSensorState(fromRow, fromCol)) {
-      piecePickedUp = true;
-      logger_.info("Piece picked up, now place it on the destination...");
-    }
-
-    // Check if piece was placed on destination
-    // For captures: wait until captured piece is removed AND piece is placed
-    // For normal moves: just wait for piece to be placed
-    if (piecePickedUp && boardDriver_->getSensorState(toRow, toCol))
-      if (!isCapture || (isCapture && capturedPieceRemoved)) {
-        moveCompleted = true;
-        logger_.info("Move completed on physical board!");
-      }
-
-    delay(SENSOR_READ_DELAY_MS);
-    boardDriver_->updateSensorPrev();
-  }
-
-  boardDriver_->clearAllLEDs();
-}  // LedGuard released
+  board_->assistance().guideRemoteMoveCompletion(fromRow, fromCol, toRow, toCol, isCapture, isEnPassant, enPassantCapturedPawnRow, logger_);
+}

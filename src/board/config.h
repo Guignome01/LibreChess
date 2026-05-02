@@ -1,8 +1,8 @@
-#ifndef MENU_CONFIG_H
-#define MENU_CONFIG_H
+#ifndef BOARD_CONFIG_H
+#define BOARD_CONFIG_H
 
-#include "board_menu.h"
-#include "menu_navigator.h"
+#include "menu.h"
+#include "navigator.h"
 
 // ---------------------------
 // Menu Item IDs
@@ -13,7 +13,7 @@ namespace MenuId {
   constexpr int8_t CHESS_MOVES = 0;
   constexpr int8_t BOT         = 1;
   constexpr int8_t LICHESS     = 2;
-  constexpr int8_t SENSOR_TEST = 3;
+  constexpr int8_t BOARD_DIAGNOSTICS = 3;
 
   // Bot difficulty (1-based level, offset by 10)
   constexpr int8_t DIFF_1 = 10; // Beginner
@@ -38,10 +38,10 @@ namespace MenuId {
 // All arrays are constexpr — stored in flash, zero RAM cost.
 
 static constexpr MenuItem gameMenuItems[] = {
-    {3, 3, LedColors::Blue,   MenuId::CHESS_MOVES}, // Chess Moves (Human vs Human)
-    {3, 4, LedColors::Green,  MenuId::BOT},          // Chess Bot (Human vs AI)
-    {4, 3, LedColors::Yellow, MenuId::LICHESS},       // Lichess (Online play)
-    {4, 4, LedColors::Red,    MenuId::SENSOR_TEST},   // Sensor Test
+  {3, 3, LedColors::Blue,   MenuId::CHESS_MOVES},       // Chess Moves (Human vs Human)
+  {3, 4, LedColors::Green,  MenuId::BOT},                // Chess Bot (Human vs AI)
+  {4, 3, LedColors::Yellow, MenuId::LICHESS},            // Lichess (Online play)
+  {4, 4, LedColors::Red,    MenuId::BOARD_DIAGNOSTICS},  // Sensor Test
 };
 
 static constexpr MenuItem botDifficultyItems[] = {
@@ -64,7 +64,7 @@ static constexpr MenuItem botColorItems[] = {
 // ---------------------------
 // Menu Instances & Navigator
 // ---------------------------
-// Declared extern here, defined in menu_config.cpp.
+// Declared extern here, defined in config.cpp.
 // Menus are file-scoped statics with no heap allocation.
 
 extern BoardMenu gameMenu;
@@ -73,6 +73,6 @@ extern BoardMenu botColorMenu;
 extern MenuNavigator navigator;
 
 /// Initialize all menus (set items, back buttons). Call once in setup().
-void initMenus(BoardDriver* bd);
+void initMenus(Board* board);
 
-#endif // MENU_CONFIG_H
+#endif // BOARD_CONFIG_H

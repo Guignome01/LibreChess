@@ -9,14 +9,14 @@ applyTo: "test/**"
 
 Tests run natively on the host (no ESP32) using PlatformIO Unity framework with `[env:native]`.
 
-The chess libraries (`lib/core/`, `lib/game/`) have zero Arduino dependencies — all chess logic compiles natively. Tests include library headers directly.
+The Arduino-free libraries (`lib/core/`, `lib/game/`) compile natively. Tests include library headers directly.
 
 ## Running Tests
 
 Two build environments: `[env:native]` for all tests except statistics, `[env:native_stats]` (adds `-DSTATS`) for search statistics instrumentation.
 
 | Action | Command |
-|--------|---------||
+|--------|---------|
 | Run all tests | `pio test -e native -e native_stats` |
 | Run lib tests (core+game) | `pio test -e native -f test_core -f test_game` |
 | Run position tests | `pio test -e native -f test_positions_time -f test_positions_depth` |
@@ -29,7 +29,7 @@ Two build environments: `[env:native]` for all tests except statistics, `[env:na
 
 ## File Structure
 
-Tests are split into two suites mirroring the library structure (`lib/core/`, `lib/game/`), plus independent position, benchmark, statistics, and perft suites. Each suite compiles into its own binary. Shared globals live in `test_shared.cpp` at the test root (compiled into every suite).
+Tests are split into suites mirroring the library structure (`lib/core/`, `lib/game/`), plus independent position, benchmark, statistics, and perft suites. Each suite compiles into its own binary. Shared globals live in `test_shared.cpp` at the test root (compiled into every suite).
 
 ```
 test/
@@ -97,8 +97,7 @@ Each library source file has a corresponding test file in the matching test suit
 | `lib/core/src/uci.h/cpp` | `test_core/` | `test_uci.cpp` |
 | `lib/core/src/epd.h/cpp` | `test_core/` | `test_epd.cpp` |
 | `lib/core/src/book.h/cpp` | `test_core/` | `test_book.cpp` |
-
-Place tests in the suite that mirrors the owning library. When creating a new source file in either library, create a matching test file in the corresponding `test_<lib>/` directory and register its test functions in that suite's main file.
+Place tests in the suite that mirrors the owning library. When creating a new source file in a native library, create a matching test file in the corresponding `test_<lib>/` directory and register its test functions in that suite's main file.
 
 ## Test Helpers (`test_helpers.h`)
 

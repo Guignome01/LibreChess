@@ -11,7 +11,7 @@ description: "Firmware game modes: GameMode base, PlayerMode, BotMode. State mac
 
 ## GameMode (base)
 
-Central fields injected via constructor: `boardDriver_`, `wifiManager_`, `chess_` (`Game` orchestrator), `logger_` (`Log` proxy, wraps optional `ILogger*`). All log output uses `logger_.info/infof/error/errorf(...)` directly — the `Log` proxy handles null internally. No direct `Serial` calls.
+Central fields injected via constructor: `board_` (`Board` facade), `wifiManager_`, `chess_` (`Game` orchestrator), `logger_` (`Log` proxy, wraps optional `ILogger*`). All log output uses `logger_.info/infof/error/errorf(...)` directly — the `Log` proxy handles null internally. No direct `Serial` calls.
 
 ### Lifecycle
 - `begin()` — pure virtual. Subclasses set up the game (resume or new), then call `waitForBoardSetup()`.
@@ -20,15 +20,15 @@ Central fields injected via constructor: `boardDriver_`, `wifiManager_`, `chess_
 - `isNavigationAllowed()` — virtual, default `true`. BotMode blocks navigation during engine thinking.
 
 ### Core Move Flow
-1. `tryPlayerMove(playerColor, ...)` — scans sensor deltas for a piece lift, shows legal-move highlights (white = empty, red = capture, purple = en-passant pawn), waits for placement. Returns `true` with from/to coords when a valid destination is chosen.
-2. `applyMove(from, to, promotion, isRemoteMove)` — calls `chess_->makeMove()` (which handles all move/game-end/check logging), then drives hardware feedback (capture animation, castling rook guidance, promotion animation, check blink, game-end fireworks).
+1. `tryPlayerMove(playerColor, ...)` — consumes `BoardState` changed-square entries for piece lift, placement, and capture-removal detection, shows legal-move highlights (white = empty, red = capture, purple = en-passant pawn), then waits for completion. Returns `true` with from/to coords when a valid destination is chosen.
+2. `applyMove(from, to, promotion, isRemoteMove)` — calls `chess_->makeMove()` (which handles all move/game-end/check logging), delegates castling/remote physical guidance to `board_->assistance()`, then delegates outcome visuals to `board_->feedback()` (capture animation, promotion animation, check blink, game-end fireworks).
 3. `applyMove(string)` — coordinate-string overload, parses then delegates with `isRemoteMove = true`.
 
 ### Resume Support
 `tryResumeGame()` — checks `chess_->hasActiveGame()`, calls `resumeGame()`. Returns `true` if a live game was resumed from flash.
 
 ### Board Setup
-`waitForBoardSetup(targetBoard)` — blocking loop that lights LEDs to guide the player to the required position (white/black = place here, red = remove this). Ends with firework animation.
+`waitForBoardSetup()` — delegates to `BoardAssistance`, which runs the blocking LED guidance loop for the required position (piece color = place here, red = remove this). Ends with firework animation.
 
 ### Resign System
 Three-phase king-based resign gesture managed in `GameMode`: hold king off square (3s) → 2 quick lift-and-returns with escalating orange brightness → board confirm dialog → `chess_->endGame(RESIGN, ...)`.
@@ -38,7 +38,7 @@ Virtual hooks let subclasses customize: `isFlipped()`, `onBeforeResignConfirm()`
 Web resign: `setResignPending(true)` → `processResign()` checks the flag at the start of `update()`.
 
 ### Remote Move Guidance
-`waitForRemoteMoveCompletion(...)` — virtual, no-op in base. BotMode overrides to block with LED guidance until the player physically executes the engine's move on the board.
+`waitForRemoteMoveCompletion(...)` — virtual, no-op in base. BotMode overrides to delegate to `BoardAssistance`, which blocks with LED guidance until the player physically executes the engine's move on the board.
 
 ## PlayerMode
 
@@ -70,11 +70,11 @@ Composes an `EngineProvider*` (strategy pattern, owned — deleted in destructor
 
 - **Resign lives in GameMode, not BotMode** — both PlayerMode and BotMode need resign. Putting it in the base class avoids duplication. The virtual hooks (`onBeforeResignConfirm`, `onResignCancelled`, `onResignConfirmed`) let BotMode add engine-specific behavior (cancel request, restart thinking) without duplicating the 3-phase gesture flow.
 
-- **`tryPlayerMove()` is blocking within a non-blocking loop** — once a piece is lifted, `tryPlayerMove()` enters a blocking wait for placement. This is intentional: the sensor state during piece-in-hand requires continuous polling for the target square. The outer `update()` loop remains non-blocking because `tryPlayerMove()` returns `false` (no lift detected) on most ticks.
+- **`tryPlayerMove()` is blocking within a non-blocking loop** — once `BoardState::wasLifted()` identifies a piece lift from the facade's changed-square list, `tryPlayerMove()` enters a blocking wait for placement or capture-removal transitions. This is intentional: the physical state during piece-in-hand requires continuous polling for the target square. The outer `update()` loop remains non-blocking because `tryPlayerMove()` returns `false` (no lift detected) on most ticks.
 
-- **`applyMove()` handles all hardware feedback in one place** — capture animation, castling rook guidance, promotion animation, check blink, game-end fireworks are all in `GameMode::applyMove()`. Game-end and check/turn *logging* is handled by `Game` (not duplicated here). Subclasses don't override this. This centralizes the complex hardware interaction sequence so adding a new game mode only requires implementing `begin()` and `update()`.
+- **`applyMove()` is the chess mutation boundary; board modules own physical interaction** — `GameMode::applyMove()` calls `Game::makeMove()` exactly once, then uses `board_->assistance()` for physical prompts and `board_->feedback()` for move-result visuals. Game-end and check/turn *logging* is handled by `Game` (not duplicated here). Subclasses don't override this. This centralizes the chess flow while keeping board-specific interaction sequences in the board subsystem.
 
-- **Remote moves use LED guidance** — when BotMode applies an engine move, `waitForRemoteMoveCompletion()` blocks with LED cues (cyan = pick up, green = place here) until the player physically executes the move. This bridges the gap between software state (already applied) and physical board state (player must move the piece).
+- **Remote moves use board-owned LED guidance** — when BotMode applies an engine move, `waitForRemoteMoveCompletion()` delegates to `BoardAssistance` for LED cues (cyan = pick up, white/red = destination) until the player physically executes the move. This bridges the gap between software state (already applied) and physical board state (player must move the piece).
 
 - **BotMode owns the provider** — `BotMode` deletes the `EngineProvider*` in its destructor. This makes game mode transitions clean: destroying a `BotMode` automatically cancels any running engine task and frees the provider. The provider is never shared between modes.
 
@@ -85,7 +85,7 @@ Composes an `EngineProvider*` (strategy pattern, owned — deleted in destructor
 | File | Relationship |
 |------|--------------|
 | `game.instructions.md` | `GameMode` holds a `Game*` — sole interface to chess logic |
-| `board-driver.instructions.md` | `GameMode` holds a `BoardDriver*` for LED/sensor interaction |
+| `board-driver.instructions.md` | `GameMode` uses the firmware `Board` facade for LED/sensor interaction |
 | `engine.instructions.md` | `BotMode` composes `EngineProvider*` |
 | `game-headers.instructions.md` | `meta[]` semantic overlay (`GameModeId`, engineId, difficulty) |
 | `wifi-manager.instructions.md` | `GameMode` holds a `WiFiManagerESP32*` |

@@ -1,13 +1,11 @@
 #ifndef BOARD_DRIVER_H
 #define BOARD_DRIVER_H
 
-#include "led_colors.h"
+#include "calibration.h"
+#include "colors.h"
+#include "lifecycle.h"
 #include <NeoPixelBusLg.h>
 #include <atomic>
-#include <freertos/FreeRTOS.h>
-#include <freertos/queue.h>
-#include <freertos/semphr.h>
-#include <freertos/task.h>
 
 // ---------------------------
 // Hardware Configuration
@@ -60,83 +58,22 @@
 #define DEBOUNCE_MS 125
 #define CALIBRATION_WARNING_INTERVAL_MS 4000
 
-// Animation job types for async queue
-// SYNC is a no-op used as a queue barrier — waitForAnimationQueueDrain() enqueues it
-// and blocks until the worker reaches it, guaranteeing all preceding animations are done.
-enum class AnimationType : uint8_t { CAPTURE,
-                                     PROMOTION,
-                                     BLINK,
-                                     WAITING,
-                                     THINKING,
-                                     FIREWORK,
-                                     FLASH,
-                                     SYNC };
-
-// Animation job with parameters union for queue
-struct AnimationJob {
-  AnimationType type;
-  std::atomic<bool>* stopFlag; // For cancellable animations
-  union {
-    struct {
-      int row, col;
-    } capture;
-    struct {
-      int col;
-    } promotion;
-    struct {
-      int row, col;
-      LedRGB color;
-      int times;
-      bool clearAfter;
-      bool clearBefore;
-    } blink;
-    struct {
-      LedRGB color;
-      int times;
-    } flash;
-    struct {
-      LedRGB color;
-    } firework;
-  } params;
-};
-
 // ---------------------------
 // Board Driver Class
 // Logical board coordinates: row 0 = rank 8, column 0 = file a
 // ---------------------------
 class BoardDriver {
+  friend class BoardCalibration;
+
  private:
   NeoPixelBusLg<NeoGrbFeature, NeoEsp32I2s0800KbpsMethod, NeoGammaNullMethod> strip;
-
-  // Animation queue system
-  static QueueHandle_t animationQueue;
-  static TaskHandle_t animationTaskHandle;
-  static SemaphoreHandle_t ledMutex;
-  // Completion semaphore — signaled by the animation worker after finishing
-  // a THINKING, WAITING, or SYNC job. Used by stopAndWaitForAnimation() and
-  // waitForAnimationQueueDrain() to block until the animation is truly done.
-  static SemaphoreHandle_t animationDoneSemaphore;
-  static BoardDriver* instance;
-  static void animationWorkerTask(void* param);
-  void executeAnimation(const AnimationJob& job);
-  void doCapture(int row, int col);
-  void doPromotion(int col);
-  void doBlink(int row, int col, LedRGB color, int times, bool clearAfter, bool clearBefore);
-  void doWaiting(std::atomic<bool>* stopFlag);
-  void doThinking(std::atomic<bool>* stopFlag);
-  void doFirework(LedRGB color);
-  void doFlash(LedRGB color, int times);
+  BoardCalibration calibration_;
+  BoardAnimationLifecycle animationLifecycle_;
   bool sensorState[NUM_ROWS][NUM_COLS];
-  bool sensorPrev[NUM_ROWS][NUM_COLS];
   bool sensorRaw[NUM_ROWS][NUM_COLS];
   unsigned long sensorDebounceTime[NUM_ROWS][NUM_COLS];
   int lastEnabledCol; // Tracks last enabled column for efficient sequential shifting
 
-  enum class Axis : uint8_t {
-    ROWS = 0,
-    COLS = 1,
-    UNKNOWN = 2,
-  };
   // LED settings (persisted in NVS)
   uint8_t brightness;                       // Global brightness 0-255
   uint8_t dimMultiplier;                    // Dark square dim factor 0-100 (stored as percentage)
@@ -149,16 +86,10 @@ class BoardDriver {
   uint8_t ledIndexMap[NUM_ROWS][NUM_COLS];
   bool calibrationLoaded;
 
-  bool loadCalibration();
-  void saveCalibration();
-  bool runCalibration();
   void loadLedSettings();
-  void readRawSensors(bool rawState[NUM_ROWS][NUM_COLS]);
-  bool waitForBoardEmpty(unsigned long stableMs = 500);
-  bool waitForSingleRawPress(int& rawRow, int& rawCol, unsigned long stableMs = 500);
-  void showCalibrationError();
-  bool calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t NUM_PINS, bool firstAxisSwapped);
-  String axisToChessRankFile(Axis axis) const { return (axis == Axis::ROWS) ? "Rank" : ((axis == Axis::COLS) ? "File" : "Unknown"); };
+  void resetLogicalMapping();
+  void loadDefaultLedMapping();
+  void loadRawIdentityLedMapping();
 
   void loadShiftRegister(byte data, int bits = 8);
   void disableAllCols();
@@ -170,8 +101,6 @@ class BoardDriver {
   void begin();
   void readSensors();
   bool getSensorState(int row, int col);
-  bool getSensorPrev(int row, int col);
-  void updateSensorPrev();
 
   // LED Control
   void acquireLEDs(); // Block until LED strip available

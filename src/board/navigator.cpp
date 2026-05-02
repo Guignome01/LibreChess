@@ -1,8 +1,9 @@
-#include "menu_navigator.h"
+#include "navigator.h"
 
-MenuNavigator::MenuNavigator(BoardDriver* bd)
-    : bd_(bd),
-      stack_(),
+#include <Arduino.h>
+
+MenuNavigator::MenuNavigator()
+  : stack_(),
       depth_(-1) {
   stack_.fill(nullptr);
 }

@@ -1,17 +1,17 @@
 #ifndef GAME_MODE_H
 #define GAME_MODE_H
 
-#include "board_driver.h"
 #include "game.h"
-#include "led_colors.h"
 #include "logger.h"
 #include "move.h"
 #include "types.h"
 #include <Arduino.h>
+#include <cstring>
 
 using namespace LibreChess;
 
 // Forward declaration to avoid circular dependency
+class Board;
 class WiFiManagerESP32;
 
 // ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ inline GameMeta readMeta(const uint8_t* raw) {
 // which atomically updates the board, records moves, and notifies observers.
 class GameMode {
  protected:
-  BoardDriver* boardDriver_;
+  Board* board_;
   WiFiManagerESP32* wifiManager_;
   Game* chess_;
   Log logger_;
@@ -64,7 +64,7 @@ class GameMode {
   bool resignPending_ = false;    // Set by web resign endpoint
 
   // Constructor
-  GameMode(BoardDriver* bd, WiFiManagerESP32* wm, Game* cg, ILogger* logger = nullptr);
+  GameMode(Board* board, WiFiManagerESP32* wm, Game* cg, ILogger* logger = nullptr);
 
   // Common initialization and game flow methods
   void waitForBoardSetup();
@@ -80,8 +80,6 @@ class GameMode {
   /// Unified resign entry point. Call at the start of update() after readSensors().
   /// Returns true if the game loop should return early.
   bool processResign();
-  /// Show standard invalid-move feedback (red blink) on a square.
-  void showIllegalMoveFeedback(int row, int col);
   /// Handle resign confirmation and game-end sequence.
   /// Uses virtual hooks so subclasses can customize behavior without
   /// duplicating the flow.
@@ -103,16 +101,6 @@ class GameMode {
   /// Blocking loop for the 2 quick lifts after the initial king return.
   /// Called inline from tryPlayerMove(). Returns true if resign was confirmed.
   bool continueResignGesture(int row, int col, Color color);
-  /// Show scaled orange resign indicator on a square (level 0–3 maps to RESIGN_BRIGHTNESS_LEVELS).
-  /// If clearFirst is true, clears all LEDs before setting the indicator.
-  void showResignProgress(int row, int col, int level, bool clearFirst = false);
-  /// Turn off the resign indicator LED on a square.
-  void clearResignFeedback(int row, int col);
-
-  // Hardware-only castling interactions (board already updated by Position)
-  void applyCastlingHardware(int kingFromRow, int kingFromCol, int kingToRow, int kingToCol, const CastlingInfo& castleInfo, bool waitForKingCompletion = false);
-  void confirmSquareCompletion(int row, int col);
-
   // Virtual hooks for remote move handling (overridden in subclasses)
   virtual void waitForRemoteMoveCompletion(int fromRow, int fromCol, int toRow, int toCol, bool isCapture, bool isEnPassant = false, int enPassantCapturedPawnRow = -1) {}
 
