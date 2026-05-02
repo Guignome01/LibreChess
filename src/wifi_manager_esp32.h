@@ -2,7 +2,7 @@
 #define WIFI_MANAGER_ESP32_H
 
 #include "board_driver.h"
-#include "stockfish_settings.h"
+#include "observer.h"
 #include <Arduino.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
@@ -10,10 +10,14 @@
 #include <Preferences.h>
 #include <WiFi.h>
 #include <array>
+#include <string>
 
 // Forward declarations
+namespace LibreChess { class Game; }
+using namespace LibreChess;
+
 struct LichessConfig;
-class MoveHistory;
+class LittleFSStorage;
 
 // ---------------------------
 // WiFi Configuration
@@ -53,21 +57,26 @@ struct SavedNetwork {
   String password;
 };
 
+// Navigation actions from web interface
+enum class NavAction : uint8_t { NONE = 0, UNDO = 1, REDO = 2, FIRST = 3, LAST = 4 };
+
 // ---------------------------
 // WiFi Manager Class for ESP32
 // ---------------------------
-class WiFiManagerESP32 {
+class WiFiManagerESP32 : public IGameObserver {
  private:
   AsyncWebServer server;
   Preferences prefs;
   String gameMode;
   String lichessToken;
 
-  BotConfig botConfig = {StockfishSettings::medium(), true};
+  int botDifficultyLevel_ = 4; // 1-8 difficulty level (engine resolves to depth)
+  char botPlayerColor = 'w'; // 'w' or 'b' — color the local player controls in bot mode
+  String botEngine = "stockfish"; // "stockfish" or "librechess"
 
-  MoveHistory* moveHistory;
+  LittleFSStorage* storage_;
   BoardDriver* boardDriver;
-  String currentFen;
+  std::string currentFen;
   float boardEvaluation;
 
   // Board edit storage (pending edits from web interface)
@@ -76,6 +85,16 @@ class WiFiManagerESP32 {
 
   // Resign flag (set from web interface)
   bool hasPendingResign = false;
+
+  // Navigation (set from web interface, consumed by main loop)
+  const Game* game_ = nullptr;
+  uint8_t pendingNavAction_ = 0;  // NavAction value
+  bool navigationBlocked_ = false;
+  // Cached navigation state (populated by onBoardStateChanged, read by getBoardUpdateJSON)
+  int cachedMoveIndex_ = 0;
+  int cachedMoveCount_ = 0;
+  bool cachedCanUndo_ = false;
+  bool cachedCanRedo_ = false;
 
   // tracks errors across multi-file OTA uploads
   bool otaHasError = false;
@@ -138,22 +157,26 @@ class WiFiManagerESP32 {
   void handleDeleteGame(AsyncWebServerRequest* request);
 
  public:
-  WiFiManagerESP32(BoardDriver* boardDriver, MoveHistory* moveHistory);
+  WiFiManagerESP32(BoardDriver* boardDriver, LittleFSStorage* storage);
   void begin();
   void update(); // Called from loop() — handles reconnection
+
+  // IGameObserver
+  void onBoardStateChanged(const std::string& fen, int evaluation) override;
 
   // Configuration getters
   // Game selection via web
   int getSelectedGameMode() const { return gameMode.toInt(); }
   void resetGameSelection() { gameMode = "0"; };
   // Bot configuration
-  BotConfig getBotConfig() { return botConfig; }
+  int getBotDifficultyLevel() { return botDifficultyLevel_; }
+  char getBotPlayerColor() { return botPlayerColor; }
+  String getBotEngine() { return botEngine; }
   // Lichess configuration
   LichessConfig getLichessConfig();
   String getLichessToken() { return lichessToken; }
   // Board state management (FEN-based)
-  void updateBoardState(const String& fen, float evaluation = 0.0f);
-  String getCurrentFen() const { return currentFen; }
+  const std::string& getCurrentFen() const { return currentFen; }
   float getEvaluation() const { return boardEvaluation; }
   // Board edit management (FEN-based)
   bool getPendingBoardEdit(String& fenOut);
@@ -161,6 +184,11 @@ class WiFiManagerESP32 {
   // Web resign
   bool getPendingResign() const { return hasPendingResign; }
   void clearPendingResign() { hasPendingResign = false; }
+  // Move navigation (from web interface)
+  void setGameRef(const Game* game) { game_ = game; }
+  uint8_t getPendingNavAction() const { return pendingNavAction_; }
+  void clearPendingNav() { pendingNavAction_ = 0; }
+  void setNavigationBlocked(bool blocked) { navigationBlocked_ = blocked; }
   // WiFi state
   WiFiState getWiFiState() const { return wifiState; }
   bool isWiFiConnected() const { return wifiState == WiFiState::CONNECTED; }

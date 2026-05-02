@@ -1,7 +1,8 @@
 #include "wifi_manager_esp32.h"
-#include "chess_lichess.h"
-#include "chess_utils.h"
-#include "move_history.h"
+#include "game.h"
+#include "engine/lichess/lichess_config.h"
+#include "system_utils.h"
+#include "littlefs_storage.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>
@@ -44,13 +45,13 @@ WiFiManagerESP32* WiFiManagerESP32::instance = nullptr;
 // WiFiManagerESP32
 // ===========================
 
-WiFiManagerESP32::WiFiManagerESP32(BoardDriver* bd, MoveHistory* mh) : boardDriver(bd), moveHistory(mh), server(AP_PORT), gameMode("0"), lichessToken(""), botConfig(), currentFen(INITIAL_FEN), hasPendingEdit(false), boardEvaluation(0.0f) {}
+WiFiManagerESP32::WiFiManagerESP32(BoardDriver* bd, LittleFSStorage* st) : boardDriver(bd), storage_(st), server(AP_PORT), gameMode("0"), lichessToken(""), botPlayerColor('w'), currentFen(INITIAL_FEN), hasPendingEdit(false), boardEvaluation(0.0f) {}
 
 void WiFiManagerESP32::begin() {
   Serial.println("=== Starting LibreChess WiFi Manager (ESP32) ===");
   instance = this;
 
-  if (!ChessUtils::ensureNvsInitialized()) {
+  if (!SystemUtils::ensureNvsInitialized()) {
     Serial.println("NVS init failed - credentials not loaded");
   } else {
     loadNetworks();
@@ -165,6 +166,28 @@ void WiFiManagerESP32::begin() {
   server.on("/games", HTTP_DELETE, [this](AsyncWebServerRequest* request) { this->handleDeleteGame(request); });
   server.on("/resign", HTTP_POST, [this](AsyncWebServerRequest* request) {
     this->hasPendingResign = true;
+    sendJsonOk(request);
+  });
+  server.on("/nav", HTTP_POST, [this](AsyncWebServerRequest* request) {
+    if (this->navigationBlocked_) {
+      sendJsonError(request, 409, "Navigation blocked");
+      return;
+    }
+    if (!request->hasArg("action")) {
+      sendJsonError(request, 400, "Missing action parameter");
+      return;
+    }
+    String action = request->arg("action");
+    uint8_t nav = 0;
+    if (action == "undo") nav = static_cast<uint8_t>(NavAction::UNDO);
+    else if (action == "redo") nav = static_cast<uint8_t>(NavAction::REDO);
+    else if (action == "first") nav = static_cast<uint8_t>(NavAction::FIRST);
+    else if (action == "last") nav = static_cast<uint8_t>(NavAction::LAST);
+    else {
+      sendJsonError(request, 400, "Invalid action");
+      return;
+    }
+    this->pendingNavAction_ = nav;
     sendJsonOk(request);
   });
 
@@ -301,7 +324,7 @@ void WiFiManagerESP32::loadNetworks() {
 }
 
 void WiFiManagerESP32::saveNetworks() {
-  if (!ChessUtils::ensureNvsInitialized()) {
+  if (!SystemUtils::ensureNvsInitialized()) {
     Serial.println("NVS init failed - networks not saved");
     return;
   }
@@ -615,6 +638,10 @@ String WiFiManagerESP32::getBoardUpdateJSON() {
   JsonDocument doc;
   doc["fen"] = currentFen;
   doc["evaluation"] = serialized(String(boardEvaluation, 2));
+  doc["moveIndex"] = cachedMoveIndex_;
+  doc["moveCount"] = cachedMoveCount_;
+  doc["canUndo"] = cachedCanUndo_;
+  doc["canRedo"] = cachedCanRedo_;
   String output;
   serializeJson(doc, output);
   return output;
@@ -641,9 +668,13 @@ void WiFiManagerESP32::handleGameSelection(AsyncWebServerRequest* request) {
   if (mode == 2) {
     if (request->hasArg("difficulty") && request->hasArg("playerColor")) {
       int diffLevel = request->arg("difficulty").toInt();
-      botConfig.stockfishSettings = StockfishSettings::fromLevel(diffLevel);
-      botConfig.playerIsWhite = request->arg("playerColor") == "white";
-      Serial.printf("Bot configuration received: Depth=%d, Player is %s\n", botConfig.stockfishSettings.depth, botConfig.playerIsWhite ? "White" : "Black");
+      if (diffLevel < 1 || diffLevel > 8) diffLevel = 4;
+      botPlayerColor = (request->arg("playerColor") == "white") ? 'w' : 'b';
+      botDifficultyLevel_ = diffLevel;
+      botEngine = request->hasArg("engine") ? request->arg("engine") : "stockfish";
+      Serial.printf("Bot configuration received: Engine=%s, Level=%d, Player is %s\n",
+                     botEngine.c_str(), botDifficultyLevel_,
+                     botPlayerColor == 'w' ? "White" : "Black");
     } else {
       sendJsonError(request, 400, "Missing bot parameters");
       return;
@@ -689,7 +720,7 @@ void WiFiManagerESP32::handleSaveLichessToken(AsyncWebServerRequest* request) {
     return;
   }
 
-  if (!ChessUtils::ensureNvsInitialized()) {
+  if (!SystemUtils::ensureNvsInitialized()) {
     sendJsonError(request, 500, "NVS init failed");
     return;
   }
@@ -843,9 +874,19 @@ LichessConfig WiFiManagerESP32::getLichessConfig() {
   return config;
 }
 
-void WiFiManagerESP32::updateBoardState(const String& fen, float evaluation) {
+// TODO: cached fields are written here (main loop task) and read by
+// getBoardUpdateJSON() (async_tcp task) without synchronization. Add a portMUX_TYPE
+// spinlock around both the write and read sites to eliminate the data race.
+void WiFiManagerESP32::onBoardStateChanged(const std::string& fen, int evaluation) {
   currentFen = fen;
-  boardEvaluation = evaluation;
+  boardEvaluation = evaluation / 100.0f;
+
+  if (game_) {
+    cachedMoveIndex_ = game_->currentMoveIndex();
+    cachedCanUndo_ = game_->canUndo();
+    cachedCanRedo_ = game_->canRedo();
+    cachedMoveCount_ = game_->moveCount();
+  }
 }
 
 bool WiFiManagerESP32::getPendingBoardEdit(String& fenOut) {
@@ -857,7 +898,7 @@ bool WiFiManagerESP32::getPendingBoardEdit(String& fenOut) {
 }
 
 void WiFiManagerESP32::clearPendingEdit() {
-  currentFen = pendingFenEdit;
+  currentFen = std::string(pendingFenEdit.c_str());
   hasPendingEdit = false;
 }
 
@@ -867,7 +908,7 @@ void WiFiManagerESP32::handleGamesRequest(AsyncWebServerRequest* request) {
 
     // GET /games?id=live1 — return live moves file directly
     if (idStr == "live1") {
-      if (!MoveHistory::quietExists("/games/live.bin")) {
+      if (!LittleFSStorage::quietExists("/games/live.bin")) {
         sendJsonError(request, 404, "No live game");
         return;
       }
@@ -878,7 +919,7 @@ void WiFiManagerESP32::handleGamesRequest(AsyncWebServerRequest* request) {
 
     // GET /games?id=live2 — return live FEN table file directly
     if (idStr == "live2") {
-      if (!MoveHistory::quietExists("/games/live_fen.bin")) {
+      if (!LittleFSStorage::quietExists("/games/live_fen.bin")) {
         sendJsonError(request, 404, "No live FEN table");
         return;
       }
@@ -894,8 +935,8 @@ void WiFiManagerESP32::handleGamesRequest(AsyncWebServerRequest* request) {
       return;
     }
 
-    String path = MoveHistory::gamePath(id);
-    if (!MoveHistory::quietExists(path.c_str())) {
+    String path = LittleFSStorage::gamePath(id);
+    if (!LittleFSStorage::quietExists(path.c_str())) {
       sendJsonError(request, 404, "Game not found");
       return;
     }
@@ -903,7 +944,7 @@ void WiFiManagerESP32::handleGamesRequest(AsyncWebServerRequest* request) {
     request->send(response);
   } else {
     // GET /games — return JSON list of all saved games
-    request->send(200, "application/json", moveHistory->getGameListJSON());
+    request->send(200, "application/json", storage_->getGameListJSON());
   }
 }
 
@@ -919,7 +960,7 @@ void WiFiManagerESP32::handleDeleteGame(AsyncWebServerRequest* request) {
     return;
   }
 
-  if (moveHistory->deleteGame(id))
+  if (storage_->deleteGame(id))
     sendJsonOk(request);
   else
     sendJsonError(request, 404, "Game not found");

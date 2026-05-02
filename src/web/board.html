@@ -9,8 +9,8 @@
     <link rel="stylesheet" href="./css/chessboard-1.0.0.min.css">
     <script src="./scripts/jquery-4.0.0.min.js"></script>
     <script src="./scripts/chessboard-1.0.0.min.js"></script>
+    <script src="./scripts/chess-1.4.0.min.js"></script>
     <script>var exports = {};</script>
-    <script src="https://unpkg.com/chess.js@1.4.0/dist/cjs/chess.js"></script>
     <script>var Chess = exports.Chess;</script>
     <script src="./scripts/api.js"></script>
     <script src="./scripts/provider.js"></script>
@@ -207,13 +207,11 @@
         let boardOrientation = 'white';
         let focusMode = false;
 
-        // Move history / scrubbing state (segment-based)
-        // Each segment: { fen, engine, moveCount, globalOffset, span }
-        let liveSegments = [];        // segments for the live game
-        let moveIndex = 0;            // current global scrub position
-        let totalMoves = 0;           // max global index
-        let isLive = true;            // whether showing the live (latest) position
-        let liveGameLoaded = false;   // whether we loaded the initial live game history
+        // Live navigation state (server-driven via /board-update)
+        let liveMoveIndex = 0;        // current move cursor position (from server)
+        let liveMoveCount = 0;        // total moves in history (from server)
+        let liveCanUndo = false;      // can navigate backwards (from server)
+        let liveCanRedo = false;      // can navigate forwards (from server)
 
         // Game review state (segment-based)
         let reviewMode = false;       // viewing a completed game
@@ -365,15 +363,16 @@
         }
 
         // ==========================================
-        // Binary game file parsing (MoveHistory format)
+        // Binary game file parsing (History recording format)
         // ==========================================
 
         const GAME_HEADER_SIZE = 16;
         const FEN_MARKER = 0xFFFF;
 
-        const RESULT_NAMES = ['In Progress', 'Checkmate', 'Stalemate', 'Draw (50-move)', 'Draw (3-fold)', 'Resignation'];
-        const MODE_NAMES = { 1: 'Human vs Human', 2: 'vs Stockfish' };
-        const DEPTH_NAMES = { 3: 'Beginner', 5: 'Easy', 7: 'Intermediate', 9: 'Medium', 11: 'Advanced', 13: 'Hard', 15: 'Expert', 17: 'Master' };
+        const RESULT_NAMES = ['In Progress', 'Checkmate', 'Stalemate', 'Draw (50-move)', 'Draw (3-fold)', 'Resignation', 'Draw (insufficient)', 'Draw (agreement)', 'Timeout', 'Aborted'];
+        const MODE_NAMES = { 1: 'Human vs Human', 2: 'vs Bot' };
+        const ENGINE_NAMES = { 0: 'Stockfish', 1: 'LibreChess' };
+        const LEVEL_NAMES = { 1: 'Beginner', 2: 'Easy', 3: 'Intermediate', 4: 'Medium', 5: 'Advanced', 6: 'Hard', 7: 'Expert', 8: 'Master' };
 
         function promoCodeToChar(code) {
             switch (code) {
@@ -433,16 +432,17 @@
 
         function parseGameHeader(dataView) {
             return {
-                version: dataView.getUint8(0),
-                mode: dataView.getUint8(1),
-                result: dataView.getUint8(2),
-                winnerColor: String.fromCharCode(dataView.getUint8(3)),
-                playerColor: String.fromCharCode(dataView.getUint8(4)),
-                botDepth: dataView.getUint8(5),
-                moveCount: dataView.getUint16(6, true),
-                fenEntryCnt: dataView.getUint16(8, true),
-                lastFenOffset: dataView.getUint16(10, true),
-                timestamp: dataView.getUint32(12, true)
+                result: dataView.getUint8(0),
+                winnerColor: String.fromCharCode(dataView.getUint8(1)),
+                playerColor: String.fromCharCode(dataView.getUint8(2)),
+                moveCount: dataView.getUint16(3, true),
+                fenEntryCnt: dataView.getUint16(5, true),
+                lastFenOffset: dataView.getUint16(7, true),
+                timestamp: dataView.getUint32(9, true),
+                // Meta overlay (firmware convention): meta[0]=mode, meta[1]=engineId, meta[2]=difficulty
+                mode: dataView.getUint8(13),
+                engineId: dataView.getUint8(14),
+                difficulty: dataView.getUint8(15)
             };
         }
 
@@ -452,15 +452,6 @@
             const hdr = parseGameHeader(dv);
             const { moves, endOffset } = parseMoves(dv, hdr.moveCount, GAME_HEADER_SIZE);
             const fens = parseFenTable(buffer, endOffset, hdr.fenEntryCnt);
-            return { header: hdr, moves, fens };
-        }
-
-        // Parse live game (header + moves from live.bin, FENs from live_fen.bin)
-        function parseLiveGame(movesBuffer, fenBuffer) {
-            const dv = new DataView(movesBuffer);
-            const hdr = parseGameHeader(dv);
-            const { moves } = parseMoves(dv, hdr.moveCount, GAME_HEADER_SIZE);
-            const fens = (fenBuffer && fenBuffer.byteLength > 0) ? parseFenTable(fenBuffer, 0, hdr.fenEntryCnt) : [];
             return { header: hdr, moves, fens };
         }
 
@@ -547,102 +538,70 @@
         // Move navigation (scrubbing) — segment-based
         // ==========================================
 
-        function getActiveSegments() {
-            return reviewMode ? reviewSegments : liveSegments;
-        }
-
-        function getActiveMoveIndex() {
-            return reviewMode ? reviewMoveIndex : moveIndex;
-        }
-
-        function setActiveMoveIndex(idx) {
-            if (reviewMode) reviewMoveIndex = idx;
-            else moveIndex = idx;
-        }
-
-        function getActiveTotalMoves() {
-            return reviewMode ? reviewTotalMoves : totalMoves;
-        }
-
         function updateMoveCounter() {
-            const idx = getActiveMoveIndex();
-            const total = getActiveTotalMoves();
             const counter = $('#moveCounter');
-
-            if (total === 0) {
-                counter.text('--');
-                return;
-            }
-
-            if (!reviewMode && isLive) {
-                counter.text('live');
-                counter.addClass('live');
-            } else {
-                counter.text(idx + '/' + total);
+            if (reviewMode) {
+                if (reviewTotalMoves === 0) { counter.text('--'); return; }
+                counter.text(reviewMoveIndex + '/' + reviewTotalMoves);
                 counter.removeClass('live');
+            } else {
+                if (liveMoveCount === 0) { counter.text('--'); counter.removeClass('live'); return; }
+                if (liveMoveIndex >= liveMoveCount) {
+                    counter.text('live');
+                    counter.addClass('live');
+                } else {
+                    counter.text(liveMoveIndex + '/' + liveMoveCount);
+                    counter.removeClass('live');
+                }
             }
         }
 
-        function navigateToMove(idx) {
-            const segments = getActiveSegments();
-            if (!segments || segments.length === 0) return;
-
-            const total = getActiveTotalMoves();
-            if (idx < 0) idx = 0;
-            if (idx > total) idx = total;
-
-            setActiveMoveIndex(idx);
-
-            if (!reviewMode) {
-                isLive = (idx === total);
+        function updateNavButtons() {
+            if (reviewMode) {
+                $('#navPrev, #navFirst').prop('disabled', reviewMoveIndex <= 0);
+                $('#navNext, #navLast').prop('disabled', reviewMoveIndex >= reviewTotalMoves);
+            } else {
+                $('#navPrev, #navFirst').prop('disabled', !liveCanUndo);
+                $('#navNext, #navLast').prop('disabled', !liveCanRedo);
             }
+        }
 
-            const fen = getSegmentsFenAtIndex(segments, idx);
+        // Navigate to a specific move index (review mode only — live mode is server-driven)
+        function navigateToMove(idx) {
+            if (!reviewMode) return;
+            if (!reviewSegments || reviewSegments.length === 0) return;
+
+            if (idx < 0) idx = 0;
+            if (idx > reviewTotalMoves) idx = reviewTotalMoves;
+
+            reviewMoveIndex = idx;
+
+            const fen = getSegmentsFenAtIndex(reviewSegments, idx);
             if (fen) {
                 const posFen = fen.split(' ')[0];
                 board.position(posFen, true);
             }
 
             updateMoveCounter();
-            if (reviewMode) highlightReviewMove();
+            updateNavButtons();
+            highlightReviewMove();
         }
 
-        function navFirst() { navigateToMove(0); }
-        function navPrev() { navigateToMove(getActiveMoveIndex() - 1); }
-        function navNext() { navigateToMove(getActiveMoveIndex() + 1); }
-        function navLast() { navigateToMove(getActiveTotalMoves()); }
-
-        // ==========================================
-        // Live game loading
-        // ==========================================
-
-        async function loadLiveGame() {
-            try {
-                const [movesResp, fenResp] = await Promise.all([
-                    Api.getGame('live1'),
-                    Api.getGame('live2')
-                ]);
-
-                if (!movesResp.ok) return false; // No live game
-
-                const movesBuffer = await movesResp.arrayBuffer();
-                const fenBuffer = fenResp.ok ? await fenResp.arrayBuffer() : new ArrayBuffer(0);
-
-                if (movesBuffer.byteLength < GAME_HEADER_SIZE) return false;
-
-                const parsed = parseLiveGame(movesBuffer, fenBuffer);
-                liveSegments = buildGameSegments(parsed);
-                totalMoves = computeGlobalTotal(liveSegments);
-                moveIndex = totalMoves;
-                isLive = true;
-                liveGameLoaded = true;
-
-                updateMoveCounter();
-                return true;
-            } catch (e) {
-                console.log('Failed to load live game:', e);
-                return false;
-            }
+        function navFirst() {
+            if (reviewMode) { navigateToMove(0); }
+            else { Api.nav('first').catch(e => console.log('Nav error:', e)); }
+        }
+        function navPrev() {
+            if (reviewMode) { navigateToMove(reviewMoveIndex - 1); }
+            else { Api.nav('undo').catch(e => console.log('Nav error:', e)); }
+        }
+        function navNext() {
+            if (reviewMode) { navigateToMove(reviewMoveIndex + 1); }
+            else { Api.nav('redo').catch(e => console.log('Nav error:', e)); }
+        }
+        function navLast() {
+            if (reviewMode) { navigateToMove(reviewTotalMoves); }
+            else { Api.nav('last').catch(e => console.log('Nav error:', e)); }
         }
 
         // ==========================================
@@ -679,6 +638,7 @@
             }
 
             updateMoveCounter();
+            updateNavButtons();
             highlightReviewMove();
         }
 
@@ -696,18 +656,8 @@
             $('#exitReviewBtn').hide();
             $('#resignBtn').show();
 
-            // Restore live position
-            if (liveSegments.length > 0 && liveGameLoaded) {
-                const fen = getSegmentsFenAtIndex(liveSegments, totalMoves);
-                if (fen) {
-                    board.position(fen.split(' ')[0], false);
-                }
-                moveIndex = totalMoves;
-                isLive = true;
-            }
-
             updateMoveCounter();
-            startPolling();
+            startPolling(); // will fetch and restore live position
         }
 
         function buildReviewPanel() {
@@ -837,7 +787,8 @@
 
                         let subtitle = MODE_NAMES[game.mode] || 'Game';
                         if (game.mode === 2) {
-                            subtitle = 'vs Stockfish (' + (DEPTH_NAMES[game.botDepth] || 'D' + game.botDepth) + ')';
+                            const eng = ENGINE_NAMES[game.engineId] || 'Bot';
+                            subtitle = 'vs ' + eng + ' (' + (LEVEL_NAMES[game.difficulty] || 'Level ' + game.difficulty) + ')';
                         }
 
                         const card = $('<div class=\"game-card\" data-id=\"' + game.id + '\"></div>');
@@ -939,9 +890,10 @@
         // Helper: format opponent/mode text from game metadata
         function formatOpponent(meta) {
             if (meta.mode === 2) {
-                const diff = DEPTH_NAMES[meta.botDepth] || ('Depth ' + meta.botDepth);
+                const diff = LEVEL_NAMES[meta.difficulty] || ('Level ' + meta.difficulty);
+                const eng = ENGINE_NAMES[meta.engineId] || 'Bot';
                 const color = meta.playerColor === 'w' ? 'White' : 'Black';
-                return 'vs Stockfish (' + diff + ') as ' + color;
+                return 'vs ' + eng + ' (' + diff + ') as ' + color;
             }
             return MODE_NAMES[meta.mode] || ('Mode ' + meta.mode);
         }
@@ -957,11 +909,6 @@
         function enableEditMode() {
             // Exit review mode if active
             if (reviewMode) exitReviewMode();
-
-            // Restore live position before entering edit mode
-            if (liveSegments.length > 0 && !isLive) {
-                navLast();
-            }
 
             editMode = true;
             if (updateInterval) {
@@ -1406,75 +1353,18 @@
             Api.getBoardUpdate()
                 .then(data => {
                     if (data.fen) {
-                        if (liveSegments.length > 0) {
-                            const lastSeg = liveSegments[liveSegments.length - 1];
-                            const serverPosFen = data.fen.split(' ')[0];
-                            const engineFen = lastSeg.engine.fen().split(' ')[0];
-                            if (serverPosFen !== engineFen) {
-                                // Try to find a move that leads to this position
-                                const legalMoves = lastSeg.engine.moves({ verbose: true });
-                                let foundMove = false;
-                                for (const m of legalMoves) {
-                                    if (m.after.split(' ')[0] === serverPosFen) {
-                                        lastSeg.engine.move(m.san);
-                                        lastSeg.moveCount = lastSeg.engine.history().length;
-                                        computeSegmentOffsets(liveSegments);
-                                        totalMoves = computeGlobalTotal(liveSegments);
-                                        if (isLive) moveIndex = totalMoves;
-                                        foundMove = true;
-                                        break;
-                                    }
-                                }
-                                if (!foundMove) {
-                                    // Position changed dramatically (board edit) — add new segment
-                                    try {
-                                        const newEngine = new Chess(data.fen);
-                                        liveSegments.push({
-                                            fen: data.fen,
-                                            engine: newEngine,
-                                            moveCount: 0,
-                                            globalOffset: 0,
-                                            span: 0
-                                        });
-                                        computeSegmentOffsets(liveSegments);
-                                        totalMoves = computeGlobalTotal(liveSegments);
-                                        moveIndex = totalMoves;
-                                        isLive = true;
-                                    } catch (e) {
-                                        console.log('Failed to create new segment:', e);
-                                    }
-                                }
-                                updateMoveCounter();
-                            }
-                        } else {
-                            // Initialize first segment
-                            try {
-                                const engine = new Chess(data.fen);
-                                liveSegments.push({
-                                    fen: data.fen,
-                                    engine: engine,
-                                    moveCount: 0,
-                                    globalOffset: 0,
-                                    span: 1
-                                });
-                                computeSegmentOffsets(liveSegments);
-                                totalMoves = computeGlobalTotal(liveSegments);
-                                moveIndex = 0;
-                                isLive = true;
-                                updateMoveCounter();
-                            } catch (e) {
-                                console.log('Failed to init segments:', e);
-                            }
-                        }
-
-                        // Only update board display if viewing live position
-                        if (isLive) {
-                            parseFullFen(data.fen);
-                        }
+                        parseFullFen(data.fen);
                     }
-                    if (data.evaluation !== undefined && isLive) {
+                    if (data.evaluation !== undefined) {
                         updateEvaluationBar(data.evaluation);
                     }
+                    // Update navigation state from server
+                    liveMoveIndex = data.moveIndex ?? 0;
+                    liveMoveCount = data.moveCount ?? 0;
+                    liveCanUndo = data.canUndo ?? false;
+                    liveCanRedo = data.canRedo ?? false;
+                    updateMoveCounter();
+                    updateNavButtons();
                 })
                 .catch(error => {
                     console.log('Fetch failed:', error);
@@ -1593,11 +1483,7 @@
         $(document).ready(function () {
             loadSettings();
             initBoard();
-
-            // Try to load live game history before starting polling
-            loadLiveGame().then(() => {
-                startPolling();
-            });
+            startPolling();
 
             $('#modeToggleBtn').on('click', function () {
                 if (editMode) {

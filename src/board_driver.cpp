@@ -1,9 +1,11 @@
 #include "board_driver.h"
-#include "chess_utils.h"
+#include "game.h"
+#include "system_utils.h"
 #include "led_colors.h"
 #include <Arduino.h>
 #include <Preferences.h>
 #include <math.h>
+
 
 // 74HC595 shift register pin mapping: bits are sent MSB first, so bit 7 shifts to QH, bit 0 stays at QA
 // col 0 -> QA (pin 15), col 1 -> QB (pin 1), ..., col 7 -> QH (pin 7)
@@ -54,7 +56,7 @@ void BoardDriver::begin() {
   strip.Begin();
   showLEDs();        // turn off all LEDs
   loadLedSettings(); // Load LED settings from NVS (brightness, dim multiplier)
-  strip.SetBrightness(brightness);
+  strip.SetLuminance(brightness);
   // Shift register pins as outputs
   pinMode(SR_SER_DATA_PIN, OUTPUT);
   pinMode(SR_CLK_PIN, OUTPUT);
@@ -132,7 +134,7 @@ void BoardDriver::executeAnimation(const AnimationJob& job) {
 }
 
 bool BoardDriver::loadCalibration() {
-  if (!ChessUtils::ensureNvsInitialized()) {
+  if (!SystemUtils::ensureNvsInitialized()) {
     Serial.println("NVS init failed - calibration not loaded");
     return false;
   }
@@ -187,7 +189,7 @@ bool BoardDriver::loadCalibration() {
 }
 
 void BoardDriver::saveCalibration() {
-  if (!ChessUtils::ensureNvsInitialized()) {
+  if (!SystemUtils::ensureNvsInitialized()) {
     Serial.println("NVS init failed - calibration not saved");
     return;
   }
@@ -337,7 +339,7 @@ bool BoardDriver::calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t NUM_PI
     return false;
   }
 
-  Axis detectedAxis = UnknownAxis;
+  Axis detectedAxis = Axis::UNKNOWN;
   int firstRow = -1;
   int firstCol = -1;
   uint8_t counts[NUM_PINS] = {0};
@@ -347,7 +349,7 @@ bool BoardDriver::calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t NUM_PI
   // If this is column calibration and we already have row mapping, find expected raw row/col for rank 1
   int expectedRawPin = -1;
   bool useRow = true; // Whether to check row or col during column calibration
-  if (axis == ColsAxis)
+  if (axis == Axis::COLS)
     for (int i = 0; i < NUM_ROWS; i++)
       if (toLogicalRow[i] == 7) {
         expectedRawPin = i;
@@ -358,11 +360,11 @@ bool BoardDriver::calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t NUM_PI
 
   for (int i = 0; i < NUM_PINS; i++) {
     char square[3];
-    if (axis == RowsAxis) {
+    if (axis == Axis::ROWS) {
       square[0] = 'a';
-      square[1] = (char)('8' - i);
+      square[1] = Game::rankChar(i);
     } else {
-      square[0] = (char)('a' + i);
+      square[0] = Game::fileChar(i);
       square[1] = '1';
     }
     square[2] = '\0';
@@ -374,7 +376,7 @@ bool BoardDriver::calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t NUM_PI
     Serial.printf("  Detected: row=%d (GPIO %d), col=%d (74HC595 Q%c, pin %d)\n", row, rowPins[row], col, shiftRegOutput(col), shiftRegPin(col));
 
     // Verify pin consistency for column calibration
-    if (axis == ColsAxis && expectedRawPin != -1) {
+    if (axis == Axis::COLS && expectedRawPin != -1) {
       int actualPin = useRow ? row : col;
       if (actualPin != expectedRawPin) {
         if (useRow)
@@ -395,14 +397,14 @@ bool BoardDriver::calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t NUM_PI
       continue;
     }
 
-    if (detectedAxis == UnknownAxis && i == 1) {
+    if (detectedAxis == Axis::UNKNOWN && i == 1) {
       if (row == firstRow && col != firstCol) {
-        detectedAxis = ColsAxis;
+        detectedAxis = Axis::COLS;
         axisPinsOrder[firstCol] = i - 1;
         counts[firstCol]++;
         Serial.printf("%s calibration using cols %s\n", axisToChessRankFile(axis).c_str(), axis != detectedAxis ? "(axis swap)" : "(no axis swap)");
       } else if (col == firstCol && row != firstRow) {
-        detectedAxis = RowsAxis;
+        detectedAxis = Axis::ROWS;
         axisPinsOrder[firstRow] = i - 1;
         counts[firstRow]++;
         Serial.printf("%s calibration using rows %s\n", axisToChessRankFile(axis).c_str(), axis != detectedAxis ? "(axis swap)" : "(no axis swap)");
@@ -418,7 +420,7 @@ bool BoardDriver::calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t NUM_PI
       }
     }
 
-    if (detectedAxis == UnknownAxis) {
+    if (detectedAxis == Axis::UNKNOWN) {
       // Will never happen due to above logic, but just in case
       Serial.printf("Ambiguous %s calibration (no orientation detected). Retry.\n", axisToChessRankFile(axis).c_str());
       showCalibrationError();
@@ -426,16 +428,16 @@ bool BoardDriver::calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t NUM_PI
       continue;
     }
 
-    int pin = (detectedAxis == RowsAxis) ? row : col;
+    int pin = (detectedAxis == Axis::ROWS) ? row : col;
     if (counts[pin] > 0) {
       // Find what rank/file was already assigned to this pin
       int assignedIndex = axisPinsOrder[pin];
       char assignedRankFile[8];
-      if (axis == RowsAxis)
-        snprintf(assignedRankFile, sizeof(assignedRankFile), "rank %d", 8 - assignedIndex);
+      if (axis == Axis::ROWS)
+        snprintf(assignedRankFile, sizeof(assignedRankFile), "rank %c", Game::rankChar(assignedIndex));
       else
-        snprintf(assignedRankFile, sizeof(assignedRankFile), "file %c", 'a' + assignedIndex);
-      if (detectedAxis == RowsAxis)
+        snprintf(assignedRankFile, sizeof(assignedRankFile), "file %c", Game::fileChar(assignedIndex));
+      if (detectedAxis == Axis::ROWS)
         Serial.printf("[ERROR] Row %d (GPIO %d) already has %s assigned. Retry %s.\n", pin, rowPins[pin], assignedRankFile, square);
       else
         Serial.printf("[ERROR] Col %d (74HC595 Q%c, pin %d) already has %s assigned. Retry %s.\n", pin, shiftRegOutput(pin), shiftRegPin(pin), assignedRankFile, square);
@@ -501,8 +503,8 @@ bool BoardDriver::runCalibration() {
   Serial.println("================================================================================");
   waitForBoardEmpty();
 
-  bool swapAxes1 = calibrateAxis(Axis::RowsAxis, toLogicalRow, NUM_ROWS, false);
-  bool swapAxes2 = calibrateAxis(Axis::ColsAxis, toLogicalCol, NUM_COLS, swapAxes1);
+  bool swapAxes1 = calibrateAxis(Axis::ROWS, toLogicalRow, NUM_ROWS, false);
+  bool swapAxes2 = calibrateAxis(Axis::COLS, toLogicalCol, NUM_COLS, swapAxes1);
   if (swapAxes1 != swapAxes2) {
     Serial.println("Inconsistent axis orientation detected during calibration. Restarting calibration.");
     showCalibrationError();
@@ -1005,7 +1007,7 @@ void BoardDriver::doWaiting(std::atomic<bool>* stopFlag) {
 void BoardDriver::setBrightness(uint8_t value) {
   LedGuard guard(this);
   brightness = value > 255 ? 255 : (value < 10 ? 10 : value);
-  strip.SetBrightness(brightness);
+  strip.SetLuminance(brightness);
   showLEDs();
 }
 
@@ -1020,7 +1022,7 @@ void BoardDriver::setDimMultiplier(uint8_t value) {
 }
 
 void BoardDriver::loadLedSettings() {
-  if (!ChessUtils::ensureNvsInitialized()) {
+  if (!SystemUtils::ensureNvsInitialized()) {
     Serial.println("NVS init failed - LED settings not loaded");
     return;
   }
@@ -1033,7 +1035,7 @@ void BoardDriver::loadLedSettings() {
 }
 
 void BoardDriver::saveLedSettings() {
-  if (!ChessUtils::ensureNvsInitialized()) {
+  if (!SystemUtils::ensureNvsInitialized()) {
     Serial.println("NVS init failed - LED settings not saved");
     return;
   }
@@ -1047,7 +1049,7 @@ void BoardDriver::saveLedSettings() {
 
 void BoardDriver::triggerCalibration() {
   // Mark calibration as needed by clearing the saved calibration
-  if (!ChessUtils::ensureNvsInitialized()) {
+  if (!SystemUtils::ensureNvsInitialized()) {
     Serial.println("NVS init failed - cannot trigger calibration");
     return;
   }

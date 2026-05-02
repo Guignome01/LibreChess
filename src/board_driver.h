@@ -2,7 +2,7 @@
 #define BOARD_DRIVER_H
 
 #include "led_colors.h"
-#include <NeoPixelBrightnessBus.h>
+#include <NeoPixelBusLg.h>
 #include <atomic>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
@@ -106,7 +106,7 @@ struct AnimationJob {
 // ---------------------------
 class BoardDriver {
  private:
-  NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp32I2s0800KbpsMethod> strip;
+  NeoPixelBusLg<NeoGrbFeature, NeoEsp32I2s0800KbpsMethod, NeoGammaNullMethod> strip;
 
   // Animation queue system
   static QueueHandle_t animationQueue;
@@ -132,10 +132,10 @@ class BoardDriver {
   unsigned long sensorDebounceTime[NUM_ROWS][NUM_COLS];
   int lastEnabledCol; // Tracks last enabled column for efficient sequential shifting
 
-  enum Axis {
-    RowsAxis = 0,
-    ColsAxis = 1,
-    UnknownAxis = 2,
+  enum class Axis : uint8_t {
+    ROWS = 0,
+    COLS = 1,
+    UNKNOWN = 2,
   };
   // LED settings (persisted in NVS)
   uint8_t brightness;                       // Global brightness 0-255
@@ -158,7 +158,7 @@ class BoardDriver {
   bool waitForSingleRawPress(int& rawRow, int& rawCol, unsigned long stableMs = 500);
   void showCalibrationError();
   bool calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t NUM_PINS, bool firstAxisSwapped);
-  String axisToChessRankFile(Axis axis) const { return (axis == RowsAxis) ? "Rank" : ((axis == ColsAxis) ? "File" : "Unknown"); };
+  String axisToChessRankFile(Axis axis) const { return (axis == Axis::ROWS) ? "Rank" : ((axis == Axis::COLS) ? "File" : "Unknown"); };
 
   void loadShiftRegister(byte data, int bits = 8);
   void disableAllCols();

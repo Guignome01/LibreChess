@@ -1,0 +1,8 @@
+{
+  "name": "game",
+  "version": "1.0.0",
+  "description": "Chess game orchestrator — Game, History, recording, DI interfaces",
+  "dependencies": {
+    "core": "*"
+  }
+}

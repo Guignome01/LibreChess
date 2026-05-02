@@ -14,6 +14,7 @@ LibreChess exposes a REST-like HTTP API from the ESP32's async web server. All e
 | `POST` | `/board-calibrate` | Trigger recalibration on next reboot |
 | `POST` | `/gameselect` | Select a game mode |
 | `POST` | `/resign` | Submit a resign request |
+| `POST` | `/nav` | Navigate move history (undo/redo/first/last) |
 | `GET` | `/games` | List completed games (JSON) or fetch game data (binary) |
 | `DELETE` | `/games` | Delete a completed game |
 | `GET` | `/wifi/networks` | List saved networks and connection state |
@@ -38,7 +39,11 @@ Returns the current board position and evaluation.
 ```json
 {
   "fen": "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1",
-  "evaluation": "0.3"
+  "evaluation": "0.3",
+  "moveIndex": 1,
+  "moveCount": 1,
+  "canUndo": true,
+  "canRedo": false
 }
 ```
 
@@ -46,6 +51,10 @@ Returns the current board position and evaluation.
 |-------|------|-------------|
 | `fen` | string | Current board position in FEN notation |
 | `evaluation` | string | Position evaluation from Stockfish (bot mode only) |
+| `moveIndex` | int | Current move cursor position (0 = start, n = after nth move) |
+| `moveCount` | int | Total number of moves in the history log |
+| `canUndo` | bool | Whether backward navigation is available |
+| `canRedo` | bool | Whether forward navigation is available |
 
 ### `POST /board-update`
 
@@ -113,6 +122,19 @@ Select a game mode from the web UI.
 Submit a resignation request. The board processes it on the next update cycle and shows a confirm dialog on the physical board.
 
 **Response** (JSON): `{ "status": "ok" }`
+
+### `POST /nav`
+
+Navigate the in-game move history. The server applies the action to `Game`'s undo/redo system and the next `GET /board-update` reflects the updated position.
+
+In bot mode, navigation is blocked during the engine's turn (returns `409 Conflict`).
+
+**Body** (`application/x-www-form-urlencoded`):
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `action` | Yes | Navigation action: `undo`, `redo`, `first`, `last` |
+
+**Response** (JSON): `{ "ok": true }` or `409` / `400` with error message.
 
 ### `GET /games`
 

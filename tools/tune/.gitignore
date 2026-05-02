@@ -1,0 +1,5 @@
+obj/
+tune.exe
+*.epd
+*.pgn
+config.json

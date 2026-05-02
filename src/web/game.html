@@ -22,7 +22,7 @@
             <div class="game-mode available mode-2" onclick="showBotConfig()">
                 <h3>Chess Bot</h3>
                 <p>Human vs AI</p>
-                <p>(Stockfish)</p>
+                <p>Multiple engines</p>
             </div>
             <div class="game-mode available mode-3" onclick="selectGame(3)">
                 <h3>Lichess</h3>
@@ -40,6 +40,14 @@
             <h3>Bot Configuration</h3>
 
             <div style="margin-bottom: 15px;">
+                <label style="font-weight: bold;">Engine:</label><br>
+                <select id="botEngine" onchange="updateDifficultyOptions()" style="padding: 8px; font-size: 16px; margin-top: 5px; width: 100%;">
+                    <option value="stockfish" selected>Stockfish (Cloud API)</option>
+                    <option value="librechess">LibreChess (On-board)</option>
+                </select>
+            </div>
+
+            <div style="margin-bottom: 15px;">
                 <label style="font-weight: bold;">Your Color:</label><br>
                 <select id="botPlayerColor" style="padding: 8px; font-size: 16px; margin-top: 5px; width: 100%;">
                     <option value="white">Play as White (bot is Black)</option>
@@ -50,14 +58,6 @@
             <div style="margin-bottom: 15px;">
                 <label style="font-weight: bold;">Difficulty:</label><br>
                 <select id="botDifficulty" style="padding: 8px; font-size: 16px; margin-top: 5px; width: 100%;">
-                    <option value="1">1 — Beginner (Depth 3)</option>
-                    <option value="2">2 — Easy (Depth 5)</option>
-                    <option value="3">3 — Intermediate (Depth 7)</option>
-                    <option value="4" selected>4 — Medium (Depth 9)</option>
-                    <option value="5">5 — Advanced (Depth 11)</option>
-                    <option value="6">6 — Hard (Depth 13)</option>
-                    <option value="7">7 — Expert (Depth 15)</option>
-                    <option value="8">8 — Master (Depth 17)</option>
                 </select>
             </div>
 
@@ -75,6 +75,41 @@
         <a href="./index.html" class="back-button">LibreChess Home</a>
     </div>
     <script>
+        // Engine-specific difficulty levels (label + search depth per level 1-8)
+        const ENGINE_LEVELS = {
+            stockfish: [
+                {label: 'Beginner', depth: 6}, {label: 'Easy', depth: 7},
+                {label: 'Intermediate', depth: 8}, {label: 'Medium', depth: 9},
+                {label: 'Advanced', depth: 10}, {label: 'Hard', depth: 12},
+                {label: 'Expert', depth: 14}, {label: 'Master', depth: 16}
+            ],
+            librechess: [
+                {label: 'Beginner', depth: 1}, {label: 'Easy', depth: 2},
+                {label: 'Intermediate', depth: 3}, {label: 'Medium', depth: 4},
+                {label: 'Advanced', depth: 5}, {label: 'Hard', depth: 6},
+                {label: 'Expert', depth: 7}, {label: 'Master', depth: 8}
+            ]
+        };
+        const DEFAULT_LEVEL = 4;
+
+        function updateDifficultyOptions() {
+            const engine = document.getElementById('botEngine').value;
+            const select = document.getElementById('botDifficulty');
+            const prev = select.value;
+            select.innerHTML = '';
+            const levels = ENGINE_LEVELS[engine] || ENGINE_LEVELS.stockfish;
+            levels.forEach((l, i) => {
+                const opt = document.createElement('option');
+                opt.value = i + 1;
+                opt.textContent = (i + 1) + ' \u2014 ' + l.label + ' (Depth ' + l.depth + ')';
+                if (i + 1 === DEFAULT_LEVEL) opt.selected = true;
+                select.appendChild(opt);
+            });
+            if (prev && select.querySelector('option[value="' + prev + '"]'))
+                select.value = prev;
+        }
+        updateDifficultyOptions();
+
         function showBotConfig() {
             document.getElementById('botConfigPanel').classList.add('visible');
         }
@@ -87,7 +122,8 @@
             if (mode === 1 || mode === 2 || mode === 3 || mode === 4) {
                 const playerColor = mode === 2 ? document.getElementById('botPlayerColor').value : undefined;
                 const difficulty = mode === 2 ? document.getElementById('botDifficulty').value : undefined;
-                Api.selectGame(mode, playerColor, difficulty)
+                const engine = mode === 2 ? document.getElementById('botEngine').value : undefined;
+                Api.selectGame(mode, playerColor, difficulty, engine)
                     .then(response => {
                     if (!response.ok) {
                         if (mode === 3) {
