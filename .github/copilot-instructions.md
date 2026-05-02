@@ -19,7 +19,7 @@ ESP32 Arduino smart chessboard: detects piece movements via hall-effect sensors 
 
 **Game library** (`lib/game/`): `Game` (orchestrator, lifecycle owner), `History` (move log + persistent recording), `IGameStorage`/`IGameObserver` (DI interfaces), `types.h` (game-management types: `GameHeader` packed struct with opaque `meta[]` byte array (mode, engineId, difficulty), recording constants, display-coordinate helpers (`rankChar`, `squareName(row,col)`) used by `Game` wrappers and firmware). Per-file instruction files: `game.instructions.md`, `history.instructions.md`, `game-headers.instructions.md`.
 
-**Firmware** (`src/`): `BoardDriver` (LED + sensors + calibration), `WiFiManagerESP32` (web server + API + WiFi + NVS), `LittleFSStorage` (`IGameStorage` impl), `SerialLogger` (`ILogger` impl), `SystemUtils` (Arduino helpers), `SensorTest` (standalone sensor testing), `BoardMenu`/`MenuNavigator` (board-as-GUI).
+**Firmware** (`src/`): `BoardDriver` (LED + sensors + calibration), `WiFiManagerESP32` (web server + API + WiFi + NVS), `LittleFSStorage` (`IGameStorage` impl under `src/storage/`), `SerialLogger` (`ILogger` impl), `SystemUtils` (Arduino helpers), `SensorTest` (standalone sensor testing), `BoardMenu`/`MenuNavigator` (board-as-GUI).
 
 ### Coordinate System
 Core internals use **LERF (Little-Endian Rank-File)** natively: a1=0, h8=63. Primary conversions: `rankOf(sq) = sq / 8`, `fileOf(sq) = sq % 8`, `makeSquare(rank, file) = rank * 8 + file`. The game layer and firmware use **row/col** display coordinates (row 0 = rank 8, col 0 = file a); bridge functions (`rowColToSquare`, `squareToRow`, `squareToCol`, `rankChar`, `squareName`) live in `game/types.h`.

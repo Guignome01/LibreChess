@@ -1,16 +1,16 @@
-#ifndef LITTLEFS_STORAGE_H
-#define LITTLEFS_STORAGE_H
+#ifndef LIBRECHESS_STORAGE_LITTREFS_H
+#define LIBRECHESS_STORAGE_LITTREFS_H
 
 #include <Arduino.h>
 #include <vector>
 
-#include "storage.h"
 #include "logger.h"
+#include "storage.h"
 
 using namespace LibreChess;
 
 // Concrete IGameStorage implementation backed by LittleFS on ESP32.
-// Manages binary game files under /games/ with crash-recovery semantics.
+// Lives under src/storage/ so additional backends can coexist cleanly.
 class LittleFSStorage : public IGameStorage {
  public:
   explicit LittleFSStorage(ILogger* logger = nullptr);
@@ -33,7 +33,7 @@ class LittleFSStorage : public IGameStorage {
 
   // --- Concrete-only methods (not on IGameStorage) ---
 
-  // JSON array of game metadata — uses ArduinoJson, firmware-specific.
+  // JSON array of game metadata - uses ArduinoJson, firmware-specific.
   String getGameListJSON();
 
   // Build path string for a game id.
@@ -60,4 +60,4 @@ class LittleFSStorage : public IGameStorage {
   static uint32_t getTimestamp();
 };
 
-#endif  // LITTLEFS_STORAGE_H
+#endif  // LIBRECHESS_STORAGE_LITTREFS_H

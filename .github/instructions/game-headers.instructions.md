@@ -20,7 +20,7 @@ description: "Game-layer types, storage interface, observer interface. Use when 
 
 ## `storage.h` — `IGameStorage` Interface
 
-Persistence DI interface. Implemented by `LittleFSStorage` in firmware.
+Persistence DI interface. Implemented by `LittleFSStorage` in `src/storage/littrefs.h`.
 - Lifecycle: `initialize()`, `beginGame(header)`, `finalizeGame(header)`, `discardGame()`, `hasActiveGame()`
 - Moves: `appendMoveData(data, len)`, `truncateMoveData(offset)`
 - FEN: `appendFenEntry(fen) → size_t`, `readFenAt(offset, fen) → bool`

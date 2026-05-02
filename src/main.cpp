@@ -6,7 +6,7 @@
 #include "engine/lichess/lichess_config.h"
 #include "engine/librechess/librechess_provider.h"
 #include "game.h"
-#include "littlefs_storage.h"
+#include "storage/littrefs.h"
 #include "serial_logger.h"
 #include "system_utils.h"
 #include "led_colors.h"

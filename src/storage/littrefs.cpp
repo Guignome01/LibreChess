@@ -1,4 +1,4 @@
-#include "littlefs_storage.h"
+#include "littrefs.h"
 
 #include <ArduinoJson.h>
 #include <LittleFS.h>
@@ -126,7 +126,7 @@ void LittleFSStorage::finalizeGame(const GameHeader& header) {
   discardGame();  // Remove remaining live files (FEN table)
 
   logger_.infof("LittleFSStorage: game saved as %s (%d moves) (%d FEN entries)",
-                   dest.c_str(), hdr.moveCount, hdr.fenEntryCnt);
+                dest.c_str(), hdr.moveCount, hdr.fenEntryCnt);
 }
 
 void LittleFSStorage::discardGame() {
@@ -150,7 +150,7 @@ bool LittleFSStorage::readMoveData(std::vector<uint8_t>& data) {
   File f = LittleFS.open(LIVE_MOVES_PATH, "r");
   if (!f || f.size() < sizeof(GameHeader)) return false;
 
-  // Derive move data size from file — more robust than header's moveCount
+  // Derive move data size from file - more robust than header's moveCount
   // which may lag by one move due to turn-based header flushing.
   f.seek(sizeof(GameHeader));
   size_t dataSize = f.size() - sizeof(GameHeader);
@@ -283,7 +283,7 @@ std::vector<int> LittleFSStorage::listGameIds() {
   return ids;
 }
 
-// Threshold: 2026-02-14T12:32:48Z — any timestamp before this indicates
+// Threshold: 2026-02-14T12:32:48Z - any timestamp before this indicates
 // NTP has not yet synced (ESP32 starts counting from epoch 0 at boot).
 static constexpr uint32_t NTP_SYNC_THRESHOLD = 1771008768UL;
 

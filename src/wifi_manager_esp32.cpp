@@ -2,7 +2,7 @@
 #include "game.h"
 #include "engine/lichess/lichess_config.h"
 #include "system_utils.h"
-#include "littlefs_storage.h"
+#include "storage/littrefs.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <Preferences.h>

@@ -85,8 +85,9 @@ struct GameHeader {
 static_assert(sizeof(GameHeader) == 16, "GameHeader must be 16 bytes");
 
 // On-disk wire format is little-endian, matching the raw memcpy performed by
-// LittleFSStorage and the `getUint16/32(offset, /*littleEndian=*/true)` calls
-// in the web frontend (src/web/board.html).  ESP32 and the native test host
+// the LittleFSStorage implementation in src/storage/littrefs.cpp and the
+// `getUint16/32(offset, /*littleEndian=*/true)` calls in the web frontend
+// (src/web/board.html). ESP32 and the native test host
 // are both LE, so the reinterpret_cast-based I/O is a zero-cost identity.
 // If this ever fires, either the firmware moved to a BE target or the wire
 // format needs explicit serialization helpers.

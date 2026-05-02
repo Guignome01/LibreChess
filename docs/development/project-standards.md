@@ -13,7 +13,7 @@ Formatting is enforced via `.clang-format` at the project root (Google style bas
 | Classes | PascalCase | `BoardDriver`, `Position`, `WiFiManagerESP32` |
 | Methods & variables | camelCase | `readSensors()`, `sideToMove`, `isGameOver` |
 | Constants & macros | UPPER_SNAKE_CASE | `LED_COUNT`, `SENSOR_READ_DELAY_MS`, `DEBOUNCE_MS` |
-| File names | snake_case | `board_driver.cpp`, `game.h`, `littlefs_storage.cpp` |
+| File names | snake_case | `board_driver.cpp`, `game.h`, `storage/littrefs.cpp` |
 | Enum values | UPPER_SNAKE_CASE | `GameResult::CHECKMATE`, `Axis::ROWS` |
 
 ## Architecture Principles
@@ -25,7 +25,7 @@ Each class owns a single responsibility and never crosses into another's domain:
 - `BoardDriver` handles all hardware interaction (LEDs, sensors, calibration). No chess logic.
 - `movegen`/`rules` namespaces implement chess rules and move generation. No hardware access, no network calls.
 - `WiFiManagerESP32` manages WiFi, the web server, and API endpoints. Doesn't touch the board hardware directly.
-- `History` + `LittleFSStorage` own game persistence. Don't know about sensors or LEDs.
+- `History` + concrete storage backends such as `LittleFSStorage` own game persistence. Don't know about sensors or LEDs.
 
 When adding new functionality, determine which component owns that concern and extend it there. If the functionality crosses boundaries, coordinate through the main loop or injection — don't let one component reach into another's internals.
 

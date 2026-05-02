@@ -192,13 +192,13 @@ Manages WiFi connectivity, the web server, and all HTTP API endpoints. Key subsy
 
 **Web resign** — the web UI's resign button sends `POST /resign`. The handler sets `hasPendingResign = true`. The main `loop()` relays this to the active game via `setResignPending(true)`, then clears the web flag. The game's `processResign()` picks it up on the next `update()` call.
 
-### History / Game / LittleFSStorage
+### History / Game / Storage
 
 Game recording and crash recovery follow a layered architecture with clean separation:
 
 - **`History`** (`lib/game/`) — handles in-memory move logging with cursor-based undo/redo and persistent recording orchestration. Recording is automatic: when an `IGameStorage*` is present and a header has been set, `addMove()` persists transparently. Compact 2-byte move encoding via public static `encodeMove()`/`decodeMove()` methods. Manages the `GameHeader`, delegates persistence to `IGameStorage`. Flushes the header to storage every full turn (2 half-moves) to reduce flash wear; FEN snapshots always trigger an immediate flush. Branch-on-undo: when `addMove()` is called with the cursor not at the end, future moves are wiped and storage is truncated via `IGameStorage::truncateMoveData()`. Validates moves during replay — rejects corrupted recordings with invalid moves. Replays games directly into a `Position` and populates the in-memory move log.
 - **`Game`** (`lib/game/`) — central game orchestrator composing `Position` + `History` + `IGameObserver`. Constructor: `(IGameStorage*, IGameObserver*, ILogger*)`. Each mutation (move, load FEN, end game) atomically updates the board, records in history (persistence is automatic via `addMove()`), and notifies the observer. Provides `startNewGame(playerColor, meta)` for atomic board-reset + recording-start. `endGame()` is guarded against double-calls. `calculateMove()` snapshots the current `Position` before delegating to the optional `Engine`, isolating search make/unmake recursion from the live board. `undoMove()`/`redoMove()` step the history cursor and update the board. Exposes convenience pass-throughs to `Position` query methods: `getPossibleMoves()`, `checkEnPassant()` (→ `EnPassantInfo`), `checkCastling()` (→ `CastlingInfo`), `isDraw()` — so game mode classes never need to access `Position` or `movegen`/`rules` directly. Also provides notation convenience methods (`makeMove(string)`, `toCoordinate()`, `parseCoordinate()`, `getHistory(format)`) so firmware never needs to include `notation` directly. Static utility wrappers (`isEmptySquare()`, `pieceColor()`, `pieceType()`, `pieceToChar()`, `colorName()`, `squareName()`, `fileChar()`, `rankChar()`) re-export `piece` and `utils` helpers so firmware never needs to include `piece.h` or `utils.h` directly.
-- **`LittleFSStorage`** (`src/`) — concrete `IGameStorage` backed by LittleFS.
+- **`LittleFSStorage`** (`src/storage/littrefs.h/.cpp`) - concrete `IGameStorage` backed by LittleFS. The dedicated `storage/` folder keeps the firmware root flatter and leaves an obvious home for future backends.
 
 **Binary format** — each game consists of two files:
 - `<id>.bin` (or `live.bin`) — 16-byte packed `GameHeader` followed by 2-byte compact-encoded move entries
@@ -523,7 +523,7 @@ All NVS access uses Arduino's `Preferences` library. `SystemUtils::ensureNvsInit
 
 ### NTP Time Sync
 
-`configTime(0, 0, "pool.ntp.org", "time.nist.gov")` is called once in `setup()`. The call is non-blocking — NTP resolves in the background over WiFi. `LittleFSStorage::getTimestamp()` returns the current Unix epoch, or 0 if NTP hasn't synced yet. Timestamps are stored in game headers for the web UI's game history display.
+`configTime(0, 0, "pool.ntp.org", "time.nist.gov")` is called once in `setup()`. The call is non-blocking - NTP resolves in the background over WiFi. `LittleFSStorage::getTimestamp()` returns the current Unix epoch, or 0 if NTP hasn't synced yet. Timestamps are stored in game headers for the web UI's game history display.
 
 ## Security
 

@@ -9,7 +9,8 @@
 #include "types.h"
 
 // Abstract persistence interface for game recording.
-// Concrete implementations live in the firmware layer (e.g. LittleFSStorage).
+// Concrete implementations live in the firmware layer (e.g. LittleFSStorage in
+// src/storage/littrefs.h).
 // History depends only on this interface — no filesystem coupling in core.
 namespace LibreChess {
 

@@ -59,7 +59,7 @@ A comprehensive map of the codebase, covering firmware, web frontend, build tool
 | File | Purpose |
 |------|---------|
 | `wifi_manager_esp32.h/.cpp` | WiFi connection management (state machine with AP/STA modes), async web server (ESPAsyncWebServer), all HTTP API endpoints, mDNS, known-networks registry (NVS), OTA password management, and board state relay to the web UI. |
-| `littlefs_storage.h/.cpp` | Concrete `IGameStorage` backed by LittleFS. Manages `/games/` directory, binary game files (header + moves + FEN table), storage limits enforcement, and JSON game list API for the web UI. |
+| `storage/littrefs.h/.cpp` | Concrete `IGameStorage` backed by LittleFS. The dedicated `storage/` folder leaves room for additional persistence backends without crowding the firmware root. Manages `/games/` directory, binary game files (header + moves + FEN table), storage limits enforcement, and JSON game list API for the web UI. |
 | `serial_logger.h/.cpp` | Concrete `ILogger` using Arduino `Serial`. |
 | `board_menu.h/.cpp` | Reusable board menu primitive. Displays options as colored LEDs, uses two-phase debounce for selection, supports orientation flipping, back buttons, and blink feedback. Also provides `boardConfirm()` dialog. |
 | `menu_navigator.h/.cpp` | Stack-based menu orchestrator (max depth 4). Push/pop navigation, auto back-button handling, parent menu re-display. |
