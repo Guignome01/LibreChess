@@ -231,17 +231,22 @@ constexpr void applyMove(ReplayBoard& b, int from, int to) {
 // Constexpr book data builder
 // ---------------------------------------------------------------------------
 
-// Maximum entries across all lines.  48 lines × ~12 half-moves = ~576 max,
-// but deduplication reduces this.  768 provides comfortable headroom.
+// Maximum entries across all lines.  43 lines currently produce 596 raw
+// half-move entries.  768 keeps comfortable headroom for future curated lines.
 static constexpr int MAX_BOOK_ENTRIES = 768;
 
 struct BookData {
-  BookEntry entries[MAX_BOOK_ENTRIES]{};
+  uint64_t hashes[MAX_BOOK_ENTRIES]{};
+  uint8_t from[MAX_BOOK_ENTRIES]{};
+  uint8_t to[MAX_BOOK_ENTRIES]{};
   int count = 0;
 };
 
+static_assert(sizeof(BookData) == MAX_BOOK_ENTRIES * 10 + 8,
+              "BookData should stay tightly packed for ESP32 flash use");
+
 // Parse one opening line (space-separated coordinate moves like "e2e4 e7e5 ...")
-// and append one BookEntry per half-move to `data`.
+// and append one packed book row per half-move to `data`.
 BOOK_CX void parseLine(BookData& data, const char* line) {
   ReplayBoard board;  // fresh starting position
 
@@ -252,15 +257,18 @@ BOOK_CX void parseLine(BookData& data, const char* line) {
     if (line[i] == '\0') break;
 
     // Parse "e2e4" — exactly 4 characters
+    if (line[i + 1] == '\0' || line[i + 2] == '\0' ||
+        line[i + 3] == '\0')
+      break;
     int from = parseSquare(&line[i]);
     int to   = parseSquare(&line[i + 2]);
     if (from < 0 || to < 0) break;
 
     // Record the entry *before* the move is applied.
     uint64_t h = computeHash(board);
-    data.entries[data.count].hash = h;
-    data.entries[data.count].from = static_cast<uint8_t>(from);
-    data.entries[data.count].to   = static_cast<uint8_t>(to);
+    data.hashes[data.count] = h;
+    data.from[data.count] = static_cast<uint8_t>(from);
+    data.to[data.count]   = static_cast<uint8_t>(to);
     ++data.count;
 
     applyMove(board, from, to);
@@ -432,19 +440,19 @@ bool probe(uint64_t hash, uint8_t& from, uint8_t& to, uint64_t& rng) {
   int count = 0;
 
   for (int i = 0; i < BOOK.count; ++i) {
-    if (BOOK.entries[i].hash != hash) continue;
+    if (BOOK.hashes[i] != hash) continue;
 
     // Deduplicate: skip if we already have this (from, to).
     bool dup = false;
     for (int j = 0; j < count; ++j) {
-      if (candidates[j].from == BOOK.entries[i].from &&
-          candidates[j].to   == BOOK.entries[i].to) {
+      if (candidates[j].from == BOOK.from[i] &&
+          candidates[j].to   == BOOK.to[i]) {
         dup = true;
         break;
       }
     }
     if (!dup && count < 16) {
-      candidates[count++] = {BOOK.entries[i].from, BOOK.entries[i].to};
+      candidates[count++] = {BOOK.from[i], BOOK.to[i]};
     }
   }
 

@@ -11,9 +11,9 @@ Header-only foundations shared by all core modules.
 
 - `Color` (WHITE=0, BLACK=1), `PieceType` (NONE..KING), `Piece` (bit-packed `Color<<3 | PieceType`)
 - `GameResult`, `MoveFormat` (COORDINATE, SAN, LAN)
-- `PositionState` — castlingRights, epSquare, halfmoveClock, fullmoveClock
+- `PositionState` — castlingRights, epSquare, halfmoveClock (saturates at 100), fullmoveClock
 - `Square` (`uint8_t`, SQ_NONE=255, LERF 0–63)
-- `HashHistory` — `keys[128]`, `count` (threefold detection)
+- `HashHistory` — `keys[256]`, `count` (threefold detection; `recordPosition()` reserves an append slot when compacting)
 - `EnPassantInfo`, `CastlingInfo` — result structs for EP/castling detection
 - `gameResultName(GameResult) → const char*`
 
@@ -64,9 +64,10 @@ Header-only foundations shared by all core modules.
 ## `hash_table.h` — Generic Hash Table Base
 
 - `HashTableBase<Entry>` template: `entries` pointer, `size`, `mask` (size-1 for fast index)
-- `resize(bytes)` — rounds down to power-of-two entry count via `utils::roundDownPow2`, allocates with `new(std::nothrow)`
+- `resize(numEntries)` — rounds down to power-of-two entry count via `utils::roundDownPow2`, allocates with `new(std::nothrow)`
 - `free()` — `delete[]` + null
 - `clear()` — `memset` zero
+- `isAllocated()` / `allocationFailed()` — diagnostics for ESP32 heap-pressure cases. A failed non-zero resize leaves the table empty and records the failure flag until the next resize/free.
 - Inherited by `eval::PawnHashTable`, `eval::EvalHashTable` (core), and `search::TranspositionTable` (engine)
 - DRY: eliminates duplicate resize/free/clear across all hash table types
 

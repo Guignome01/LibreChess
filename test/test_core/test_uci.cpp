@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include <time_management.h>
 #include <uci.h>
 
 #include "../test_helpers.h"
@@ -146,6 +147,16 @@ static void test_uci_setoption_hash(void) {
   TEST_ASSERT_TRUE(contains(out, "readyok"));
 }
 
+static void test_uci_engine_hash_tables_report_ready(void) {
+  uci::UCIState state(nullptr, 64);
+  TEST_ASSERT_TRUE(state.engine.hashTablesReady());
+  TEST_ASSERT_FALSE(state.engine.hashTableAllocationFailed());
+
+  send(state, "setoption name Hash value 1");
+  TEST_ASSERT_TRUE(state.engine.hashTablesReady());
+  TEST_ASSERT_FALSE(state.engine.hashTableAllocationFailed());
+}
+
 // ===========================================================================
 // go movetime — respects time limit
 // ===========================================================================
@@ -155,6 +166,22 @@ static void test_uci_go_movetime(void) {
   send(state, "position startpos");
   // Very short movetime — should still find a move
   std::string out = send(state, "go movetime 50");
+  TEST_ASSERT_TRUE(contains(out, "bestmove"));
+  TEST_ASSERT_FALSE(contains(out, "bestmove 0000"));
+}
+
+static void test_time_management_zero_clock_is_bounded(void) {
+  search::SearchLimits limits = time_management::computeTimeLimits(
+      0, 0, 0, 0, 0, Color::WHITE);
+  TEST_ASSERT_EQUAL_UINT32(1, limits.softTimeMs);
+  TEST_ASSERT_EQUAL_UINT32(1, limits.hardTimeMs);
+}
+
+static void test_uci_negative_clock_values_do_not_wrap(void) {
+  uci::UCIState state(chronoMillis, 64);
+  send(state, "setoption name OwnBook value false");
+  send(state, "position fen 1k6/8/1K6/8/8/8/8/7R w - - 0 1");
+  std::string out = send(state, "go wtime -1 btime -1 movestogo 1");
   TEST_ASSERT_TRUE(contains(out, "bestmove"));
   TEST_ASSERT_FALSE(contains(out, "bestmove 0000"));
 }
@@ -238,7 +265,10 @@ void register_uci_tests() {
   RUN_TEST(test_uci_quit);
   RUN_TEST(test_uci_mate_score);
   RUN_TEST(test_uci_setoption_hash);
+  RUN_TEST(test_uci_engine_hash_tables_report_ready);
   RUN_TEST(test_uci_go_movetime);
+  RUN_TEST(test_time_management_zero_clock_is_bounded);
+  RUN_TEST(test_uci_negative_clock_values_do_not_wrap);
   RUN_TEST(test_uci_position_invalid_fen);
   RUN_TEST(test_uci_position_illegal_move);
   RUN_TEST(test_uci_position_unparseable_move);

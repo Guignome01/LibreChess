@@ -11,7 +11,8 @@ Header-only, single pure function. Converts UCI clock parameters into `SearchLim
 
 ```cpp
 namespace time_management {
-  SearchLimits computeTimeLimits(int wtime, int btime, int winc, int binc,
+  SearchLimits computeTimeLimits(uint32_t wtime, uint32_t btime,
+                                 uint32_t winc, uint32_t binc,
                                  int movestogo, Color sideToMove);
 }
 ```
@@ -22,24 +23,29 @@ namespace time_management {
 - `movestogo` — moves until next time control (0 = sudden death)
 - `sideToMove` — which side's clock to use
 
-**Returns**: `SearchLimits` with `softTime` and `hardTime` set, `timeManaged = true`.
+**Returns**: `SearchLimits` with `softTimeMs` and `hardTimeMs` set. `maxDepth` and `stop` keep their default values so callers can combine time controls with depth/stop policy.
 
 ## Formula
 
 ```
-remaining = (sideToMove == WHITE) ? wtime : btime
-increment = (sideToMove == WHITE) ? winc  : binc
-base      = movestogo > 0 ? remaining / movestogo : remaining / 30
-softTime  = base + increment / 2
-hardTime  = min(remaining - MOVE_OVERHEAD, softTime * HARD_TIME_MULTIPLIER)
+remaining     = (sideToMove == WHITE) ? wtime : btime
+increment     = (sideToMove == WHITE) ? winc  : binc
+safeRemaining = max(1, remaining - MOVE_OVERHEAD)
+softTime      = movestogo > 0
+              ? safeRemaining / movestogo + increment
+              : safeRemaining / 30 + increment / 2
+hardTime      = min(max(1, safeRemaining / 4), softTime * HARD_TIME_MULTIPLIER)
+softTime      = min(softTime, hardTime, safeRemaining)
+hardTime      = min(hardTime, safeRemaining)
 ```
 
-Constants: `MOVE_OVERHEAD = 50ms`, `HARD_TIME_MULTIPLIER = 3`.
+Constants: `MOVE_OVERHEAD = 50ms`, `HARD_TIME_MULTIPLIER = 4`.
 
 ## Design Decisions
 
 - **Header-only** — single function, no state, no `.cpp` file needed.
 - **Pure function** — no side effects, easy to unit test and reuse.
+- **Saturating/bounded arithmetic** — all public clock inputs are `uint32_t`, internal math uses `uint64_t`, and zero-clock/pathological inputs still produce at least `softTimeMs=1`, `hardTimeMs=1`.
 - **Called from two places**: `uci::cmdGo()` (CLI) and potentially `LibreChessProvider` (firmware, if time-based play is added).
 - **`movestogo = 0` means sudden death** — uses `remaining / 30` as a reasonable default.
 

@@ -2,6 +2,7 @@
 #include "game_mode/game_mode.h"
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
+#include <new>
 
 // Map Lichess status string to GameResult enum.
 static GameResult lichessStatusToResult(const String& status) {
@@ -95,7 +96,12 @@ bool LichessProvider::initialize(EngineInitResult& result) {
 // ---------------------------------------------------------------
 
 void LichessProvider::requestMove(const std::string& /*fen*/) {
-  auto* ctx = new TaskContext();
+  auto* ctx = new (std::nothrow) TaskContext();
+  if (!ctx) {
+    logger_.error("LichessProvider: failed to allocate task context");
+    setImmediateResult(EngineResult{});
+    return;
+  }
   ctx->config = config_;
   ctx->gameId = currentGameId_;
   ctx->playerColor = playerColor_;
@@ -107,7 +113,7 @@ void LichessProvider::requestMove(const std::string& /*fen*/) {
 bool LichessProvider::checkResult(EngineResult& result) {
   if (!peekResult(result)) return false;
   auto* ctx = static_cast<TaskContext*>(activeTask_);
-  lastKnownMoveCount_ = ctx->lastKnownMoveCount;
+  if (ctx) lastKnownMoveCount_ = ctx->lastKnownMoveCount;
   finishTask();
   return true;
 }

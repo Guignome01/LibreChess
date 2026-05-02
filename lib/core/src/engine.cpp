@@ -116,4 +116,13 @@ void Engine::resizeTT(int entries) {
   tt_.resize(entries);
 }
 
+bool Engine::hashTablesReady() const {
+  return tt_.isAllocated() && pawnHash_.isAllocated() && evalHash_.isAllocated();
+}
+
+bool Engine::hashTableAllocationFailed() const {
+  return tt_.allocationFailed() || pawnHash_.allocationFailed() ||
+         evalHash_.allocationFailed();
+}
+
 }  // namespace LibreChess

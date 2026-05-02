@@ -15,10 +15,9 @@
 // tables, and SearchState that persist for the game's lifetime.  Each
 // requestMove() spawns a FreeRTOS task that:
 //   1. Wires the cancellation flag.
-//   2. Loads the FEN into Game's position.
-//   3. Calls game->calculateMove(limits).
-//   4. Converts the SearchResult to an EngineResult.
-//   5. Sets the result and marks ready.
+//   2. Calls game->calculateMove(limits) on a Game-owned snapshot.
+//   3. Converts the SearchResult to an EngineResult.
+//   4. Sets the result and marks ready.
 //
 // The task is cooperative-cancellable via ctx->cancel → SearchLimits.stop.
 // ---------------------------------------------------------------------------
@@ -73,6 +72,13 @@ bool LibreChessProvider::initialize(EngineInitResult& result) {
                  ttEntries, static_cast<unsigned>(ttEntries * ENTRY_SIZE));
 
   game_->initSearch(ttEntries);
+  if (!game_->searchInitialized()) {
+    logger_.error("LibreChess: search engine allocation failed; fallback moves will be used");
+  } else if (game_->searchHashTableAllocationFailed()) {
+    logger_.error("LibreChess: search hash table allocation failed; continuing with reduced caching");
+  } else if (!game_->searchHashTablesReady()) {
+    logger_.info("LibreChess: search initialized without all hash tables");
+  }
   game_->setTimeFunc([]() -> uint32_t { return millis(); });
 
   result.playerColor = playerColor_;
@@ -85,15 +91,20 @@ bool LibreChessProvider::initialize(EngineInitResult& result) {
 }
 
 void LibreChessProvider::requestMove(const std::string& fen) {
-  auto* ctx = new TaskContext();
+  auto* ctx = new (std::nothrow) TaskContext();
+  if (!ctx) {
+    logger_.error("LibreChessProvider: failed to allocate task context");
+    setImmediateResult(EngineResult{});
+    return;
+  }
   ctx->fen = fen;
   ctx->depth = depth_;
   ctx->game = game_;
   // Stack budget for lcTask (64 KiB = 65536 bytes):
-  //   findBestMove frame (MoveList + SearchResult) .... ~1,200 B
+  //   Position snapshot + findBestMove frame .......... ~3,500 B
   //   Per negamax ply (MovePicker with int16_t arrays) . ~2,200 B × depth
   //   Per quiescence ply (MoveList + int16_t scores) .. ~1,200 B × QS depth
-  //   Max depth 8 + extensions (~6) = 14 negamax + 16 QS ≈ 50 KiB.
+  //   Max depth 8 + extensions (~6) = 14 negamax + 16 QS ≈ 52 KiB.
   //   64 KiB provides comfortable headroom for all difficulty levels.
   spawnTask(ctx, "lcTask", taskFunction, 65536);
 }

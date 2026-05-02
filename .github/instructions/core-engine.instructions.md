@@ -21,6 +21,8 @@ class Engine {
   void setExternalStop(std::atomic<bool>* flag);
   void clearState();
   void resizeTT(int entries);
+  bool hashTablesReady() const;
+  bool hashTableAllocationFailed() const;
 
   search::SearchState& searchState();
   const search::SearchState& searchState() const;
@@ -31,6 +33,7 @@ class Engine {
 - `calculateMove(pos, limits, info)` — wires stop flag (external if set, else internal), delegates to `search::findBestMove()`.
 - `clearState()` — clears all hash tables + search heuristics. Called by UCI `ucinewgame` and `Game::newGame()`.
 - `resizeTT(entries)` — frees old TT and allocates new. Used by UCI `setoption name Hash`.
+- `hashTablesReady()` / `hashTableAllocationFailed()` — expose allocation diagnostics for TT, pawn hash, and eval hash. Search can still run with empty hash tables, but firmware/tests can detect degraded operation after heap-pressure allocation failures.
 - `searchState()` — direct access for consumers needing fine-grained control (book settings, etc.).
 
 ## Design Decisions

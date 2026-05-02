@@ -496,6 +496,20 @@ static void test_pawn_hash_probe_miss(void) {
   ph.free();
 }
 
+static void test_hash_table_allocation_status(void) {
+  eval::PawnHashTable ph;
+  TEST_ASSERT_FALSE(ph.isAllocated());
+  TEST_ASSERT_FALSE(ph.allocationFailed());
+
+  ph.resize(64);
+  TEST_ASSERT_TRUE(ph.isAllocated());
+  TEST_ASSERT_FALSE(ph.allocationFailed());
+
+  ph.free();
+  TEST_ASSERT_FALSE(ph.isAllocated());
+  TEST_ASSERT_FALSE(ph.allocationFailed());
+}
+
 static void test_pawn_hash_store_and_probe(void) {
   eval::PawnHashTable ph;
   ph.resize(64);
@@ -952,6 +966,7 @@ void register_evaluation_tests() {
 
   // Pawn hash table
   RUN_TEST(test_pawn_hash_probe_miss);
+  RUN_TEST(test_hash_table_allocation_status);
   RUN_TEST(test_pawn_hash_store_and_probe);
   RUN_TEST(test_pawn_hash_clear_invalidates);
   RUN_TEST(test_pawn_hash_integration);

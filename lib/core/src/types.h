@@ -141,9 +141,9 @@ struct PositionState {
 
 // Fixed-capacity Zobrist hash history for repetition detection.
 // Must be large enough to hold the longest plausible sequence of reversible
-// moves from both the game (halfmove clock up to ~200 in engine-vs-engine
-// testing without 50-move adjudication) and the search tree (MAX_PLY deep).
-// 256 entries = 2 KiB, handles halfmove clocks up to ~200 + search depth 48.
+// moves from both the game (halfmove clock saturates at the 100 half-move
+// rule limit) and the search tree (MAX_PLY deep). 256 entries = 2 KiB,
+// leaving room for the reversible-move window plus search plies.
 struct HashHistory {
   static constexpr int MAX_SIZE = 256;
 

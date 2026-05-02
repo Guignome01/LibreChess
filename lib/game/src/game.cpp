@@ -1,6 +1,7 @@
 #include "game.h"
 
 #include <cstring>
+#include <new>
 
 #include "notation.h"
 
@@ -24,7 +25,14 @@ static const char* STANDARD_START_FEN =
 
 void Game::initSearch(int ttSize) {
   if (engine_) return;
-  engine_ = new Engine(ttSize);
+  engine_ = new (std::nothrow) Engine(ttSize);
+  if (!engine_) {
+    logger_.error("Game: failed to allocate search engine");
+    return;
+  }
+  if (engine_->hashTableAllocationFailed()) {
+    logger_.error("Game: one or more search hash tables failed to allocate");
+  }
 }
 
 search::SearchResult Game::calculateMove(const search::SearchLimits& limits) {
@@ -35,7 +43,8 @@ search::SearchResult Game::calculateMove(const search::SearchLimits& limits) {
     logger_.error("Game: calculateMove called before initSearch");
     return search::SearchResult{};
   }
-  return engine_->calculateMove(board_, limits);
+  Position searchBoard = board_;
+  return engine_->calculateMove(searchBoard, limits);
 }
 
 void Game::setTimeFunc(search::TimeFunc fn) {

@@ -67,6 +67,13 @@ class TestObserver : public IGameObserver {
   void onBoardStateChanged(const std::string&, int) override { callCount++; }
 };
 
+class TestLogger : public ILogger {
+ public:
+  int errorCount = 0;
+  void info(const char*) override {}
+  void error(const char*) override { ++errorCount; }
+};
+
 void test_game_observer_fires_on_move(void) {
   TestObserver obs;
   Game g(nullptr, &obs);
@@ -633,6 +640,44 @@ void test_game_cache_invalidated_on_load_fen(void) {
 }
 
 // ---------------------------------------------------------------------------
+// Search facade
+// ---------------------------------------------------------------------------
+
+void test_game_calculate_move_reported_master_position_applicable(void) {
+  Game g;
+  const char* fen =
+      "1r3rk1/2pq2b1/2npb2p/3Np1p1/1PP2p2/5N1P/2Q2PPB/1RR3K1 b - - 0 23";
+  TEST_ASSERT_TRUE(g.loadFEN(fen));
+  g.initSearch(512);
+
+  search::SearchLimits limits;
+  limits.maxDepth = 8;
+  std::string before = g.getFen();
+  search::SearchResult result = g.calculateMove(limits);
+
+  TEST_ASSERT_FALSE(result.bestMove.isNull());
+  TEST_ASSERT_EQUAL_STRING(before.c_str(), g.getFen().c_str());
+  MoveResult applied = g.makeMove(moveToStr(result.bestMove));
+  TEST_ASSERT_TRUE(applied.valid());
+}
+
+void test_game_search_diagnostics_report_initialized_resources(void) {
+  TestLogger logger;
+  Game g(nullptr, nullptr, &logger);
+
+  TEST_ASSERT_FALSE(g.searchInitialized());
+  TEST_ASSERT_FALSE(g.searchHashTablesReady());
+  TEST_ASSERT_FALSE(g.searchHashTableAllocationFailed());
+
+  g.initSearch(512);
+
+  TEST_ASSERT_TRUE(g.searchInitialized());
+  TEST_ASSERT_TRUE(g.searchHashTablesReady());
+  TEST_ASSERT_FALSE(g.searchHashTableAllocationFailed());
+  TEST_ASSERT_EQUAL_INT(0, logger.errorCount);
+}
+
+// ---------------------------------------------------------------------------
 // Display-coordinate helpers (game/types.h)
 // ---------------------------------------------------------------------------
 
@@ -733,6 +778,10 @@ void register_game_tests() {
   RUN_TEST(test_game_fen_updates_after_move);
   RUN_TEST(test_game_cache_invalidated_on_undo);
   RUN_TEST(test_game_cache_invalidated_on_load_fen);
+
+  // Search facade
+  RUN_TEST(test_game_calculate_move_reported_master_position_applicable);
+  RUN_TEST(test_game_search_diagnostics_report_initialized_resources);
 
   // Display-coordinate helpers (game/types.h)
   RUN_TEST(test_display_rankChar_all_rows);

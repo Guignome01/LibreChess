@@ -52,29 +52,33 @@ inline search::SearchLimits computeTimeLimits(uint32_t wtime, uint32_t btime,
                                               int movestogo, Color sideToMove) {
   search::SearchLimits limits;
 
-  uint32_t remaining = (sideToMove == Color::WHITE) ? wtime : btime;
-  uint32_t increment = (sideToMove == Color::WHITE) ? winc : binc;
+  uint64_t remaining = (sideToMove == Color::WHITE) ? wtime : btime;
+  uint64_t increment = (sideToMove == Color::WHITE) ? winc : binc;
 
   // Safety margin — never use all remaining time
-  uint32_t safeRemaining = (remaining > 50) ? remaining - 50 : 1;
+  uint64_t safeRemaining = (remaining > 50) ? remaining - 50 : 1;
 
-  uint32_t softTime;
+  uint64_t softTime;
   if (movestogo > 0) {
     softTime = safeRemaining / static_cast<uint32_t>(movestogo) + increment;
   } else {
     softTime = safeRemaining / 30 + increment / 2;
   }
+  if (softTime == 0) softTime = 1;
 
   // Hard limit: never exceed 1/4 of remaining time or 4× soft time
-  uint32_t hardTime = std::min(safeRemaining / 4, softTime * 4);
+  uint64_t quarterRemaining = safeRemaining / 4;
+  if (quarterRemaining == 0) quarterRemaining = 1;
+  uint64_t hardTime = std::min(quarterRemaining, softTime * 4);
+  if (hardTime == 0) hardTime = 1;
 
   // Ensure soft ≤ hard ≤ remaining
   softTime = std::min(softTime, safeRemaining);
   hardTime = std::min(hardTime, safeRemaining);
   softTime = std::min(softTime, hardTime);
 
-  limits.softTimeMs = softTime;
-  limits.hardTimeMs = hardTime;
+  limits.softTimeMs = static_cast<uint32_t>(softTime);
+  limits.hardTimeMs = static_cast<uint32_t>(hardTime);
 
   return limits;
 }

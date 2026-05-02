@@ -1,6 +1,7 @@
 #include "fen.h"
 
 #include <cctype>
+#include <cstdint>
 #include <cstring>
 #include <string>
 
@@ -16,6 +17,21 @@ static std::string nextToken(std::string& remaining) {
   std::string token = (sp != std::string::npos) ? remaining.substr(0, sp) : remaining;
   remaining = (sp != std::string::npos) ? remaining.substr(sp + 1) : "";
   return token;
+}
+
+// Parse an unsigned decimal field and reject values above maxValue.
+static bool parseUnsignedBounded(const std::string& field,
+                                 uint32_t maxValue, uint32_t& value) {
+  if (field.empty()) return false;
+  uint32_t result = 0;
+  for (char c : field) {
+    if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+    uint32_t digit = static_cast<uint32_t>(c - '0');
+    if (result > (maxValue - digit) / 10) return false;
+    result = result * 10 + digit;
+  }
+  value = result;
+  return true;
 }
 
 std::string boardToFEN(const Piece mailbox[], Color currentTurn, const PositionState* state) {
@@ -142,14 +158,17 @@ void fenToBoard(const std::string& fen, BitboardSet& bb, Piece mailbox[],
 
   // Halfmove clock
   std::string halfmoveStr = nextToken(remaining);
-  if (!halfmoveStr.empty() && halfmoveStr.size() <= 9 && state != nullptr)
-    state->halfmoveClock = std::stoi(halfmoveStr);
+  uint32_t clockValue = 0;
+  if (!halfmoveStr.empty() && state != nullptr &&
+      parseUnsignedBounded(halfmoveStr, 100, clockValue))
+    state->halfmoveClock = static_cast<uint8_t>(clockValue);
 
   // Fullmove number
   std::string fullmoveStr = nextToken(remaining);
-  if (!fullmoveStr.empty() && fullmoveStr.size() <= 9 && state != nullptr) {
-    int fullmove = std::stoi(fullmoveStr);
-    state->fullmoveClock = fullmove > 0 ? fullmove : 1;
+  if (!fullmoveStr.empty() && state != nullptr &&
+      parseUnsignedBounded(fullmoveStr, 65535, clockValue)) {
+    state->fullmoveClock = clockValue > 0 ? static_cast<uint16_t>(clockValue)
+                                          : 1;
   }
 }
 
@@ -226,16 +245,11 @@ static bool validateEPField(const std::string& field) {
   return field[1] == '3' || field[1] == '6';
 }
 
-// Validate a clock field (halfmove clock or fullmove number).
-// Must be a non-empty string of digits that fits in an int.
-static bool validateClockField(const std::string& field) {
-  if (field.empty()) return false;
-  for (char c : field) {
-    if (!std::isdigit(static_cast<unsigned char>(c))) return false;
-  }
-  // Reject absurdly long numeric strings that would overflow std::stoi.
-  if (field.size() > 9) return false;
-  return true;
+// Validate a clock field and ensure it fits the PositionState storage.
+static bool validateClockField(const std::string& field,
+                               uint32_t minValue, uint32_t maxValue) {
+  uint32_t value = 0;
+  return parseUnsignedBounded(field, maxValue, value) && value >= minValue;
 }
 
 bool validateFEN(const std::string& fen) {
@@ -270,13 +284,12 @@ bool validateFEN(const std::string& fen) {
 
   // Halfmove clock
   if (remaining.empty()) return true;
-  if (!validateClockField(nextToken(remaining))) return false;
+  if (!validateClockField(nextToken(remaining), 0, 100)) return false;
 
   // Fullmove number
   if (remaining.empty()) return true;
   std::string fullmoveField = nextToken(remaining);
-  if (!validateClockField(fullmoveField)) return false;
-  if (std::stoi(fullmoveField) < 1) return false;
+  if (!validateClockField(fullmoveField, 1, 65535)) return false;
 
   return true;
 }

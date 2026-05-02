@@ -26,15 +26,22 @@ struct HashTableBase {
   Entry* entries = nullptr;
   int size = 0;   // Number of entries (power of 2)
   int mask = 0;   // size - 1
+  bool allocationFailed_ = false;
 
   // Allocate entries.  `numEntries` is rounded down to nearest power of 2.
   void resize(int numEntries) {
     free();
+    allocationFailed_ = false;
     size = utils::roundDownPow2(numEntries);
     if (size == 0) return;
     mask = size - 1;
     entries = new (std::nothrow) Entry[size];
-    if (!entries) { size = 0; mask = 0; return; }
+    if (!entries) {
+      size = 0;
+      mask = 0;
+      allocationFailed_ = true;
+      return;
+    }
     clear();
   }
 
@@ -44,12 +51,19 @@ struct HashTableBase {
     entries = nullptr;
     size = 0;
     mask = 0;
+    allocationFailed_ = false;
   }
 
   // Clear all entries (zero-fill).
   void clear() {
     if (entries) std::memset(entries, 0, size * sizeof(Entry));
   }
+
+  // True when resize() successfully allocated backing storage.
+  bool isAllocated() const { return entries != nullptr; }
+
+  // True when the most recent non-zero resize() request failed to allocate.
+  bool allocationFailed() const { return allocationFailed_; }
 };
 
 }  // namespace LibreChess

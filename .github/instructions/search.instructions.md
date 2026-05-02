@@ -22,6 +22,7 @@ Fail-soft negamax + alpha-beta + quiescence with iterative deepening. Stateless 
 **Entry point**: `findBestMove(pos, limits, state, info = nullptr) → SearchResult`
 - Takes `Position&` (by ref — uses make/unmake directly), `SearchLimits`, `SearchState&` (required — caller must own, and must set infrastructure fields: `timeFunc`, `tt`, `pawnHash`, `evalHash` before calling), optional `InfoCallback`
 - Returns `SearchResult {bestMove, score, depth, nodes, pv[MAX_PV_LEN], pvLength}`
+- `limits.maxDepth` is normalized inside `findBestMove()` to `[1, MAX_PLY]`. External callers may still clamp earlier for UI/protocol feedback, but the search entry point is the final guard because LMR tables and search stacks are fixed-size.
 
 **Types**:
 - `SearchLimits` — `maxDepth`, `softTimeMs`, `hardTimeMs`, `stop: atomic<bool>*`
@@ -109,6 +110,7 @@ Also contains heuristic update functions: `updateKillers`, `updateHistory` (grav
 ## Key File-Local Helpers (search.cpp)
 
 - `LMR_TABLE` — constexpr `LMRTable` struct (rodata segment, ~3 KiB). `.data[d][m]` holds the base LMR reduction. Uses atanh-based constexpr natural-log approximation. No runtime initialization needed.
+- Depth indexes into `LMR_TABLE` are clamped before lookup, matching the public `findBestMove()` max-depth clamp and preventing protocol-supplied oversized depths from reaching fixed-size tables.
 - `collectPV()` — triangular PV memcpy
 - `validatePV()` — replays the extracted PV on the root position, truncating at the first illegal or drawn move. Uses `isMoveValid()` (from move_picker.h) to check full legality and reconstruct correct flags (EP, castling, promotion type) from the board state, then writes the corrected move back into the result PV. Truncates at twofold repetition (`isRepetition()`) or 50-move rule, matching the search's own draw detection. This catches stale PV entries (hash collisions, SE exclusion search leakage, inter-iteration staleness) and ensures UCI output has correct move notation. Called after PV extraction and before the info callback in both completed-iteration and stopped-mid-iteration paths.
 - `computeLMRReduction()` — base table + history/improving/PV adjustments, clamped to `[1, max(1, depth-3)]`

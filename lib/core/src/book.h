@@ -5,7 +5,7 @@
 // Internal opening book — compact, static-memory-resident.
 //
 // ~43 curated opening lines covering all major families, built at static
-// initialization into an array of (hash, from, to) entries.  Probed via
+// initialization into packed (hash, from, to) storage.  Probed via
 // linear scan in findBestMove() before iterative deepening — if a position
 // is in the book, a randomly-selected book move is returned instantly.
 //
@@ -21,9 +21,10 @@ namespace LibreChess {
 namespace book {
 
 // ---------------------------------------------------------------------------
-// BookEntry — one (position, move) pair.  10 bytes (padded to 16 by array
-// alignment).  No promotion field — no promotions occur within the first
-// ~10 half-moves of standard opening lines.
+// BookEntry — public one (position, move) pair shape.  The internal compiled
+// book uses packed parallel arrays to avoid per-entry struct padding.  No
+// promotion field — no promotions occur within the first ~10 half-moves of
+// standard opening lines.
 // ---------------------------------------------------------------------------
 
 struct BookEntry {

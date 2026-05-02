@@ -2,6 +2,8 @@
 
 #include <cctype>
 
+#include "fen.h"
+
 namespace LibreChess {
 
 // ---------------------------------------------------------------------------
@@ -62,7 +64,8 @@ void stripTrailingComma(std::string& s) {
 
 /// Parse a single operation (opcode + operands) starting at `pos`.
 /// Stops at semicolon or end-of-line. Advances `pos` past the semicolon.
-EPDOperation parseOperation(const std::string& line, size_t& pos) {
+EPDOperation parseOperation(const std::string& line, size_t& pos,
+                            bool& truncated) {
   EPDOperation op;
   op.opcode = nextToken(line, pos);
   if (op.opcode.empty()) return op;
@@ -74,7 +77,11 @@ EPDOperation parseOperation(const std::string& line, size_t& pos) {
     skipSpaces(line, pos);
     if (pos >= line.size() || line[pos] == ';') break;
 
-    if (op.operandCount >= EPD_MAX_OPERANDS) break;
+    if (op.operandCount >= EPD_MAX_OPERANDS) {
+      truncated = true;
+      while (pos < line.size() && line[pos] != ';') ++pos;
+      break;
+    }
 
     if (line[pos] == '"') {
       // Quoted string operand (id, c0, etc.)
@@ -118,8 +125,11 @@ EPDRecord parseEPDLine(const std::string& line) {
 
   // Parse operations until end-of-line.
   skipSpaces(line, pos);
-  while (pos < line.size() && rec.operationCount < EPD_MAX_OPERATIONS) {
-    EPDOperation op = parseOperation(line, pos);
+  while (pos < line.size()) {
+    if (rec.operationCount >= EPD_MAX_OPERATIONS) return EPDRecord{};
+    bool truncated = false;
+    EPDOperation op = parseOperation(line, pos, truncated);
+    if (truncated) return EPDRecord{};
     if (op.opcode.empty()) break;
     rec.operations[rec.operationCount++] = op;
     skipSpaces(line, pos);
@@ -133,38 +143,26 @@ bool validateEPDLine(const std::string& line) {
 
   size_t pos = 0;
 
-  // Field 1: piece placement — must contain exactly 7 slashes.
-  std::string placement = nextToken(line, pos);
-  if (placement.empty()) return false;
-
-  int slashes = 0;
-  for (char c : placement) {
-    if (c == '/')
-      ++slashes;
-    else if (!std::isdigit(c) && std::string("PNBRQKpnbrqk").find(c) == std::string::npos)
-      return false;
-  }
-  if (slashes != 7) return false;
-
-  // Field 2: side to move — must be 'w' or 'b'.
-  std::string side = nextToken(line, pos);
-  if (side != "w" && side != "b") return false;
-
-  // Field 3: castling — must be '-' or combination of KQkq.
-  std::string castling = nextToken(line, pos);
-  if (castling.empty()) return false;
-  if (castling != "-") {
-    for (char c : castling)
-      if (std::string("KQkq").find(c) == std::string::npos) return false;
+  std::string fields[4];
+  for (int i = 0; i < 4; ++i) {
+    fields[i] = nextToken(line, pos);
+    if (fields[i].empty()) return false;
   }
 
-  // Field 4: en passant target — must be '-' or a valid square.
-  std::string ep = nextToken(line, pos);
-  if (ep.empty()) return false;
-  if (ep != "-") {
-    if (ep.size() != 2) return false;
-    if (ep[0] < 'a' || ep[0] > 'h') return false;
-    if (ep[1] != '3' && ep[1] != '6') return false;
+  std::string fen = fields[0] + " " + fields[1] + " " + fields[2] +
+                    " " + fields[3] + " 0 1";
+  if (!fen::validateFEN(fen)) return false;
+
+  skipSpaces(line, pos);
+  int operationCount = 0;
+  while (pos < line.size()) {
+    if (operationCount >= EPD_MAX_OPERATIONS) return false;
+    bool truncated = false;
+    EPDOperation op = parseOperation(line, pos, truncated);
+    if (truncated) return false;
+    if (op.opcode.empty()) break;
+    ++operationCount;
+    skipSpaces(line, pos);
   }
 
   return true;

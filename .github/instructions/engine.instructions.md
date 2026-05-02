@@ -49,11 +49,11 @@ Configuration via `LichessConfig` — just an OAuth `apiToken`.
 
 On-board engine provider. Constructor: `LibreChessProvider(game, level, playerColor, logger)`. Takes a `Game*` (non-owning — Game outlives provider). Level (1–8) selects from `LibreChessProvider::LEVELS[8]` (depths 1–8). Forwards `logger` to `EngineProvider`. Uses `Game::calculateMove()` — no network, no string serialization. `initialize()` always succeeds (no handshake needed), sets `mode = GameModeId::BOT`, `canResume = true`.
 
-`initialize()` calls `game->initSearch(ttEntries)` with a heap-sized TT (capped at 64 KiB) and `game->setTimeFunc(millis)`. The search resources (TT, pawn hash, eval hash, SearchState) persist inside Game across moves — no per-move heap fragmentation. Heap sizing uses unified file-scope constants: `MIN_FREE_HEAP` (32 KiB), `EVAL_HASH_OVERHEAD` (12 KiB), `SEARCH_OVERHEAD` (16 KiB).
+`initialize()` calls `game->initSearch(ttEntries)` with a heap-sized TT (capped at 64 KiB) and `game->setTimeFunc(millis)`. The search resources (TT, pawn hash, eval hash, SearchState) persist inside Game across moves — no per-move heap fragmentation. Heap sizing uses unified file-scope constants: `MIN_FREE_HEAP` (32 KiB), `EVAL_HASH_OVERHEAD` (12 KiB), `SEARCH_OVERHEAD` (16 KiB). After initialization, LibreChessProvider checks `Game` search/hash diagnostics and logs degraded heap-pressure cases while preserving fallback-move behavior.
 
 Each `requestMove()` spawns a FreeRTOS task (64 KiB stack) that:
 1. Wires `ctx->cancel` → `game->setExternalStop()` for cooperative cancellation
-2. Builds `SearchLimits` (depth-based) and calls `game->calculateMove(limits)` — Game already has the correct position
+2. Builds `SearchLimits` (depth-based) and calls `game->calculateMove(limits)` — Game snapshots its current `Position` before delegating to the engine, so search make/unmake recursion never mutates the live board used by firmware/UI state
 3. Extracts best move coordinate via `notation::toCoordinate()` and evaluation from `SearchResult`
 
 `checkResult()` uses `peekResult()` + `finishTask()` to read the evaluation before cleanup. `getEvaluation()` returns the last search score for the web UI eval bar.
@@ -71,19 +71,20 @@ API modules handle raw HTTP + TLS. Providers handle chess-domain logic and FreeR
 `LibreChessProvider` runs the search in a FreeRTOS task (`lcTask`) with a 64 KiB stack. Search resources are owned by `Game` (allocated once via `initSearch()`) and persist for the game's lifetime (TT, hash tables, SearchState all reuse across moves). Major allocations:
 
 - **SearchState** (~10 KiB: `history[2][6][64]` = 1.5 KiB piece-to history, `captureHistory[6][6][64]` = 4.5 KiB, `killers[48][2]` = 192 B via `PackedMove`, `countermoves[12][64]` = 1.5 KiB, `staticEvals[48]` = 96 B, PV table 48×24×2 = 2.3 KiB via `PackedMove`, `pvLength[48]` = 48 B) — **pre-allocated** in `Game::initSearch()`, reused across searches. `findBestMove()` resets `nodes`/`stopped` per search. Eliminates per-search heap alloc/free cycle.
+- **Position snapshot** (~2.3 KiB with `HashHistory[256]`) — stack-local copy made by `Game::calculateMove()` so the FreeRTOS task searches a private board state while preserving repetition history.
 - **Transposition table** — heap-allocated (`new TTEntry[]`), dynamically sized to available heap, capped at 64 KiB (`MAX_TT_BYTES`).
 - **Pawn hash table** — 6 KiB (256 entries × 24B `PawnEntry`), heap-allocated by `Game::initSearch()`. Caches pawn structure MG/EG scores + passed pawn bitboards; ~92%+ hit rate.
 - **Eval hash table** — 4 KiB (1024 entries × 4B `EvalEntry`), heap-allocated by `Game::initSearch()`. Caches full `evaluatePosition()` results. Compact 16-bit key.
 - **Per-ply negamax** — ~1,500 B per ply (MovePicker with MoveList 658B + int16_t scores[218] 436B + other fields + PackedMove quietsSearched[32] + capturesSearched[32] 128B + UndoInfo + locals). Uses `int16_t` scores array. SEE cached in scores[] when reclassifying bad captures.
 - **Per-ply quiescence** — ~600 B per ply (QSMoveList 390B + int16_t capScores[128] 256B + UndoInfo + locals).
 
-Max depth 8 + extensions (~6) + 16 QS plies ≈ 44 KiB (fits in 64 KiB). See `docs/development/additional-topics.md` for the full budget breakdown.
+Max depth 8 + extensions (~6) + 16 QS plies ≈ 45 KiB (fits in 64 KiB). See `docs/development/additional-topics.md` for the full budget breakdown.
 
 ## Design Decisions
 
 - **Providers never touch hardware** — providers return `EngineResult` structs only. All LED, sensor, and animation logic stays in `BotMode`. This means providers can be tested or replaced without any hardware dependency, and `BotMode` controls the full user interaction sequence.
 
-- **Heap-allocated task contexts** — `BaseTaskContext` is always `new`'d before `spawnTask()` and `delete`'d in `pollResult()`/`finishTask()`. Never stack-allocate: the FreeRTOS task outlives the spawning function's scope. The base class destructor handles cleanup if the provider is destroyed mid-task.
+- **Heap-allocated task contexts** — `BaseTaskContext` is always allocated with `new(std::nothrow)` before `spawnTask()` and `delete`'d in `pollResult()`/`finishTask()`. Never stack-allocate: the FreeRTOS task outlives the spawning function's scope. Allocation or `xTaskCreate()` failure publishes an immediate `EngineResult::NONE` so `BotMode` can retry/abort instead of waiting forever.
 
 - **One active task at a time** — `spawnTask()` cancels any existing task before starting a new one. This simplifies state management: there's never ambiguity about which result is current. It also means `cancelRequest()` is always safe to call redundantly.
 

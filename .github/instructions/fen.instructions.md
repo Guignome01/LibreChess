@@ -17,6 +17,7 @@ FEN parse/serialize/validate. Stateless namespace.
 
 - **Two-step validation** — `validateFEN()` checks format strictly (including exactly one white and one black king per FIDE rules, required by `Position::kingSq()`); `fenToBoard()` parses leniently. `Position::loadFEN()` calls validate first, returns `false` on failure without modifying state.
 - Always `validateFEN()` before `fenToBoard()` when accepting user input.
+- **Clock storage bounds** — `PositionState::halfmoveClock` is `uint8_t` and is capped by the 50-move rule range (`0..100`); `fullmoveClock` is `uint16_t` and must be `1..65535`. Strict validation rejects over-range values, and the lenient parser refuses to wrap oversized clocks.
 
 ## Testing
 

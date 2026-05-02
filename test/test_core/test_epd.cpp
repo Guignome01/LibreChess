@@ -202,6 +202,11 @@ static void test_epd_validate_wrong_rank_count(void) {
   TEST_ASSERT_FALSE(epd::validateEPDLine("8/8/8/8/8/8/8 w KQkq -"));
 }
 
+// Rank widths must be validated, not just slash count and piece characters.
+static void test_epd_validate_bad_rank_sum(void) {
+  TEST_ASSERT_FALSE(epd::validateEPDLine("4k4/8/8/8/8/8/8/4K3 w - -"));
+}
+
 // Invalid en passant square.
 static void test_epd_validate_bad_ep(void) {
   TEST_ASSERT_FALSE(epd::validateEPDLine("8/8/8/8/8/8/8/8 w KQkq e5"));
@@ -211,6 +216,22 @@ static void test_epd_validate_bad_ep(void) {
 static void test_epd_validate_valid_ep(void) {
   TEST_ASSERT_TRUE(epd::validateEPDLine(
       "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3"));
+}
+
+static void test_epd_validate_too_many_operands(void) {
+  TEST_ASSERT_FALSE(epd::validateEPDLine(
+      "4k3/8/8/8/8/8/8/4K3 w - - bm a1 a2 a3 a4 a5 a6 a7 a8 b1 b2 b3 b4 b5 b6 b7 b8 c1;"));
+}
+
+static void test_epd_validate_too_many_operations(void) {
+  TEST_ASSERT_FALSE(epd::validateEPDLine(
+      "4k3/8/8/8/8/8/8/4K3 w - - c0 \"0\"; c1 \"1\"; c2 \"2\"; c3 \"3\"; c4 \"4\"; c5 \"5\"; c6 \"6\"; c7 \"7\"; c8 \"8\";"));
+}
+
+static void test_epd_parse_too_many_operands_returns_empty(void) {
+  EPDRecord rec = epd::parseEPDLine(
+      "4k3/8/8/8/8/8/8/4K3 w - - bm a1 a2 a3 a4 a5 a6 a7 a8 b1 b2 b3 b4 b5 b6 b7 b8 c1;");
+  TEST_ASSERT_TRUE(rec.fen.empty());
 }
 
 // ---------------------------------------------------------------------------
@@ -263,6 +284,7 @@ void register_epd_tests() {
   RUN_TEST(test_epd_parse_no_operations);
   RUN_TEST(test_epd_parse_empty_line);
   RUN_TEST(test_epd_parse_incomplete_fen);
+  RUN_TEST(test_epd_parse_too_many_operands_returns_empty);
   // validateEPDLine
   RUN_TEST(test_epd_validate_valid_line);
   RUN_TEST(test_epd_validate_fen_only);
@@ -271,8 +293,11 @@ void register_epd_tests() {
   RUN_TEST(test_epd_validate_bad_side);
   RUN_TEST(test_epd_validate_bad_placement);
   RUN_TEST(test_epd_validate_wrong_rank_count);
+  RUN_TEST(test_epd_validate_bad_rank_sum);
   RUN_TEST(test_epd_validate_bad_ep);
   RUN_TEST(test_epd_validate_valid_ep);
+  RUN_TEST(test_epd_validate_too_many_operands);
+  RUN_TEST(test_epd_validate_too_many_operations);
   // Convenience accessors
   RUN_TEST(test_epd_find_operation);
   RUN_TEST(test_epd_find_operation_miss);

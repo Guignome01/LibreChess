@@ -195,7 +195,7 @@ void evalOutposts(const BitboardSet& bb,
   // Central square constants (LERF) — used by knight outpost evaluation.
   constexpr Square SQ_D4 = 27, SQ_D5 = 35, SQ_E4 = 28, SQ_E5 = 36;
 
-  // Enemy-half masks for bishop outposts (ranks 5-7 for white, ranks 1-3 for black).
+  // Enemy-half masks for bishop outposts (ranks 5-8 for white, ranks 1-4 for black).
   static constexpr Bitboard ENEMY_HALF[2] = {
     rankBB(4) | rankBB(5) | rankBB(6) | rankBB(7),  // White: ranks 5-8
     rankBB(0) | rankBB(1) | rankBB(2) | rankBB(3),  // Black: ranks 1-4

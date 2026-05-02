@@ -21,7 +21,12 @@ namespace {
 struct MoveAdder {
   Move* buf;
   int& count;
-  bool operator()(Move m) { buf[count++] = m; return false; }
+  int capacity;
+  bool operator()(Move m) {
+    if (count >= capacity) return true;
+    buf[count++] = m;
+    return count >= capacity;
+  }
 };
 
 // Returns the pin-ray mask for a piece on `sq`.
@@ -368,7 +373,7 @@ static void collectLegalMoves(const BitboardSet& bb, const Piece mailbox[],
                               const LegalityContext& ctx, MoveListBase<N>& out,
                               FilterMode filterMode) {
   out.clear();
-  MoveAdder adder{out.moves, out.count};
+  MoveAdder adder{out.moves, out.count, N};
   enumerateLegalMoves(bb, mailbox, color, state, ctx, filterMode, adder);
 }
 
@@ -412,7 +417,7 @@ void getPossibleMoves(const BitboardSet& bb, const Piece mailbox[],
 
   if (ctx.checkerCount >= 2 && !isKing) return;
 
-  MoveAdder adder{moves.moves, moves.count};
+  MoveAdder adder{moves.moves, moves.count, MAX_MOVES};
   filterPieceMoves(bb, mailbox, sq, state, ctx, FilterMode::ALL, adder);
 }
 
@@ -444,7 +449,7 @@ void generateMovesAppend(const BitboardSet& bb, const Piece mailbox[],
                          Color color, const PositionState& state,
                          const LegalityContext& ctx, MoveList& moves,
                          FilterMode filter) {
-  MoveAdder adder{moves.moves, moves.count};
+  MoveAdder adder{moves.moves, moves.count, MAX_MOVES};
   enumerateLegalMoves(bb, mailbox, color, state, ctx, filter, adder);
 }
 

@@ -13,9 +13,10 @@ Central game orchestrator — the ONLY entry point for firmware to access chess 
 
 **Search** (optional — initialized for bot mode via `initSearch`, skipped for player-only games):
 - `initSearch(ttSize)` — allocates TT, PawnHash, EvalHash, SearchState on heap (idempotent)
-- `calculateMove(limits) → SearchResult` — runs `findBestMove()` on the internal Position
+- `calculateMove(limits) → SearchResult` — copies the current `Position` and runs `findBestMove()` on that snapshot, preserving the live board while search make/unmake recursion runs
 - `setTimeFunc(fn)` — platform time abstraction: firmware passes `millis()`, CLI passes `nativeMillis()`
 - `setExternalStop(flag)` — wire an external `std::atomic<bool>*` for cooperative cancellation
+- `searchInitialized()` / `searchHashTablesReady()` / `searchHashTableAllocationFailed()` — firmware-visible diagnostics for heap-pressure handling after `initSearch()`
 
 **Moves** (dual overloads — Square-native primary, row/col for firmware):
 - `makeMove(from, to, promo) → MoveResult` (Square-native)
@@ -52,7 +53,7 @@ Steps 2–7 are atomic from the caller's perspective.
 - **Firmware abstraction boundary** — `Game` re-exports everything firmware needs. Display-coordinate helpers (`rankChar`, `squareName(row,col)`) live in `game/types.h`.
 - **Dirty-flag caching** — FEN/eval cached, recomputed only when `fenDirty_`/`evalDirty_` set.
 - **Composition over inheritance** — `Game` composes `Position` + `History`, no inheritance.
-- **Engine composition** — `Game` optionally composes an `Engine*` (heap-allocated by `initSearch()`, deleted in destructor).  Search methods (`calculateMove`, `setTimeFunc`, `setExternalStop`) delegate to the engine.  `newGame()` calls `engine_->clearState()` when initialized.  Player-only games never allocate an engine.
+- **Engine composition** — `Game` optionally composes an `Engine*` (heap-allocated by `initSearch()` with `new(std::nothrow)`, deleted in destructor).  `calculateMove()` snapshots `board_` and delegates the copy to the engine, so background search never mutates the live game position.  `setTimeFunc`/`setExternalStop` delegate directly. Search diagnostics expose initialization and hash-allocation status to firmware. `newGame()` calls `engine_->clearState()` when initialized.  Player-only games never allocate an engine.
 - **Nullable DI** — storage, observer, logger all pointer-injected. Logger uses `Log` proxy.
 - **Undo clears game-over** — `undoMove()` re-opens finished games for web UI navigation.
 

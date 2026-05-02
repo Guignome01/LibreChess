@@ -521,7 +521,7 @@ UndoInfo Position::make(Move m) {
   // --- Halfmove clock ---
   if (isPawn || capturedPiece != Piece::NONE)
     state_.halfmoveClock = 0;
-  else
+  else if (state_.halfmoveClock < 100)
     state_.halfmoveClock++;
 
   // --- Hash: piece movements ---
@@ -931,6 +931,8 @@ void Position::recordPosition() {
   // so that unmake() restores a consistent count.
   if (hashHistory_.count >= HashHistory::MAX_SIZE) {
     int keep = state_.halfmoveClock + 1;
+    int maxKeep = HashHistory::MAX_SIZE - 1;
+    if (keep > maxKeep) keep = maxKeep;
     if (keep > hashHistory_.count) keep = hashHistory_.count;
     int discard = hashHistory_.count - keep;
     if (discard > 0) {
@@ -939,7 +941,8 @@ void Position::recordPosition() {
       hashHistory_.count = keep;
     }
   }
-  hashHistory_.keys[hashHistory_.count++] = hash_;
+  if (hashHistory_.count < HashHistory::MAX_SIZE)
+    hashHistory_.keys[hashHistory_.count++] = hash_;
 }
 
 }  // namespace LibreChess

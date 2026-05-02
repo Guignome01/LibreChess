@@ -3,6 +3,7 @@
 #include "game_mode/game_mode.h"
 #include <Arduino.h>
 #include <WiFiClientSecure.h>
+#include <new>
 
 StockfishProvider::StockfishProvider(int level, char playerColor, ILogger* logger)
     : EngineProvider(logger), playerColor_(playerColor) {
@@ -25,7 +26,12 @@ bool StockfishProvider::initialize(EngineInitResult& result) {
 }
 
 void StockfishProvider::requestMove(const std::string& fen) {
-  auto* ctx = new TaskContext();
+  auto* ctx = new (std::nothrow) TaskContext();
+  if (!ctx) {
+    logger_.error("StockfishProvider: failed to allocate task context");
+    setImmediateResult(EngineResult{});
+    return;
+  }
   ctx->fen = fen;
   ctx->depth = settings_.depth;
   ctx->timeoutMs = settings_.timeoutMs;

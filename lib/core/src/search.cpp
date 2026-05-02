@@ -201,8 +201,9 @@ static void validatePV(Position& pos, SearchResult& result) {
 
 inline int computeLMRReduction(int depth, int moveIndex, int16_t hist,
                                bool improving, bool pvNode) {
+  int tableDepth = depth < MAX_PLY ? depth : MAX_PLY - 1;
   int mi = moveIndex < LMR_MAX_MOVES ? moveIndex : LMR_MAX_MOVES - 1;
-  int reduction = LMR_TABLE.data[depth][mi];
+  int reduction = LMR_TABLE.data[tableDepth][mi];
 
   if (hist < LMR_BAD_HIST_THRESHOLD)
     ++reduction;           // Bad history → reduce more
@@ -1061,6 +1062,7 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
 
   int maxDepth = limits.maxDepth;
   if (maxDepth <= 0) maxDepth = 1;
+  if (maxDepth > MAX_PLY) maxDepth = MAX_PLY;
 
   // Generate root moves once (legal moves don't change between iterations)
   MoveList rootMoves;

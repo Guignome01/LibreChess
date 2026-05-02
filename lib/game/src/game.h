@@ -55,10 +55,11 @@ class Game {
   // player-only games skip this entirely.  idempotent.
   void initSearch(int ttSize = search::DEFAULT_TT_SIZE);
 
-  // Run the search engine on the current position.
+  // Run the search engine on a snapshot of the current position.
   // Requires initSearch() to have been called first.  If called before
   // initSearch(), returns an empty SearchResult and logs an error — the
   // engine pointer is never dereferenced when null.
+  // The live board is not mutated by search make/unmake recursion.
   // Returns the best move, score, depth, and PV.
   search::SearchResult calculateMove(const search::SearchLimits& limits);
 
@@ -69,6 +70,15 @@ class Game {
   // Wire an external stop flag for search cancellation.
   // Must be called after initSearch().
   void setExternalStop(std::atomic<bool>* flag);
+
+  // Search resource diagnostics for firmware heap-pressure handling.
+  bool searchInitialized() const { return engine_ != nullptr; }
+  bool searchHashTablesReady() const {
+    return engine_ != nullptr && engine_->hashTablesReady();
+  }
+  bool searchHashTableAllocationFailed() const {
+    return engine_ != nullptr && engine_->hashTableAllocationFailed();
+  }
 
   // --- Mutations ---
 

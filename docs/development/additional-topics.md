@@ -90,6 +90,8 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 | SearchState | ~10 KiB | Pre-allocated in `Engine` constructor, reused across searches |
 | **Free after persistent allocs** | **~80–100 KiB** | Available for TT + hash tables + SearchState |
 
+Hash table allocation uses `new(std::nothrow)`. Search remains functional with an empty table, but `HashTableBase` and `Engine` expose allocation diagnostics so firmware/tests can detect heap-pressure degradation instead of failing silently.
+
 ### FreeRTOS Task Stacks
 
 | Task | Stack Size | Purpose |
@@ -103,14 +105,14 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 
 | Component | Size | Location |
 |-----------|------|----------|
-| Engine (Position w/ HashHistory 128) | ~1,330 B | **heap** (`std::unique_ptr`) |
+| Position search snapshot (w/ HashHistory 256) | ~2,300 B | stack (`Game::calculateMove`) |
 | MoveList rootMoves | 658 B | stack |
 | Per-ply negamax (MovePicker w/ int16_t scores + locals) | ~1,500 B × depth | stack |
 | Per-ply quiescence (QSMoveList + int16_t scores + locals) | ~650 B × QS depth | stack |
-| At depth 15 + 6 ext + 8 QS | ~37 KiB | stack |
+| At depth 15 + 6 ext + 8 QS | ~39 KiB | stack |
 | SearchState (history + killers + countermoves + PV table) | ~11 KiB | **heap** (pre-allocated in `Engine`) |
 
-**Safety margin**: at depth 15 + 6 extensions + 8 QS plies, worst-case stack usage is ~37 KiB out of 64 KiB, leaving ~27 KiB headroom for FreeRTOS overhead and call-chain variability.
+**Safety margin**: at depth 15 + 6 extensions + 8 QS plies, worst-case stack usage is ~39 KiB out of 64 KiB, leaving ~25 KiB headroom for FreeRTOS overhead and call-chain variability.
 | Transposition table | varies | **heap** (`new[]`) |
 
 ### Per-Ply Recursion Breakdown
@@ -143,7 +145,7 @@ ESP32-WROOM-32: 520 KiB SRAM (~320 KiB usable DRAM), 4 MiB flash, 240 MHz dual-c
 | PositionState | ~12 B |
 | Square kingSquare[2] | 2 B |
 | uint64_t hash | 8 B |
-| HashHistory (128 × 8B + int) | ~1,028 B |
+| HashHistory (256 × 8B + int) | ~2,052 B |
 | Cache fields (FEN string + eval + dirty flags) | ~36 B |
 | **Total** | **~1,271 B** |
 
@@ -176,7 +178,7 @@ Features from the [Chess Programming Wiki](https://www.chessprogramming.org/Main
 
 | Feature | Status | Description | Reference |
 |---------|--------|-------------|-----------|
-| Time-Based Position Suites | Implemented | WAC, BK, ERET benchmark suites with EPD parser. 500ms/position, informational. `test/test_positions_time/test_positions_time.cpp`, EPDs in `test/test_suites/`. | [CPW — Test Positions](https://www.chessprogramming.org/Test-Positions) |
+| Time-Based Position Suites | Implemented | WAC, BK, ERET benchmark suites with EPD parser. 500ms/position, informational. `test/test_positions_time/test_positions_time.cpp`, EPDs in `test/suites/`. | [CPW — Test Positions](https://www.chessprogramming.org/Test-Positions) |
 | Depth-Based Position Gate | Implemented | WAC 300 at fixed depth 10, deterministic. Hard assert on solve count vs calibrated baseline. `test/test_positions_depth/test_positions_depth.cpp`. | [CPW — Test Positions](https://www.chessprogramming.org/Test-Positions) |
 | Timing Benchmarks | Implemented | 8 micro-benchmarks: make/unmake, evaluate, bishop attacks, perft(5), search depth 8 (single + multi-position). Informational. `test/test_benchmarks/test_timing.cpp`. | [CPW — Nodes per Second](https://www.chessprogramming.org/Nodes_per_Second) |
 | Node/Eval Regression | Implemented | Node count regression (10 positions × depth 10, 15% threshold) + eval regression (15 positions, exact match). `test/test_benchmarks/test_regression.cpp`. | — |

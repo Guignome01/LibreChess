@@ -312,7 +312,7 @@ EVAL_CONST int OUTPOST_BONUS_MG = 15;
 EVAL_CONST int OUTPOST_BONUS_EG = 10;
 
 // Bishop outposts — same criteria as knight, but only on enemy half
-// (ranks 4-6 for white, 3-5 for black).  Smaller bonus than knight
+// (ranks 5-8 for white, 1-4 for black).  Smaller bonus than knight
 // because bishops benefit less from a single fixed post.
 // Reference: https://www.chessprogramming.org/Outposts
 EVAL_CONST int BISHOP_OUTPOST_MG = 15;

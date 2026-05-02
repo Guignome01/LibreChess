@@ -1210,6 +1210,20 @@ static void test_easy_move_early_exit(void) {
   TEST_ASSERT_TRUE(result.depth <= 10);
 }
 
+static void test_search_oversized_depth_is_clamped(void) {
+  const char* fen = "1k6/8/1K6/8/8/8/8/7R w - - 0 1";
+  Position pos;
+  pos.loadFEN(fen);
+
+  search::SearchLimits limits;
+  limits.maxDepth = search::MAX_PLY + 200;
+  search::SearchState state;
+  auto result = search::findBestMove(pos, limits, state);
+
+  TEST_ASSERT_FALSE(result.bestMove.isNull());
+  TEST_ASSERT_TRUE(result.depth <= search::MAX_PLY);
+}
+
 // ===========================================================================
 // Registration
 // ===========================================================================
@@ -1294,4 +1308,5 @@ void register_search_tests() {
   RUN_TEST(test_instability_extends_time);
   RUN_TEST(test_soft_time_stops_search);
   RUN_TEST(test_easy_move_early_exit);
+  RUN_TEST(test_search_oversized_depth_is_clamped);
 }

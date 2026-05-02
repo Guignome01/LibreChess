@@ -25,6 +25,10 @@ Pure C++ — uses `std::string` (not Arduino `String`); firmware bridges with `.
 
 - **Composition over inheritance** — `Game` composes `Position` + `History`. No inheritance hierarchy.
 
+- **Snapshot search** — bot-mode search enters through `Game::calculateMove()`, which copies the current `Position` and searches the copy. Do not let firmware/background tasks run search make/unmake recursion on the live `board_` instance.
+
+- **Non-throwing search allocation** — `Game::initSearch()` must tolerate ESP32 heap pressure. It uses `new(std::nothrow)`, logs allocation failures, and exposes search/hash diagnostics so firmware can continue with fallback behavior.
+
 - **Nullable DI** — Storage, observer, and logger are pointer-injected. All nullable — storage/observer guard with `if (ptr_)`, logger uses `Log` proxy (no manual guards).
 
 ## Data Flow: How a Move Works

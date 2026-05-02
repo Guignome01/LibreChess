@@ -106,12 +106,20 @@ class EngineProvider {
       logger_.error("EngineProvider: xTaskCreate failed (OOM?)");
       delete activeTask_;
       activeTask_ = nullptr;
+      setImmediateResult(EngineResult{});
+    } else {
+      hasImmediateResult_ = false;
     }
   }
 
   // Poll for a completed result. Returns true and fills `result` when ready.
   // Deletes the task context — caller must do any post-processing before this.
   bool pollResult(EngineResult& result) {
+    if (hasImmediateResult_) {
+      result = immediateResult_;
+      hasImmediateResult_ = false;
+      return true;
+    }
     if (!activeTask_ || !activeTask_->ready.load()) return false;
     result = activeTask_->result;
     delete activeTask_;
@@ -123,6 +131,11 @@ class EngineProvider {
   // read provider-specific fields from the derived context first.
   // Caller MUST call finishTask() after reading extra fields.
   bool peekResult(EngineResult& result) {
+    if (hasImmediateResult_) {
+      result = immediateResult_;
+      hasImmediateResult_ = false;
+      return true;
+    }
     if (!activeTask_ || !activeTask_->ready.load()) return false;
     result = activeTask_->result;
     return true;
@@ -134,6 +147,17 @@ class EngineProvider {
     delete activeTask_;
     activeTask_ = nullptr;
   }
+
+  // Publish a synchronous result when allocation or task creation fails
+  // before a FreeRTOS task can own a context.
+  void setImmediateResult(const EngineResult& result) {
+    immediateResult_ = result;
+    hasImmediateResult_ = true;
+  }
+
+ private:
+  EngineResult immediateResult_;
+  bool hasImmediateResult_ = false;
 };
 
 #endif  // ENGINE_PROVIDER_H

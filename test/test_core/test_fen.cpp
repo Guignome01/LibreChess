@@ -167,6 +167,23 @@ void test_validateFEN_bad_fullmove(void) {
   TEST_ASSERT_FALSE(fen::validateFEN("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 0"));
 }
 
+void test_validateFEN_halfmove_over_storage(void) {
+  TEST_ASSERT_FALSE(fen::validateFEN("4k3/8/8/8/8/8/8/4K3 w - - 101 1"));
+}
+
+void test_validateFEN_fullmove_over_storage(void) {
+  TEST_ASSERT_FALSE(fen::validateFEN("4k3/8/8/8/8/8/8/4K3 w - - 0 65536"));
+}
+
+void test_fenToBoard_oversized_clocks_do_not_wrap(void) {
+  Color turn;
+  PositionState state;
+  fen::fenToBoard("4k3/8/8/8/8/8/8/4K3 w - - 300 70000",
+                  bb, mailbox, turn, &state);
+  TEST_ASSERT_EQUAL_UINT8(0, state.halfmoveClock);
+  TEST_ASSERT_EQUAL_UINT16(1, state.fullmoveClock);
+}
+
 void test_validateFEN_no_castling_no_ep(void) {
   // Minimal legal position: both kings present (required by validator).
   TEST_ASSERT_TRUE(fen::validateFEN("4k3/8/8/8/8/8/8/4K3 w - - 0 1"));
@@ -241,10 +258,13 @@ void register_fen_tests() {
   RUN_TEST(test_validateFEN_bad_en_passant);
   RUN_TEST(test_validateFEN_bad_halfmove);
   RUN_TEST(test_validateFEN_bad_fullmove);
+  RUN_TEST(test_validateFEN_halfmove_over_storage);
+  RUN_TEST(test_validateFEN_fullmove_over_storage);
   RUN_TEST(test_validateFEN_no_castling_no_ep);
 
   // Edge cases (Phase 4J)
   RUN_TEST(test_fen_black_to_move);
   RUN_TEST(test_fen_complex_midgame_roundtrip);
   RUN_TEST(test_fenToBoard_lenient_accepts_board_only);
+  RUN_TEST(test_fenToBoard_oversized_clocks_do_not_wrap);
 }

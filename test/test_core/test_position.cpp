@@ -652,6 +652,17 @@ void test_position_halfmove_clock_resets_on_pawn_move(void) {
   TEST_ASSERT_EQUAL_INT(0, pos.positionState().halfmoveClock);
 }
 
+void test_position_halfmove_clock_saturates_at_rule_limit(void) {
+  setUpPosition();
+  pos.loadFEN("4k3/8/8/8/8/8/8/R3K3 w - - 99 1");
+
+  pos.makeMove(squareOf(7, 0), squareOf(7, 1));  // Ra1-b1
+  TEST_ASSERT_EQUAL_INT(100, pos.positionState().halfmoveClock);
+
+  pos.makeMove(squareOf(0, 4), squareOf(0, 3));  // Ke8-d8
+  TEST_ASSERT_EQUAL_INT(100, pos.positionState().halfmoveClock);
+}
+
 void test_position_fullmove_increments_after_black(void) {
   setUpPosition();
   pos.loadFEN("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1");
@@ -2567,6 +2578,7 @@ void register_position_tests() {
   // Position clocks
   RUN_TEST(test_position_halfmove_clock_increments);
   RUN_TEST(test_position_halfmove_clock_resets_on_pawn_move);
+  RUN_TEST(test_position_halfmove_clock_saturates_at_rule_limit);
   RUN_TEST(test_position_fullmove_increments_after_black);
 
   // inCheck (no-arg)

@@ -62,6 +62,12 @@ class Engine {
   // Used by UCI `setoption name Hash value <MB>`.
   void resizeTT(int entries);
 
+  // True when all search hash tables currently have backing storage.
+  bool hashTablesReady() const;
+
+  // True when any hash table's most recent non-zero resize failed.
+  bool hashTableAllocationFailed() const;
+
   // --- Direct access (for consumers that need fine-grained control) ---
 
   search::SearchState& searchState() { return searchState_; }

@@ -14,14 +14,15 @@ Reference: https://www.chessprogramming.org/Opening_Book
 | File | Purpose |
 |------|---------|
 | `book.h` | Public API: `BookEntry`, `probe()`, `entryCount()` |
-| `book.cpp` | ReplayBoard, line replay, hash computation, opening lines, probe logic |
+| `book.cpp` | ReplayBoard, line replay, hash computation, packed book storage, opening lines, probe logic |
 
 ## Architecture
 
 ### Build Phase (constexpr on GCC 6+ / runtime on GCC 5.x)
 - `ReplayBoard` — 64-byte mailbox + castling/EP/side, constexpr starting position
 - Each opening line (coordinate notation, e.g. `"e2e4 e7e5 g1f3"`) is replayed move-by-move
-- At each ply, a `BookEntry{hash, from, to}` is recorded (hash = position BEFORE the move)
+- `parseLine()` validates that every move token has at least four coordinate characters before parsing. Malformed or truncated curated lines stop replay instead of reading past the string terminator.
+- At each ply, the position hash plus `from`/`to` squares are recorded (hash = position BEFORE the move). `BookData` stores these as parallel `hashes[]`, `from[]`, and `to[]` arrays so the compiled table does not pay `BookEntry` struct padding for every entry.
 - Zobrist keys accessed via `BOOK_KEYS` macro alias — resolves to a local `constexpr Keys` on GCC 6+ or `zobrist::KEYS` reference on GCC 5.x
 - ~500 raw entries (with duplicates from shared early moves, deduplicated at probe time)
 
@@ -33,11 +34,11 @@ Reference: https://www.chessprogramming.org/Opening_Book
 
 ### Memory Model — Conditional Constexpr
 - **GCC 6+** (ESP32 xtensa-esp32-elf-g++ 8.x): `static constexpr BookData BOOK = buildBook()` — fully computed at compile time, placed in `.rodata` (flash), zero RAM
-- **GCC 5.x** (MinGW native tests): `static const BookData BOOK = buildBook()` — runtime static init, entries in BSS (~12 KiB RAM), correct hashes via `zobrist::KEYS`
+- **GCC 5.x** (MinGW native tests): `static const BookData BOOK = buildBook()` — runtime static init, entries in static storage (~7.5 KiB), correct hashes via `zobrist::KEYS`
 - GCC version check: `#if __GNUC__ > 5` gates constexpr path; `BOOK_CX` macro expands to `constexpr` or nothing accordingly
 - GCC 5.x constexpr evaluator bug: produces incorrect Zobrist hashes for complex computations (individual keys are correct but compound hash evaluation is wrong)
 - String literals (`LINES[]`) always in `.rodata` (flash) on both paths
-- Total footprint on ESP32: ~12 KiB entries + ~3 KiB strings, all in flash
+- Total compiled table footprint on ESP32: ~7.5 KiB for the packed entry arrays, all in flash. The source opening-line strings are compile-time builder input on the constexpr path.
 
 ## Integration Points
 

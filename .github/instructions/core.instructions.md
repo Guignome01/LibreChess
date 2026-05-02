@@ -39,19 +39,19 @@ Detailed API, design decisions, and patterns for each module live in dedicated f
 
 - **Stateless namespaces** — `movegen`, `notation`, `eval`, `attacks`, `zobrist`, `fen`, `epd` are all stateless. All context passed as parameters. Safe to call from any context. (`trace.h/cpp` is also in the `eval` namespace but guarded by `#ifdef TUNING` — compiles to nothing in production.)
 
-- **Standalone hash tables** — `TranspositionTable`, `PawnHashTable`, and `EvalHashTable` inherit `HashTableBase<Entry>` from `hash_table.h` for common `resize`/`free`/`clear`. Each adds its own `probe`/`store` and any extra state (e.g. TT adds `generation`). Three instances with shared base, specialized behavior.
+- **Standalone hash tables** — `TranspositionTable`, `PawnHashTable`, and `EvalHashTable` inherit `HashTableBase<Entry>` from `hash_table.h` for common `resize`/`free`/`clear` plus allocation diagnostics (`isAllocated()`, `allocationFailed()`). Each adds its own `probe`/`store` and any extra state (e.g. TT adds `generation`). Three instances with shared base, specialized behavior.
 
 - **Search is a stateless namespace** — `search::findBestMove()` takes `Position&`, `SearchLimits`, `SearchState&` (required), optional `InfoCallback`. Infrastructure pointers (`timeFunc`, `tt`, `pawnHash`, `evalHash`) are set via `SearchState` constructor. All per-search state in `SearchState`. Safe to run from any context.
 
-- **Engine facade centralises search resources** — `Engine` (engine.h/cpp) owns `TranspositionTable`, `PawnHashTable`, `EvalHashTable`, and `SearchState`.  Both `UCIState` and `Game` compose an `Engine` instance instead of managing these resources independently.  `Engine::calculateMove(pos, limits)` wires the stop flag and calls `findBestMove()`.  UCI's `cmdGo`/`cmdNewGame`/`cmdSetOption Hash` and `Game::initSearch()`/`calculateMove()`/`setTimeFunc()` all delegate to `Engine`.
+- **Engine facade centralises search resources** — `Engine` (engine.h/cpp) owns `TranspositionTable`, `PawnHashTable`, `EvalHashTable`, and `SearchState`.  Both `UCIState` and `Game` compose an `Engine` instance instead of managing these resources independently.  `Engine::calculateMove(pos, limits)` wires the stop flag and calls `findBestMove()`.  UCI's `cmdGo`/`cmdNewGame`/`cmdSetOption Hash` and `Game::initSearch()`/`calculateMove()`/`setTimeFunc()` all delegate to `Engine`. Allocation diagnostics are exposed through `hashTablesReady()` / `hashTableAllocationFailed()` for ESP32 heap-pressure checks.
 
-- **Game optionally owns an Engine** — `Game::initSearch()` heap-allocates an `Engine*`. `Game::calculateMove()` delegates to the engine. `Game::newGame()` calls `engine_->clearState()`. Only initialized for bot mode; player-only games skip it entirely.
+- **Game optionally owns an Engine** — `Game::initSearch()` heap-allocates an `Engine*` with `new(std::nothrow)` and exposes search/hash allocation diagnostics. `Game::calculateMove()` delegates to the engine. `Game::newGame()` calls `engine_->clearState()`. Only initialized for bot mode; player-only games skip it entirely.
 
 - **UCI composes Engine as a value member** — `UCIState::engine` is a stack-allocated `Engine`. Constructor wires time function, external stop flag, and book settings.
 
 - **Platform time abstraction** — `TimeFunc` function pointer for `millis()` (ESP32) vs `nativeMillis()` (native tests).
 
-- **Fixed-size arrays** — `MoveEntry[300]`, `HashHistory(128)`, `MoveList(218)`, no `std::vector`. ESP32 heap fragmentation constraint.
+- **Fixed-size arrays** — `MoveEntry[300]`, `HashHistory(256)`, `MoveList(218)`, `QSMoveList(128)`, no `std::vector`. Emitters must remain capacity-aware because smaller buffers are used on search hot paths.
 
 ## Cross-Cutting Patterns
 

@@ -1,6 +1,8 @@
 #include "uci.h"
 
 #include <cstring>
+#include <cstdint>
+#include <limits>
 #include <sstream>
 
 #include "fen.h"
@@ -53,6 +55,33 @@ static int parseInt(const char*& ptr, int defaultVal = 0) {
   if (tok.empty()) return defaultVal;
   try {
     return std::stoi(tok);
+  } catch (...) {
+    return defaultVal;
+  }
+}
+
+// Parse and clamp an integer token to an inclusive range.
+static int parseClampedInt(const char*& ptr, int defaultVal,
+                           int minVal, int maxVal) {
+  int value = parseInt(ptr, defaultVal);
+  if (value < minVal) return minVal;
+  if (value > maxVal) return maxVal;
+  return value;
+}
+
+// Parse a non-negative millisecond token. Invalid tokens return defaultVal;
+// negative values are clamped to 0 instead of wrapping through uint32_t.
+static uint32_t parseMilliseconds(const char*& ptr, uint32_t defaultVal = 0) {
+  std::string tok = nextToken(ptr);
+  if (tok.empty()) return defaultVal;
+  try {
+    long long value = std::stoll(tok);
+    if (value <= 0) return 0;
+    const auto maxMs = static_cast<unsigned long long>(
+        std::numeric_limits<uint32_t>::max());
+    if (static_cast<unsigned long long>(value) > maxMs)
+      return std::numeric_limits<uint32_t>::max();
+    return static_cast<uint32_t>(value);
   } catch (...) {
     return defaultVal;
   }
@@ -256,23 +285,25 @@ static void cmdGo(UCIState& state, const char* ptr, std::string& output,
     if (tok.empty()) break;
 
     if (tok == "depth") {
-      limits.maxDepth = parseInt(ptr, search::MAX_PLY);
+      limits.maxDepth = parseClampedInt(ptr, search::MAX_PLY,
+                                        1, search::MAX_PLY);
     } else if (tok == "movetime") {
-      uint32_t mt = static_cast<uint32_t>(parseInt(ptr, 0));
+      uint32_t mt = parseMilliseconds(ptr, 1);
+      if (mt == 0) mt = 1;
       limits.softTimeMs = mt;
       limits.hardTimeMs = mt;
     } else if (tok == "wtime") {
-      wtime = static_cast<uint32_t>(parseInt(ptr, 0));
+      wtime = parseMilliseconds(ptr, 0);
       hasTime = true;
     } else if (tok == "btime") {
-      btime = static_cast<uint32_t>(parseInt(ptr, 0));
+      btime = parseMilliseconds(ptr, 0);
       hasTime = true;
     } else if (tok == "winc") {
-      winc = static_cast<uint32_t>(parseInt(ptr, 0));
+      winc = parseMilliseconds(ptr, 0);
     } else if (tok == "binc") {
-      binc = static_cast<uint32_t>(parseInt(ptr, 0));
+      binc = parseMilliseconds(ptr, 0);
     } else if (tok == "movestogo") {
-      movestogo = parseInt(ptr, 0);
+      movestogo = parseClampedInt(ptr, 0, 0, 1000);
     } else if (tok == "infinite") {
       limits.maxDepth = search::MAX_PLY;
       // No time limit — runs until "stop"

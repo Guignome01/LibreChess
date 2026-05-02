@@ -41,6 +41,7 @@ bool processLine(UCIState& state, const char* line, std::string& output);
 
 - **Engine composition** — `UCIState` composes `Engine` as a value member, delegating TT/hash/SearchState ownership. `cmdGo` → `engine.calculateMove()`, `cmdNewGame` → `engine.clearState()`, `cmdSetOption Hash` → `engine.resizeTT()`. UCIState destructor is defaulted (Engine cleans up its own resources).
 - **Token parsing** — `nextToken()`, `parseInt()`, `restOfLine()` helpers work on `const char*` with pointer advancement. No `std::istringstream`.
+- **Bounded numeric parsing** — UCI input is untrusted. `go depth` clamps to `[1, MAX_PLY]`; `movetime` is at least 1ms; clocks/increments parse as non-negative `uint32_t` values with negatives clamped to 0 instead of wrapping.
 - **Info callback** — `thread_local std::string*` + `thread_local FILE*` bridge info output to either `FILE*` (CLI) or `std::string` (tests).
 - **Author** — "LibreChess Contributors" (not a personal name).
 
@@ -54,7 +55,7 @@ bool processLine(UCIState& state, const char* line, std::string& output);
 
 ## Testing
 
-Mirror test file: `test/test_core/test_uci.cpp` (suite: `test_core`). 11 tests via `processLine()`. See `testing.instructions.md`.
+Mirror test file: `test/test_core/test_uci.cpp` (suite: `test_core`). Tests cover command dispatch, bounded time/depth parsing, hash-table diagnostics, and `processLine()` string-in/string-out behavior. See `testing.instructions.md`.
 
 ## Related Instruction Files
 
