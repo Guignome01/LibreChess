@@ -9,8 +9,6 @@
 
 namespace {
 
-static constexpr int rowPins[NUM_ROWS] = {ROW_PIN_0, ROW_PIN_1, ROW_PIN_2, ROW_PIN_3, ROW_PIN_4, ROW_PIN_5, ROW_PIN_6, ROW_PIN_7};
-
 // 74HC595 shift register pin mapping: bits are sent MSB first, so bit 7 shifts to QH, bit 0 stays at QA.
 static int shiftRegPin(int col) {
   const int pins[] = {15, 1, 2, 3, 4, 5, 6, 7};

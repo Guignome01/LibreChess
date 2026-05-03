@@ -57,7 +57,7 @@ static constexpr MenuItem botDifficultyItems[] = {
 
 static constexpr MenuItem botColorItems[] = {
     {3, 3, LedColors::White,  MenuId::PLAY_WHITE},
-    {3, 4, LedColors::DimWhite, MenuId::PLAY_BLACK},  // Dim white = black side
+  {3, 4, LedColors::scaleColor(LedColors::White, 40.0f / 255.0f), MenuId::PLAY_BLACK},  // Scaled white = black side
     {3, 5, LedColors::Yellow, MenuId::PLAY_RANDOM},
 };
 

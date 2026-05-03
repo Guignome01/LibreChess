@@ -39,7 +39,7 @@ Three squares in the center of row 3:
 | Position | Color | Choice |
 |----------|-------|--------|
 | d5 (row 3, col 3) | White | Play as White |
-| e5 (row 3, col 4) | DimWhite | Play as Black |
+| e5 (row 3, col 4) | `scaleColor(White, 40.0f / 255.0f)` | Play as Black |
 | f5 (row 3, col 5) | Yellow | Random |
 
 A **white back button** at e4 (row 4, col 4) returns to the difficulty menu.

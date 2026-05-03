@@ -16,7 +16,7 @@ Every color on the board has a consistent meaning across all game modes and menu
 | **Purple** | (128, 0, 255) | En passant captured pawn location |
 | **Orange** | (255, 80, 0) | Resign gesture progress |
 | **Blue** | (0, 0, 255) | Bot thinking, Human vs Human mode, WiFi connecting |
-| **DimWhite** | (40, 40, 40) | "Play as Black" option in bot color menu |
+| `scaleColor(White, 40.0f / 255.0f)` | (40, 40, 40) | "Play as Black" option in bot color menu |
 
 ### Dark Square Dimming
 

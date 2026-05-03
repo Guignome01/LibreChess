@@ -5,8 +5,6 @@
 #include <Arduino.h>
 #include <Preferences.h>
 
-static constexpr int rowPins[NUM_ROWS] = {ROW_PIN_0, ROW_PIN_1, ROW_PIN_2, ROW_PIN_3, ROW_PIN_4, ROW_PIN_5, ROW_PIN_6, ROW_PIN_7};
-
 namespace {
 
 static constexpr uint8_t MIN_BRIGHTNESS = 10;

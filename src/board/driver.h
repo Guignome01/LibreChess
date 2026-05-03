@@ -51,6 +51,19 @@
 #define ROW_PIN_6 22
 #define ROW_PIN_7 23
 
+// Shared logical row-to-GPIO lookup used by both the steady-state driver and
+// the calibration workflow.
+inline constexpr int rowPins[NUM_ROWS] = {
+  ROW_PIN_0,
+  ROW_PIN_1,
+  ROW_PIN_2,
+  ROW_PIN_3,
+  ROW_PIN_4,
+  ROW_PIN_5,
+  ROW_PIN_6,
+  ROW_PIN_7,
+};
+
 // ---------------------------
 // Sensor Polling Delay and Debounce
 // ---------------------------

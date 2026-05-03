@@ -14,7 +14,6 @@ struct LedRGB {
 namespace LedColors {
 static constexpr LedRGB Cyan{0, 255, 255};
 static constexpr LedRGB White{255, 255, 255};
-static constexpr LedRGB DimWhite{40, 40, 40};
 static constexpr LedRGB Red{255, 0, 0};
 static constexpr LedRGB Purple{128, 0, 255};
 static constexpr LedRGB Green{0, 255, 0};

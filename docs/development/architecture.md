@@ -305,7 +305,7 @@ The `MenuNavigator` manages a stack of `BoardMenu` instances (max depth 4):
 
 - **Game selection** (root) → 4 center squares: Blue (ChessMoves), Green (Bot), Yellow (Lichess), Red (Sensor Test via `BoardDiagnostics`)
 - **Bot difficulty** (pushed on Bot selection) → 8 squares across row 3, colors green→blue, levels 1–8 (engine resolves level → depth)
-- **Bot color** (pushed on difficulty selection) → 3 squares: White, DimWhite (play as Black), Yellow (random)
+- **Bot color** (pushed on difficulty selection) → 3 squares: White, scaled White (play as Black), Yellow (random)
 
 Menu IDs use distinct ranges per level (0–9 root, 10–19 difficulty, 20–29 color) so `handleMenuResult()` can route by ID value alone — no callbacks or virtual dispatch.
 
@@ -397,7 +397,7 @@ Colors in the `LedColors` namespace (`src/board/colors.h`) have fixed meanings:
 |-------|-----|---------|
 | Cyan | (0, 255, 255) | Piece origin — "pick up from here" |
 | White | (255, 255, 255) | Valid move destination, menu back button |
-| DimWhite | (40, 40, 40) | "Play as Black" option in bot color menu |
+| `scaleColor(White, 40.0f / 255.0f)` | (40, 40, 40) | "Play as Black" option in bot color menu |
 | Red | (255, 0, 0) | Capture square, illegal move, error |
 | Green | (0, 255, 0) | Move confirmed, "yes" in confirm dialogs |
 | Yellow | (255, 200, 0) | King in check, pawn promotion, random option |

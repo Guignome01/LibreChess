@@ -69,7 +69,7 @@ Colors in `LedColors` (`src/board/colors.h`) have **fixed semantic meanings**. N
 |-------|---------|-------|
 | Cyan | Piece origin | "Pick up from here" |
 | White | Valid move destination | Also: menu back button |
-| DimWhite | "Play as Black" | Bot color selection menu |
+| `scaleColor(White, 40.0f / 255.0f)` | "Play as Black" | Bot color selection menu |
 | Red | Capture / error | Capture square, illegal move, error indication |
 | Green | Confirmation | Move confirmed, "yes" in dialogs |
 | Yellow | Check / promotion | King in check warning, pawn promotion, random option |
