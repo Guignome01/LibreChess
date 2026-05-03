@@ -10,6 +10,7 @@
 #include <freertos/task.h>
 
 class BoardDriver;
+class BoardSystem;
 
 // Board-internal lifecycle owner for asynchronous LED animation execution.
 class BoardAnimationLifecycle {
@@ -19,25 +20,14 @@ class BoardAnimationLifecycle {
   /// Initialize queue, mutex, completion semaphore, and worker task.
   bool begin(BoardDriver* driver);
 
-  /// Block until direct LED writes can safely use the strip.
-  void acquireLEDs();
+  /// Queue one prebuilt fire-and-forget animation job.
+  bool runAnimation(const AnimationJob& job);
 
-  /// Release the strip after a direct LED write batch.
-  void releaseLEDs();
+  /// Execute one prebuilt animation immediately under the LED mutex.
+  void runAnimationNow(const AnimationJob& job);
 
-  /// Run the one-shot connecting animation synchronously under the LED mutex.
-  void showConnectingAnimation();
-
-  /// Queue fire-and-forget animations.
-  void fireworkAnimation(LedRGB color = LedColors::White);
-  void captureAnimation(int row, int col);
-  void promotionAnimation(int col);
-  void blinkSquare(int row, int col, LedRGB color, int times = 3, bool clearAfter = true, bool clearBefore = false);
-  void flashBoardAnimation(LedRGB color, int times = 3);
-
-  /// Queue cancellable long-running animations and return their stop flag.
-  std::atomic<bool>* startThinkingAnimation();
-  std::atomic<bool>* startWaitingAnimation();
+  /// Queue one cancellable long-running animation and return its stop flag.
+  std::atomic<bool>* startAnimation(AnimationType type);
 
   /// Stop a cancellable animation, wait for worker completion, and delete flag.
   void stopAndWaitForAnimation(std::atomic<bool>*& stopFlag);
@@ -46,6 +36,8 @@ class BoardAnimationLifecycle {
   void waitForAnimationQueueDrain();
 
  private:
+  friend class BoardSystem;
+
   BoardDriver* driver_;
   QueueHandle_t queue_;
   TaskHandle_t taskHandle_;
@@ -53,6 +45,8 @@ class BoardAnimationLifecycle {
   SemaphoreHandle_t doneSemaphore_;
   bool initialized_;
 
+  void acquireLEDs();
+  void releaseLEDs();
   static void workerTask(void* param);
   void runWorker();
   bool enqueue(const AnimationJob& job);

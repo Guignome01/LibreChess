@@ -3,9 +3,7 @@
 
 #include "calibration.h"
 #include "colors.h"
-#include "lifecycle.h"
 #include <NeoPixelBusLg.h>
-#include <atomic>
 
 // ---------------------------
 // Hardware Configuration
@@ -81,7 +79,6 @@ class BoardDriver {
  private:
   NeoPixelBusLg<NeoGrbFeature, NeoEsp32I2s0800KbpsMethod, NeoGammaNullMethod> strip;
   BoardCalibration calibration_;
-  BoardAnimationLifecycle animationLifecycle_;
   bool sensorState[NUM_ROWS][NUM_COLS];
   bool sensorRaw[NUM_ROWS][NUM_COLS];
   unsigned long sensorDebounceTime[NUM_ROWS][NUM_COLS];
@@ -115,47 +112,9 @@ class BoardDriver {
   void readSensors();
   bool getSensorState(int row, int col);
 
-  // LED Control
-  void acquireLEDs(); // Block until LED strip available
-  void releaseLEDs(); // Release LED strip
-
-  // RAII guard for LED mutex — acquires on construction, releases on scope exit.
-  // Use in scoped blocks for safe LED writes without manual acquire/release.
-  struct LedGuard {
-    BoardDriver* driver;
-    explicit LedGuard(BoardDriver* bd) : driver(bd) { driver->acquireLEDs(); }
-    ~LedGuard() { driver->releaseLEDs(); }
-    LedGuard(const LedGuard&) = delete;
-    LedGuard& operator=(const LedGuard&) = delete;
-  };
-
   void clearAllLEDs(bool show = true);
   void setSquareLED(int row, int col, LedRGB color);
   void showLEDs();
-
-  // Animation Functions (queued for async execution)
-  void fireworkAnimation(LedRGB color = LedColors::White);
-  void captureAnimation(int row, int col);
-  void promotionAnimation(int col);
-  void blinkSquare(int row, int col, LedRGB color, int times = 3, bool clearAfter = true, bool clearBefore = false);
-  void showConnectingAnimation();
-  void flashBoardAnimation(LedRGB color, int times = 3);
-
-  // Start a cancellable animation. Returns a heap-allocated stop flag.
-  // Caller owns the flag — must use stopAndWaitForAnimation() to cancel, wait for
-  // completion, and free the flag. Never delete or set the flag directly.
-  std::atomic<bool>* startThinkingAnimation();
-  std::atomic<bool>* startWaitingAnimation();
-
-  // Cancel a running cancellable animation: sets the stop flag, blocks until the
-  // animation worker finishes and releases the LED mutex, then deletes the flag
-  // and nulls the pointer. Safe to call with a null flag (no-op).
-  void stopAndWaitForAnimation(std::atomic<bool>*& stopFlag);
-
-  // Queue barrier: blocks the caller until all previously queued animations have
-  // finished executing. Use before writing LEDs directly from the game loop to
-  // prevent a stale queued animation from overwriting your changes.
-  void waitForAnimationQueueDrain();
 
   // Board settings
   uint8_t getBrightness() const { return brightness; }

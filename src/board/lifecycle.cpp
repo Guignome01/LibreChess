@@ -1,6 +1,7 @@
 #include "lifecycle.h"
 
 #include "driver.h"
+#include "system.h"
 
 #include <new>
 
@@ -37,60 +38,26 @@ void BoardAnimationLifecycle::releaseLEDs() {
   xSemaphoreGive(ledMutex_);
 }
 
-void BoardAnimationLifecycle::showConnectingAnimation() {
+bool BoardAnimationLifecycle::runAnimation(const AnimationJob& job) {
+  return enqueue(job);
+}
+
+void BoardAnimationLifecycle::runAnimationNow(const AnimationJob& job) {
   if (!initialized_ || !driver_) return;
   acquireLEDs();
-  BoardAnimations::runConnecting(*driver_);
+  BoardLEDBatch leds(*driver_);
+  BoardAnimations::execute(leds, job);
   releaseLEDs();
 }
 
-void BoardAnimationLifecycle::fireworkAnimation(LedRGB color) {
-  AnimationJob job = {AnimationType::FIREWORK, nullptr, {}};
-  job.params.firework = {color};
-  enqueue(job);
-}
-
-void BoardAnimationLifecycle::captureAnimation(int row, int col) {
-  AnimationJob job = {AnimationType::CAPTURE, nullptr, {}};
-  job.params.capture = {row, col};
-  enqueue(job);
-}
-
-void BoardAnimationLifecycle::promotionAnimation(int col) {
-  AnimationJob job = {AnimationType::PROMOTION, nullptr, {}};
-  job.params.promotion.col = col;
-  enqueue(job);
-}
-
-void BoardAnimationLifecycle::blinkSquare(int row, int col, LedRGB color, int times, bool clearAfter, bool clearBefore) {
-  AnimationJob job = {AnimationType::BLINK, nullptr, {}};
-  job.params.blink = {row, col, color, times, clearAfter, clearBefore};
-  enqueue(job);
-}
-
-void BoardAnimationLifecycle::flashBoardAnimation(LedRGB color, int times) {
-  AnimationJob job = {AnimationType::FLASH, nullptr, {}};
-  job.params.flash = {color, times};
-  enqueue(job);
-}
-
-std::atomic<bool>* BoardAnimationLifecycle::startThinkingAnimation() {
-  if (!initialized_) return nullptr;
+std::atomic<bool>* BoardAnimationLifecycle::startAnimation(AnimationType type) {
+  if (!initialized_ || !BoardAnimations::isCancellable(type)) return nullptr;
   auto* stopFlag = new (std::nothrow) std::atomic<bool>(false);
   if (!stopFlag) return nullptr;
-  AnimationJob job = {AnimationType::THINKING, stopFlag, {}};
-  if (!enqueue(job)) {
-    delete stopFlag;
-    return nullptr;
-  }
-  return stopFlag;
-}
 
-std::atomic<bool>* BoardAnimationLifecycle::startWaitingAnimation() {
-  if (!initialized_) return nullptr;
-  auto* stopFlag = new (std::nothrow) std::atomic<bool>(false);
-  if (!stopFlag) return nullptr;
-  AnimationJob job = {AnimationType::WAITING, stopFlag, {}};
+  AnimationJob job = (type == AnimationType::THINKING)
+                         ? AnimationJob::thinking(stopFlag)
+                         : AnimationJob::waiting(stopFlag);
   if (!enqueue(job)) {
     delete stopFlag;
     return nullptr;
@@ -113,7 +80,7 @@ void BoardAnimationLifecycle::stopAndWaitForAnimation(std::atomic<bool>*& stopFl
 
 void BoardAnimationLifecycle::waitForAnimationQueueDrain() {
   if (!initialized_) return;
-  AnimationJob job = {AnimationType::SYNC, nullptr, {}};
+  AnimationJob job = AnimationJob::sync();
   if (!enqueue(job)) return;
   xSemaphoreTake(doneSemaphore_, portMAX_DELAY);
 }
@@ -126,10 +93,12 @@ void BoardAnimationLifecycle::runWorker() {
   AnimationJob job;
   while (true) {
     if (xQueueReceive(queue_, &job, portMAX_DELAY) == pdTRUE) {
-      acquireLEDs();
-      if (driver_)
-        BoardAnimations::execute(*driver_, job);
-      releaseLEDs();
+      if (driver_) {
+        acquireLEDs();
+        BoardLEDBatch leds(*driver_);
+        BoardAnimations::execute(leds, job);
+        releaseLEDs();
+      }
       signalCompletionFor(job);
     }
   }
@@ -158,6 +127,6 @@ void BoardAnimationLifecycle::releaseResources() {
 }
 
 void BoardAnimationLifecycle::signalCompletionFor(const AnimationJob& job) {
-  if (job.type == AnimationType::THINKING || job.type == AnimationType::WAITING || job.type == AnimationType::SYNC)
+  if (BoardAnimations::signalsCompletion(job.type))
     xSemaphoreGive(doneSemaphore_);
 }

@@ -2,7 +2,6 @@
 #define BOARD_CONFIG_H
 
 #include "menu.h"
-#include "navigator.h"
 
 // ---------------------------
 // Menu Item IDs
@@ -61,18 +60,7 @@ static constexpr MenuItem botColorItems[] = {
     {3, 5, LedColors::Yellow, MenuId::PLAY_RANDOM},
 };
 
-// ---------------------------
-// Menu Instances & Navigator
-// ---------------------------
-// Declared extern here, defined in config.cpp.
-// Menus are file-scoped statics with no heap allocation.
-
-extern BoardMenu gameMenu;
-extern BoardMenu botDifficultyMenu;
-extern BoardMenu botColorMenu;
-extern MenuNavigator navigator;
-
-/// Initialize all menus (set items, back buttons). Call once in setup().
-void initMenus(Board* board);
+/// Configure the board-internal menu instances with layouts and back buttons.
+void configureMenus(BoardMenu& gameMenu, BoardMenu& botDifficultyMenu, BoardMenu& botColorMenu);
 
 #endif // BOARD_CONFIG_H

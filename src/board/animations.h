@@ -6,9 +6,9 @@
 #include <atomic>
 #include <stdint.h>
 
-class BoardDriver;
+class BoardLEDBatch;
 
-// Animation job types for the BoardDriver async queue.
+// Animation job types for the board async queue.
 // SYNC is a no-op queue barrier used by waitForAnimationQueueDrain().
 enum class AnimationType : uint8_t {
   CAPTURE,
@@ -18,6 +18,7 @@ enum class AnimationType : uint8_t {
   THINKING,
   FIREWORK,
   FLASH,
+  CONNECTING,
   SYNC
 };
 
@@ -47,15 +48,46 @@ struct AnimationJob {
       LedRGB color;
     } firework;
   } params;
+
+  /// Build a capture animation centered on one logical board square.
+  static AnimationJob capture(int row, int col);
+
+  /// Build a promotion animation for one logical board file/column.
+  static AnimationJob promotion(int col);
+
+  /// Build a square blink animation.
+  static AnimationJob blink(int row, int col, LedRGB color, int times = 3,
+                            bool clearAfter = true, bool clearBefore = false);
+
+  /// Build a full-board firework animation.
+  static AnimationJob firework(LedRGB color = LedColors::White);
+
+  /// Build a full-board flash animation.
+  static AnimationJob flash(LedRGB color, int times = 3);
+
+  /// Build a cancellable thinking-status animation.
+  static AnimationJob thinking(std::atomic<bool>* stopFlag);
+
+  /// Build a cancellable waiting-status animation.
+  static AnimationJob waiting(std::atomic<bool>* stopFlag);
+
+  /// Build the one-shot WiFi connecting animation.
+  static AnimationJob connecting();
+
+  /// Build a no-op queue barrier used to wait for prior jobs.
+  static AnimationJob sync();
 };
 
 namespace BoardAnimations {
 
-/// Execute one queued animation job. The caller owns queueing and LED mutexing.
-void execute(BoardDriver& driver, const AnimationJob& job);
+/// Return whether this animation type requires a caller-owned stop flag.
+bool isCancellable(AnimationType type);
 
-/// Run the one-shot WiFi connecting animation under the caller's LED guard.
-void runConnecting(BoardDriver& driver);
+/// Return whether the lifecycle should release its completion semaphore.
+bool signalsCompletion(AnimationType type);
+
+/// Execute one queued animation job. The caller owns queueing and LED mutexing.
+void execute(BoardLEDBatch& leds, const AnimationJob& job);
 
 }  // namespace BoardAnimations
 

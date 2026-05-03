@@ -1,17 +1,40 @@
 #ifndef BOARD_H
 #define BOARD_H
 
-#include "assistance.h"
-#include "driver.h"
-#include "feedback.h"
-#include "state.h"
+#include "game.h"
+#include "logger.h"
 
 #include <atomic>
+#include <cstdint>
+#include <memory>
 
-// Public facade for physical board hardware, drawing, and occupancy state.
+// Public facade for physical board hardware, interaction workflows, and
+// occupancy state. This is the only board header consumed outside src/board/.
 class Board {
  public:
+  enum class GameSelectionMode : uint8_t {
+    NONE = 0,
+    CHESS_MOVES = 1,
+    BOT = 2,
+    LICHESS = 3,
+    BOARD_DIAGNOSTICS = 4,
+  };
+
+  struct GameSelection {
+    GameSelectionMode mode = GameSelectionMode::NONE;
+    uint8_t botDifficulty = 0;
+    char playerColor = ' ';
+
+    bool hasSelection() const { return mode != GameSelectionMode::NONE; }
+  };
+
   Board();
+  ~Board();
+
+  Board(const Board&) = delete;
+  Board& operator=(const Board&) = delete;
+  Board(Board&&) = delete;
+  Board& operator=(Board&&) = delete;
 
   void begin();
 
@@ -39,43 +62,52 @@ class Board {
   /// Return how many squares changed on the latest poll.
   uint8_t changedCount() const;
 
-  /// Return one changed square, or an invalid square when out of range.
-  LibreChess::board::BoardSquare changedSquare(uint8_t index) const;
+  /// Return one changed square through row/col out-params.
+  /// Returns false when the index is out of range.
+  bool changedSquare(uint8_t index, int& row, int& col) const;
 
   /// Reset the transition baseline to the current physical occupancy.
   void syncOccupancyBaseline();
 
-  BoardAssistance& assistance() { return assistance_; }
-  const BoardAssistance& assistance() const { return assistance_; }
-  BoardFeedback& feedback() { return feedback_; }
-  const BoardFeedback& feedback() const { return feedback_; }
+  void waitForBoardSetup(const LibreChess::Game& game, LibreChess::Log& logger);
+  void showLegalMoveHighlights(int fromRow, int fromCol, const LibreChess::MoveList& moves, const LibreChess::Game& game);
+  void showCapturePlacementPrompt(int row, int col);
+  void guideCastling(int kingFromRow, int kingFromCol, int kingToRow, int kingToCol,
+                     const LibreChess::CastlingInfo& castling, bool waitForKingCompletion,
+                     LibreChess::Log& logger);
+  void guideRemoteMoveCompletion(int fromRow, int fromCol, int toRow, int toCol,
+                                 bool isCapture, bool isEnPassant,
+                                 int enPassantCapturedPawnRow,
+                                 LibreChess::Log& logger);
 
-  void acquireLEDs();
-  void releaseLEDs();
+  void clearBoardFeedback(bool show = true);
+  void clearFeedbackSquare(int row, int col);
+  void showMoveResultFeedback(const LibreChess::MoveResult& result, int toRow, int toCol,
+                              const LibreChess::Game& game);
+  void showIllegalMoveFeedback(int row, int col);
+  void showResignProgress(int row, int col, int level, bool clearFirst = false);
+  void clearResignFeedback(int row, int col);
+  void showWinner(LibreChess::Color winnerColor);
+  void showRemoteGameEnd(char winnerColor);
+  void showErrorFeedback();
 
-  struct LedGuard {
-    Board* board;
-    explicit LedGuard(Board* board) : board(board) { board->acquireLEDs(); }
-    ~LedGuard() { board->releaseLEDs(); }
-    LedGuard(const LedGuard&) = delete;
-    LedGuard& operator=(const LedGuard&) = delete;
-  };
+  std::atomic<bool>* startThinkingStatus();
+  std::atomic<bool>* startWaitingStatus();
+  void stopStatusAnimation(std::atomic<bool>*& stopFlag);
 
   void clearAllLEDs(bool show = true);
-  void setSquareLED(int row, int col, LedRGB color);
-  void showLEDs();
-
-  void fireworkAnimation(LedRGB color = LedColors::White);
-  void captureAnimation(int row, int col);
-  void promotionAnimation(int col);
-  void blinkSquare(int row, int col, LedRGB color, int times = 3, bool clearAfter = true, bool clearBefore = false);
   void showConnectingAnimation();
-  void flashBoardAnimation(LedRGB color, int times = 3);
 
-  std::atomic<bool>* startThinkingAnimation();
-  std::atomic<bool>* startWaitingAnimation();
-  void stopAndWaitForAnimation(std::atomic<bool>*& stopFlag);
-  void waitForAnimationQueueDrain();
+  void startGameSelectionMenu();
+  void clearGameSelectionMenu();
+  GameSelection pollGameSelectionMenu();
+
+  bool confirmAction(bool flipped = false);
+  bool confirmResume(GameSelectionMode mode, bool flipped = false);
+
+  void beginDiagnostics();
+  void updateDiagnostics();
+  bool diagnosticsComplete() const;
 
   uint8_t getBrightness() const;
   uint8_t getDimMultiplier() const;
@@ -84,13 +116,11 @@ class Board {
   void saveLedSettings();
   void triggerCalibration();
 
- private:
-  BoardDriver driver_;
-  BoardFeedback feedback_;
-  BoardAssistance assistance_;
-  LibreChess::board::BoardState state_;
+  uint16_t sensorReadDelayMs() const;
 
-  void syncStateFromDriver(bool initializeBaseline);
+ private:
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 #endif  // BOARD_H

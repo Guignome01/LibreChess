@@ -3,10 +3,9 @@
 
 #include "colors.h"
 #include "state.h"
+#include "system.h"
 
 #include <stdint.h>
-
-class Board;
 
 // ---------------------------
 // Board Menu System
@@ -33,16 +32,16 @@ class BoardMenu {
   static constexpr int RESULT_BACK = -2;
   static constexpr int MAX_ITEMS = 16;
 
-  BoardMenu() : board_(nullptr), items_(nullptr), itemCount_(0),
+  BoardMenu() : system_(nullptr), items_(nullptr), itemCount_(0),
     flipped_(false), hasBack_(false), backRow_(0), backCol_(0) {}
-  explicit BoardMenu(Board* board);
+  explicit BoardMenu(BoardSystem* system);
 
   // Delete copy — menus should not be duplicated
   BoardMenu(const BoardMenu&) = delete;
   BoardMenu& operator=(const BoardMenu&) = delete;
 
-  /// Set or change the Board pointer (for two-phase init).
-  void setBoard(Board* board) { board_ = board; }
+  /// Set or change the board-system pointer (for two-phase init).
+  void setSystem(BoardSystem* system) { system_ = system; }
 
   /// Configure menu options. Items pointer must outlive the menu
   /// (use constexpr file-scoped arrays). Does NOT copy the array.
@@ -62,16 +61,16 @@ class BoardMenu {
   void setFlipped(bool flipped);
 
   /// Light all menu items and back button on the board.
-  /// Acquires LedGuard for the minimum duration needed.
+  /// Runs one lifecycle-owned LED update batch.
   void show();
 
-  /// Clear all LEDs. Acquires LedGuard briefly.
+  /// Clear all LEDs in one lifecycle-owned LED update batch.
   void hide();
 
   /// Reset all debounce counters for a fresh selection cycle.
   void reset();
 
-  /// Non-blocking poll. Call after board->readSensors().
+  /// Non-blocking poll. Call after system->readSensors().
   /// Returns:
   ///   - MenuItem::id on confirmed selection (with blink feedback)
   ///   - RESULT_BACK if back button selected
@@ -105,7 +104,7 @@ class BoardMenu {
     bool selectionLatched_;
   };
 
-  Board* board_;
+  BoardSystem* system_;
   const MenuItem* items_;
   uint8_t itemCount_;
   bool flipped_;
@@ -127,6 +126,6 @@ class BoardMenu {
 /// Blocking yes/no confirmation dialog.
 /// Shows two center squares (green = yes, red = no), waits for selection.
 /// Returns true for yes, false for no.
-bool boardConfirm(Board* board, bool flipped = false);
+bool boardConfirm(BoardSystem* system, bool flipped = false);
 
 #endif // BOARD_MENU_H

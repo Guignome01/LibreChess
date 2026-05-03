@@ -1,21 +1,20 @@
 #ifndef BOARD_DIAGNOSTICS_H
 #define BOARD_DIAGNOSTICS_H
 
+#include "system.h"
 #include "state.h"
-
-class Board;
 
 // Board-owned diagnostics mode for validating physical sensor coverage.
 class BoardDiagnostics {
  public:
-  explicit BoardDiagnostics(Board* board);
+  explicit BoardDiagnostics(BoardSystem* system);
 
   void begin();
   void update();
   bool isComplete() const { return complete_; }
 
  private:
-  Board* board_;
+  BoardSystem* system_;
   bool visited_[LibreChess::board::BOARD_ROWS][LibreChess::board::BOARD_COLS];
   bool complete_;
   uint8_t visitedCount_;

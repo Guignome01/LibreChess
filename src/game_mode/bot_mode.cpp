@@ -26,12 +26,12 @@ void BotMode::begin() {
   }
 
   // Provider may block (e.g., Lichess game discovery). Show waiting animation.
-  std::atomic<bool>* waitAnim = board_->feedback().startWaiting();
+  std::atomic<bool>* waitAnim = board_->startWaitingStatus();
 
   EngineInitResult initResult;
   bool ok = provider_->initialize(initResult);
 
-  board_->feedback().stopAnimation(waitAnim);
+  board_->stopStatusAnimation(waitAnim);
 
   if (!ok) {
     abortWithError("Engine initialization failed");
@@ -160,13 +160,13 @@ bool BotMode::applyEngineMove(const std::string& move) {
 }
 
 void BotMode::handleRemoteGameEnd(const EngineResult& result) {
-  board_->feedback().showRemoteGameEnd(result.winnerColor);
+  board_->showRemoteGameEnd(result.winnerColor);
   chess_->endGame(result.gameResult, result.winnerColor);
 }
 
 void BotMode::abortWithError(const char* message) {
   logger_.errorf("BotMode ABORT: %s", message);
-  board_->feedback().showError();
+  board_->showErrorFeedback();
   chess_->endGame(GameResult::ABORTED, ' ');
 }
 
@@ -199,12 +199,12 @@ void BotMode::onResignConfirmed(Color resignColor) {
 // ---------------------------------------------------------------
 
 void BotMode::startThinking() {
-  thinkingAnimation_ = board_->feedback().startThinking();
+  thinkingAnimation_ = board_->startThinkingStatus();
 }
 
 void BotMode::stopThinking() {
   if (thinkingAnimation_) {
-    board_->feedback().stopAnimation(thinkingAnimation_);
+    board_->stopStatusAnimation(thinkingAnimation_);
   }
 }
 
@@ -214,5 +214,5 @@ void BotMode::stopThinking() {
 // ---------------------------------------------------------------
 
 void BotMode::waitForRemoteMoveCompletion(int fromRow, int fromCol, int toRow, int toCol, bool isCapture, bool isEnPassant, int enPassantCapturedPawnRow) {
-  board_->assistance().guideRemoteMoveCompletion(fromRow, fromCol, toRow, toCol, isCapture, isEnPassant, enPassantCapturedPawnRow, logger_);
+  board_->guideRemoteMoveCompletion(fromRow, fromCol, toRow, toCol, isCapture, isEnPassant, enPassantCapturedPawnRow, logger_);
 }

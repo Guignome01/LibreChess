@@ -4,10 +4,9 @@
 #include "colors.h"
 #include "game.h"
 #include "logger.h"
+#include "system.h"
 
 #include <stdint.h>
-
-class Board;
 
 /// Optional move hinting mode for board-owned chess assistance.
 enum class BoardAssistanceLevel : uint8_t {
@@ -19,7 +18,7 @@ enum class BoardAssistanceLevel : uint8_t {
 // Board-owned physical guidance for chess play.
 class BoardAssistance {
  public:
-  explicit BoardAssistance(Board* board = nullptr, BoardAssistanceLevel level = BoardAssistanceLevel::LEGAL_MOVES);
+  explicit BoardAssistance(BoardSystem* system = nullptr, BoardAssistanceLevel level = BoardAssistanceLevel::LEGAL_MOVES);
 
   void setLevel(BoardAssistanceLevel level) { level_ = level; }
   BoardAssistanceLevel level() const { return level_; }
@@ -31,7 +30,7 @@ class BoardAssistance {
   void guideRemoteMoveCompletion(int fromRow, int fromCol, int toRow, int toCol, bool isCapture, bool isEnPassant, int enPassantCapturedPawnRow, LibreChess::Log& logger);
 
  private:
-  Board* board_;
+  BoardSystem* system_;
   BoardAssistanceLevel level_;
 };
 

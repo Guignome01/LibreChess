@@ -1,19 +1,12 @@
 #include "game_mode.h"
 #include "../board/board.h"
-#include "../board/menu.h"
 #include "game.h"
 #include "wifi_manager_esp32.h"
 
 namespace {
 
-using LibreChess::board::BoardSquare;
-
-BoardSquare makeBoardSquare(int row, int col) {
-  return BoardSquare{static_cast<int8_t>(row), static_cast<int8_t>(col)};
-}
-
-bool sameSquare(BoardSquare square, int row, int col) {
-  return square == makeBoardSquare(row, col);
+bool sameSquare(int row, int col, int otherRow, int otherCol) {
+  return row == otherRow && col == otherCol;
 }
 
 bool moveTargetsSquare(const Move& move, int row, int col) {
@@ -27,12 +20,12 @@ bool hasLegalMoveTo(const MoveList& moves, int row, int col) {
   return false;
 }
 
-bool isQuietLegalPlacement(const Game& game, const MoveList& moves, int fromRow, int fromCol, BoardSquare placedSquare) {
-  if (!hasLegalMoveTo(moves, placedSquare.row, placedSquare.col))
+bool isQuietLegalPlacement(const Game& game, const MoveList& moves, int fromRow, int fromCol, int placedRow, int placedCol) {
+  if (!hasLegalMoveTo(moves, placedRow, placedCol))
     return false;
 
-  auto enPassant = game.checkEnPassant(fromRow, fromCol, placedSquare.row, placedSquare.col);
-  return Game::isEmptySquare(game.getSquare(placedSquare.row, placedSquare.col)) && !enPassant.isCapture;
+  auto enPassant = game.checkEnPassant(fromRow, fromCol, placedRow, placedCol);
+  return Game::isEmptySquare(game.getSquare(placedRow, placedCol)) && !enPassant.isCapture;
 }
 
 struct CaptureSelection {
@@ -43,7 +36,7 @@ struct CaptureSelection {
   bool isEnPassant;
 };
 
-bool captureSelectionForLiftedSquare(const Game& game, const MoveList& moves, int fromRow, int fromCol, BoardSquare liftedSquare, CaptureSelection& selection) {
+bool captureSelectionForLiftedSquare(const Game& game, const MoveList& moves, int fromRow, int fromCol, int liftedRow, int liftedCol, CaptureSelection& selection) {
   for (int moveIndex = 0; moveIndex < moves.count; ++moveIndex) {
     int targetRow = squareToRow(moves.moves[moveIndex].to);
     int targetCol = squareToCol(moves.moves[moveIndex].to);
@@ -55,7 +48,7 @@ bool captureSelectionForLiftedSquare(const Game& game, const MoveList& moves, in
 
     int capturedRow = enPassant.isCapture ? squareToRow(enPassant.capturedPawnSq) : targetRow;
     int capturedCol = targetCol;
-    if (!sameSquare(liftedSquare, capturedRow, capturedCol))
+    if (!sameSquare(liftedRow, liftedCol, capturedRow, capturedCol))
       continue;
 
     selection = {targetRow, targetCol, capturedRow, capturedCol, enPassant.isCapture};
@@ -81,7 +74,7 @@ bool GameMode::tryResumeGame() {
 }
 
 void GameMode::waitForBoardSetup() {
-  board_->assistance().waitForSetup(*chess_, logger_);
+  board_->waitForBoardSetup(*chess_, logger_);
 }
 
 MoveResult GameMode::applyMove(int fromRow, int fromCol, int toRow, int toCol, char promotion, bool isRemoteMove) {
@@ -101,9 +94,9 @@ MoveResult GameMode::applyMove(int fromRow, int fromCol, int toRow, int toCol, c
 
   // Castling: guide the player to move the rook
   if (result.isCastling())
-    board_->assistance().guideCastling(fromRow, fromCol, toRow, toCol, castleInfo, isRemoteMove, logger_);
+    board_->guideCastling(fromRow, fromCol, toRow, toCol, castleInfo, isRemoteMove, logger_);
 
-  board_->feedback().showMoveResultFeedback(result, toRow, toCol, *chess_);
+  board_->showMoveResultFeedback(result, toRow, toCol, *chess_);
 
   return result;
 }
@@ -120,12 +113,10 @@ MoveResult GameMode::applyMove(const std::string& move) {
 
 bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int& toRow, int& toCol) {
   for (uint8_t changeIndex = 0; changeIndex < board_->changedCount(); ++changeIndex) {
-    BoardSquare originSquare = board_->changedSquare(changeIndex);
-    if (!originSquare.valid())
+    int row = -1;
+    int col = -1;
+    if (!board_->changedSquare(changeIndex, row, col))
       continue;
-
-    int row = originSquare.row;
-    int col = originSquare.col;
 
     // Continue if nothing was picked up from this square
     if (!board_->wasLifted(row, col))
@@ -140,7 +131,7 @@ bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int&
     // Check if it's the correct player's piece
     if (Game::pieceColor(piece) != playerColor) {
       logger_.infof("Wrong turn! It's %s's turn to move.", Game::colorName(playerColor));
-      board_->feedback().showIllegalMoveFeedback(row, col);
+      board_->showIllegalMoveFeedback(row, col);
       continue;
     }
 
@@ -150,7 +141,7 @@ bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int&
     MoveList moves;
     chess_->getPossibleMoves(row, col, moves);
 
-    board_->assistance().showLegalMoveHighlights(row, col, moves, *chess_);
+    board_->showLegalMoveHighlights(row, col, moves, *chess_);
 
     // Wait for piece placement - handle both normal moves and captures
     int targetRow = -1, targetCol = -1;
@@ -173,37 +164,38 @@ bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int&
         resignTransitioned = true;
         resignFlagTimestamp = millis();
         logger_.info("King held off square for 3s \xe2\x80\x94 resign gesture initiated");
-        board_->feedback().showResignProgress(row, col, 0);
+        board_->showResignProgress(row, col, 0);
       }
 
       for (uint8_t placedIndex = 0; placedIndex < board_->changedCount(); ++placedIndex) {
-        BoardSquare changedSquare = board_->changedSquare(placedIndex);
-        if (!changedSquare.valid())
+        int changedRow = -1;
+        int changedCol = -1;
+        if (!board_->changedSquare(placedIndex, changedRow, changedCol))
           continue;
 
-        if (sameSquare(changedSquare, row, col) && board_->wasPlaced(row, col)) {
+        if (sameSquare(changedRow, changedCol, row, col) && board_->wasPlaced(row, col)) {
           targetRow = row;
           targetCol = col;
           piecePlaced = true;
           break;
         }
 
-        if (sameSquare(changedSquare, row, col))
+        if (sameSquare(changedRow, changedCol, row, col))
           continue;
 
-        if (board_->wasPlaced(changedSquare.row, changedSquare.col) &&
-            isQuietLegalPlacement(*chess_, moves, row, col, changedSquare)) {
-          targetRow = changedSquare.row;
-          targetCol = changedSquare.col;
+        if (board_->wasPlaced(changedRow, changedCol) &&
+            isQuietLegalPlacement(*chess_, moves, row, col, changedRow, changedCol)) {
+          targetRow = changedRow;
+          targetCol = changedCol;
           piecePlaced = true;
           break;
         }
 
-        if (!board_->wasLifted(changedSquare.row, changedSquare.col))
+        if (!board_->wasLifted(changedRow, changedCol))
           continue;
 
         CaptureSelection captureSelection;
-        if (!captureSelectionForLiftedSquare(*chess_, moves, row, col, changedSquare, captureSelection))
+        if (!captureSelectionForLiftedSquare(*chess_, moves, row, col, changedRow, changedCol, captureSelection))
           continue;
 
         logger_.infof("Capture initiated at %s", Game::squareName(captureSelection.targetRow, captureSelection.targetCol).c_str());
@@ -211,9 +203,9 @@ bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int&
         targetCol = captureSelection.targetCol;
         piecePlaced = true;
         if (captureSelection.isEnPassant) {
-          board_->feedback().clearSquare(captureSelection.capturedRow, captureSelection.capturedCol);
+          board_->clearFeedbackSquare(captureSelection.capturedRow, captureSelection.capturedCol);
         }
-        board_->assistance().showCapturePlacementPrompt(captureSelection.targetRow, captureSelection.targetCol);
+        board_->showCapturePlacementPrompt(captureSelection.targetRow, captureSelection.targetCol);
 
         while (!board_->occupied(captureSelection.targetRow, captureSelection.targetCol)) {
           board_->readSensors();
@@ -223,19 +215,19 @@ bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int&
             targetCol = col;
             break;
           }
-          delay(SENSOR_READ_DELAY_MS);
+          delay(board_->sensorReadDelayMs());
         }
 
         break;
       }
 
-      delay(SENSOR_READ_DELAY_MS);
+      delay(board_->sensorReadDelayMs());
     }
 
     // Clear highlights (single cleanup for all exit paths)
     // When resign was triggered and king returned, defer clear to showResignProgress to avoid flash.
     if (!(resignTransitioned && targetRow == row && targetCol == col)) {
-      board_->feedback().clearBoard();
+      board_->clearBoardFeedback();
     }
 
     if (targetRow == row && targetCol == col) {
@@ -243,10 +235,10 @@ bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int&
       if (resignTransitioned) {
         // If king was returned too late, silently cancel
         if (millis() - resignFlagTimestamp > RESIGN_LIFT_WINDOW_MS) {
-          board_->feedback().clearBoard();
+          board_->clearBoardFeedback();
         } else {
           // First landing: brighten to 50%
-          board_->feedback().showResignProgress(row, col, 1, true);
+          board_->showResignProgress(row, col, 1, true);
           // Run remaining 2 quick lifts inline (blocking)
           continueResignGesture(row, col, Game::pieceColor(piece));
         }
@@ -305,11 +297,11 @@ bool GameMode::continueResignGesture(int row, int col, Color color) {
         lifted = true;
         break;
       }
-      delay(SENSOR_READ_DELAY_MS);
+      delay(board_->sensorReadDelayMs());
     }
 
     if (!lifted) {
-      board_->feedback().clearResignFeedback(row, col);
+      board_->clearResignFeedback(row, col);
       return false;
     }
 
@@ -321,20 +313,20 @@ bool GameMode::continueResignGesture(int row, int col, Color color) {
         returned = true;
         break;
       }
-      delay(SENSOR_READ_DELAY_MS);
+      delay(board_->sensorReadDelayMs());
     }
 
     if (!returned) {
-      board_->feedback().clearResignFeedback(row, col);
+      board_->clearResignFeedback(row, col);
       return false;
     }
 
-    board_->feedback().showResignProgress(row, col, lift + 1);
+    board_->showResignProgress(row, col, lift + 1);
   }
 
   logger_.infof("Resign gesture completed by %s", Game::colorName(color));
   delay(500);
-  board_->feedback().clearResignFeedback(row, col);
+  board_->clearResignFeedback(row, col);
   return handleResign(color);
 }
 
@@ -344,7 +336,7 @@ bool GameMode::handleResign(Color resignColor) {
   bool flipped = isFlipped();
   logger_.infof("Resign confirmation for %s...", Game::colorName(resignColor));
 
-  if (!boardConfirm(board_, flipped)) {
+  if (!board_->confirmAction(flipped)) {
     logger_.info("Resign cancelled");
     onResignCancelled();
     return false;
@@ -353,7 +345,7 @@ bool GameMode::handleResign(Color resignColor) {
   onResignConfirmed(resignColor);
 
   Color winnerColor = ~resignColor;
-  board_->feedback().showWinner(winnerColor);
+  board_->showWinner(winnerColor);
   chess_->endGame(GameResult::RESIGNATION, winnerColor == Color::WHITE ? 'w' : 'b');
   return true;
 }

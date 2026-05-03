@@ -3,15 +3,14 @@
 
 #include "colors.h"
 #include "game.h"
+#include "system.h"
 
 #include <atomic>
-
-class Board;
 
 // Board-owned visual feedback for move outcomes, status, and errors.
 class BoardFeedback {
  public:
-  explicit BoardFeedback(Board* board = nullptr);
+  explicit BoardFeedback(BoardSystem* system = nullptr);
 
   void clearBoard(bool show = true);
   void clearSquare(int row, int col);
@@ -28,7 +27,7 @@ class BoardFeedback {
   void stopAnimation(std::atomic<bool>*& stopFlag);
 
  private:
-  Board* board_;
+  BoardSystem* system_;
 
   void confirmSquareCompletion(int row, int col);
 };

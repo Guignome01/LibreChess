@@ -9,9 +9,6 @@
 #include "storage/littrefs.h"
 #include "serial_logger.h"
 #include "system_utils.h"
-#include "board/colors.h"
-#include "board/config.h"
-#include "board/diagnostics.h"
 #ifdef FACTORY_RESET
 #include <nvs_flash.h>
 #endif
@@ -42,14 +39,13 @@ LittleFSStorage storage(&logger);
 WiFiManagerESP32 wifiManager(&physicalBoard, &storage);
 Game chess(&storage, &wifiManager, &logger);
 GameMode* activeGame = nullptr;
-BoardDiagnostics* boardDiagnostics = nullptr;
 
 AppMode currentMode = AppMode::SELECTION;
 bool modeInitialized = false;
 bool resumingGame = false;
 
 void enterGameSelection();
-void handleMenuResult(int result);
+void handleGameSelection(const Board::GameSelection& selection);
 void initializeSelectedMode(AppMode mode);
 void checkForResumableGame();
 
@@ -83,9 +79,6 @@ void setup() {
   wifiManager.begin();
   Serial.println();
 
-  // Configure menu system
-  initMenus(&physicalBoard);
-
   // Kick off NTP time sync (non-blocking, will resolve in background)
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
   // Check for a live game that can be resumed
@@ -107,17 +100,17 @@ void checkForResumableGame() {
 
   Serial.println("========== Live game found on flash ==========");
 
-  LedRGB indicatorColor = LedColors::White;
+  Board::GameSelectionMode confirmMode = Board::GameSelectionMode::NONE;
   const char* modeName = "Unknown";
   bool flipped = false;
 
   switch (resumeMode) {
     case GameModeId::PLAYER:
-      indicatorColor = LedColors::Blue;
+      confirmMode = Board::GameSelectionMode::CHESS_MOVES;
       modeName = "Chess Moves";
       break;
     case GameModeId::BOT:
-      indicatorColor = LedColors::Green;
+      confirmMode = Board::GameSelectionMode::BOT;
       modeName = "Bot";
       flipped = (resumePlayerColor == 'b');
       Serial.printf("  Mode: Bot (player=%c, difficulty=%d, engineId=%d)\n",
@@ -137,10 +130,8 @@ void checkForResumableGame() {
 
   Serial.printf("  Found: %s game — confirm resume?\n", modeName);
   Serial.println("  Green = Resume, Red = Discard");
-  physicalBoard.blinkSquare(3, 3, indicatorColor, 2);
-  physicalBoard.waitForAnimationQueueDrain();
 
-  if (boardConfirm(&physicalBoard, flipped)) {
+  if (physicalBoard.confirmResume(confirmMode, flipped)) {
     Serial.println("  -> Player chose to RESUME");
     switch (resumeMode) {
       case GameModeId::PLAYER:
@@ -210,18 +201,17 @@ void loop() {
     }
     if (selectedMode > 0) {
       modeInitialized = false;
-      navigator.clear();
+      physicalBoard.clearGameSelectionMenu();
       wifiManager.resetGameSelection();
       physicalBoard.clearAllLEDs();
     }
   }
 
   if (currentMode == AppMode::SELECTION) {
-    physicalBoard.readSensors();
-    int result = navigator.poll();
-    if (result != BoardMenu::RESULT_NONE)
-      handleMenuResult(result);
-    delay(SENSOR_READ_DELAY_MS);
+    Board::GameSelection selection = physicalBoard.pollGameSelectionMenu();
+    if (selection.hasSelection())
+      handleGameSelection(selection);
+    delay(physicalBoard.sensorReadDelayMs());
     return;
   }
   // Game mode selected
@@ -279,26 +269,23 @@ void loop() {
       }
       break;
     case AppMode::BOARD_DIAGNOSTICS:
-      if (boardDiagnostics != nullptr) {
-        if (boardDiagnostics->isComplete())
-          enterGameSelection();
-        else
-          boardDiagnostics->update();
-      }
+      if (physicalBoard.diagnosticsComplete())
+        enterGameSelection();
+      else
+        physicalBoard.updateDiagnostics();
       break;
     default:
       enterGameSelection();
       break;
   }
 
-  delay(SENSOR_READ_DELAY_MS);
+  delay(physicalBoard.sensorReadDelayMs());
 }
 
 void enterGameSelection() {
   currentMode = AppMode::SELECTION;
   modeInitialized = false;
-  navigator.clear();
-  navigator.push(&gameMenu);
+  physicalBoard.startGameSelectionMenu();
   Serial.println("=============== Game Selection Mode ===============");
   Serial.println("Four LEDs are lit in the center of the board:");
   Serial.println("  Blue:   Chess Moves (Human vs Human)");
@@ -309,69 +296,34 @@ void enterGameSelection() {
   Serial.println("===================================================");
 }
 
-void handleMenuResult(int result) {
-  switch (result) {
-    // Game selection menu
-    case MenuId::CHESS_MOVES:
+void handleGameSelection(const Board::GameSelection& selection) {
+  switch (selection.mode) {
+    case Board::GameSelectionMode::CHESS_MOVES:
       Serial.println("Mode: 'Chess Moves' selected!");
       currentMode = AppMode::CHESS_MOVES;
       modeInitialized = false;
-      navigator.clear();
       break;
-    case MenuId::BOT:
-      Serial.println("Mode: 'Chess Bot' selected! Choose difficulty...");
-      navigator.push(&botDifficultyMenu);
+    case Board::GameSelectionMode::BOT:
+      botDifficultyLevel = selection.botDifficulty;
+      playerColor = selection.playerColor;
+      Serial.printf("Mode: 'Chess Bot' selected! Level %d, player is %s\n",
+                    botDifficultyLevel, playerColor == 'w' ? "White" : "Black");
+      currentMode = AppMode::BOT;
+      modeInitialized = false;
       break;
-    case MenuId::LICHESS:
+    case Board::GameSelectionMode::LICHESS:
       Serial.println("Mode: 'Lichess' selected!");
       currentMode = AppMode::LICHESS;
       modeInitialized = false;
       lichessConfig = wifiManager.getLichessConfig();
-      navigator.clear();
       break;
-    case MenuId::BOARD_DIAGNOSTICS:
+    case Board::GameSelectionMode::BOARD_DIAGNOSTICS:
       Serial.println("Mode: 'Sensor Test' selected!");
       currentMode = AppMode::BOARD_DIAGNOSTICS;
       modeInitialized = false;
-      navigator.clear();
       break;
-
-    // Bot difficulty menu (ids 10–17 → level 1–8)
-    case MenuId::DIFF_1: case MenuId::DIFF_2: case MenuId::DIFF_3: case MenuId::DIFF_4:
-    case MenuId::DIFF_5: case MenuId::DIFF_6: case MenuId::DIFF_7: case MenuId::DIFF_8: {
-      int level = result - MenuId::DIFF_1 + 1;
-      botDifficultyLevel = level;
-      Serial.printf("Difficulty: Level %d\n", level);
-      navigator.push(&botColorMenu);
-      break;
-    }
-
-    // Bot color menu
-    case MenuId::PLAY_WHITE:
-      Serial.println("Playing as White");
-      playerColor = 'w';
-      currentMode = AppMode::BOT;
-      modeInitialized = false;
-      navigator.clear();
-      break;
-    case MenuId::PLAY_BLACK:
-      Serial.println("Playing as Black");
-      playerColor = 'b';
-      currentMode = AppMode::BOT;
-      modeInitialized = false;
-      navigator.clear();
-      break;
-    case MenuId::PLAY_RANDOM:
-      Serial.println("Playing as Random");
-      playerColor = (random(2) == 0) ? 'w' : 'b';
-      Serial.printf("  -> Assigned: %s\n", playerColor == 'w' ? "White" : "Black");
-      currentMode = AppMode::BOT;
-      modeInitialized = false;
-      navigator.clear();
-      break;
-
+    case Board::GameSelectionMode::NONE:
     default:
-      Serial.printf("Unknown menu result: %d\n", result);
       break;
   }
 }
@@ -385,8 +337,6 @@ void initializeSelectedMode(AppMode mode) {
   // Clean up previous game/test
   delete activeGame;
   activeGame = nullptr;
-  delete boardDiagnostics;
-  boardDiagnostics = nullptr;
 
   switch (mode) {
     case AppMode::CHESS_MOVES:
@@ -413,8 +363,7 @@ void initializeSelectedMode(AppMode mode) {
       break;
     case AppMode::BOARD_DIAGNOSTICS:
       Serial.println("Starting 'Sensor Test'...");
-      boardDiagnostics = new BoardDiagnostics(&physicalBoard);
-      boardDiagnostics->begin();
+      physicalBoard.beginDiagnostics();
       break;
     default:
       enterGameSelection();

@@ -22,7 +22,7 @@ Formatting is enforced via `.clang-format` at the project root (Google style bas
 
 Each class owns a single responsibility and never crosses into another's domain:
 
-- `Board` is the firmware-facing physical-board facade; `BoardDriver` handles low-level hardware interaction (LEDs, sensors, settings); `BoardAnimationLifecycle` owns animation queue concurrency; `BoardCalibration` owns the calibration workflow; `BoardAssistance` owns physical chess guidance. No board module mutates chess state.
+- `Board` is the firmware-facing physical-board facade and the only board header consumed outside `src/board/`; it exposes semantic operations and getters rather than board-local constants, colors, menu IDs, or helper types. `BoardSystem` is the internal dispatch/state layer consumed by board-local modules; `BoardDriver` handles low-level hardware interaction (LEDs, sensors, settings); `BoardAnimationLifecycle` owns animation queue concurrency; `BoardCalibration` owns the calibration workflow; `BoardAssistance` owns physical chess guidance. No board module mutates chess state.
 - `movegen`/`rules` namespaces implement chess rules and move generation. No hardware access, no network calls.
 - `WiFiManagerESP32` manages WiFi, the web server, and API endpoints. Doesn't touch the board hardware directly.
 - `History` + concrete storage backends such as `LittleFSStorage` own game persistence. Don't know about sensors or LEDs.
@@ -41,11 +41,13 @@ New features should build on existing infrastructure. For example, `LichessProvi
 
 ## LED Access Rules
 
-- Multi-step LED updates outside board internals require a scoped `Board::LedGuard` (RAII mutex facade).
-- Single animations (`blinkSquare`, `captureAnimation`) are queued and acquire the mutex automatically — no guard needed.
-- Long-running animations return `std::atomic<bool>*` — cancel via `stopAndWaitForAnimation(flag)`.
-- Call `waitForAnimationQueueDrain()` as a barrier before writing LEDs directly.
+- Multi-step LED updates inside `src/board/` must use `BoardSystem::batchLEDs()` rather than manual mutex handling. Code outside `src/board/` should call semantic `Board` methods instead of raw LED APIs.
+- Single animations are factory-built `AnimationJob` values submitted through `BoardSystem::runAnimation()` and acquire the mutex automatically — no guard needed.
+- Long-running animations start through `BoardSystem::startAnimation(AnimationType::THINKING/WAITING)` and return `std::atomic<bool>*` — cancel via `stopAndWaitForAnimation(flag)`.
+- Use `waitForAnimationQueueDrain()` inside board-local code as a barrier before writing LEDs directly.
 - Colors in `LedColors` have fixed semantic meanings (see [architecture.md](architecture.md#color-semantics)). Use consistently.
+
+- Outside `src/board/`, use facade getters such as `Board::sensorReadDelayMs()` instead of board-local macros such as `SENSOR_READ_DELAY_MS`.
 
 ## ESP32 Patterns
 

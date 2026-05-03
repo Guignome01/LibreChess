@@ -85,10 +85,6 @@ void BoardDriver::begin() {
       sensorDebounceTime[row][col] = 0;
     }
 
-  if (!animationLifecycle_.begin(this)) {
-    Serial.println("Board animation lifecycle initialization failed");
-  }
-
   if (!calibration_.load()) {
     bool wasSkipped = calibration_.run();
     if (!wasSkipped) {
@@ -170,14 +166,6 @@ int BoardDriver::getPixelIndex(int row, int col) {
   return ledIndexMap[row][col];
 }
 
-void BoardDriver::acquireLEDs() {
-  animationLifecycle_.acquireLEDs();
-}
-
-void BoardDriver::releaseLEDs() {
-  animationLifecycle_.releaseLEDs();
-}
-
 void BoardDriver::clearAllLEDs(bool show) {
   for (int row = 0; row < NUM_ROWS; row++)
     for (int col = 0; col < NUM_COLS; col++)
@@ -200,55 +188,13 @@ void BoardDriver::showLEDs() {
   strip.Show();
 }
 
-void BoardDriver::showConnectingAnimation() {
-  animationLifecycle_.showConnectingAnimation();
-}
-
-void BoardDriver::blinkSquare(int row, int col, LedRGB color, int times, bool clearAfter, bool clearBefore) {
-  animationLifecycle_.blinkSquare(row, col, color, times, clearAfter, clearBefore);
-}
-
-void BoardDriver::fireworkAnimation(LedRGB color) {
-  animationLifecycle_.fireworkAnimation(color);
-}
-
-void BoardDriver::captureAnimation(int row, int col) {
-  animationLifecycle_.captureAnimation(row, col);
-}
-
-void BoardDriver::promotionAnimation(int col) {
-  animationLifecycle_.promotionAnimation(col);
-}
-
-void BoardDriver::flashBoardAnimation(LedRGB color, int times) {
-  animationLifecycle_.flashBoardAnimation(color, times);
-}
-
-std::atomic<bool>* BoardDriver::startThinkingAnimation() {
-  return animationLifecycle_.startThinkingAnimation();
-}
-
-std::atomic<bool>* BoardDriver::startWaitingAnimation() {
-  return animationLifecycle_.startWaitingAnimation();
-}
-
-void BoardDriver::stopAndWaitForAnimation(std::atomic<bool>*& stopFlag) {
-  animationLifecycle_.stopAndWaitForAnimation(stopFlag);
-}
-
-void BoardDriver::waitForAnimationQueueDrain() {
-  animationLifecycle_.waitForAnimationQueueDrain();
-}
-
 void BoardDriver::setBrightness(uint8_t value) {
-  LedGuard guard(this);
   brightness = clampBrightness(value);
   strip.SetLuminance(brightness);
   showLEDs();
 }
 
 void BoardDriver::setDimMultiplier(uint8_t value) {
-  LedGuard guard(this);
   dimMultiplier = clampDimMultiplier(value);
   for (int row = 0; row < NUM_ROWS; row++)
     for (int col = 0; col < NUM_COLS; col++)
