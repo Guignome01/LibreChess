@@ -1,6 +1,7 @@
 #include "driver.h"
 
-#include "../system_utils.h"
+#include "board/calibration.h"
+#include "system_utils.h"
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -31,7 +32,6 @@ static constexpr uint8_t rawIdentityLedIndex(int row, int col) {
 
 BoardDriver::BoardDriver()
     : strip(LED_COUNT, LED_PIN),
-      calibration_(this),
       lastEnabledCol(-2),
       brightness(BRIGHTNESS),
       dimMultiplier(70),
@@ -85,10 +85,11 @@ void BoardDriver::begin() {
       sensorDebounceTime[row][col] = 0;
     }
 
-  if (!calibration_.load()) {
-    bool wasSkipped = calibration_.run();
+  BoardCalibration calibration(this);
+  if (!calibration.load()) {
+    bool wasSkipped = calibration.run();
     if (!wasSkipped) {
-      calibration_.save();
+      calibration.save();
     }
   }
 }
@@ -229,5 +230,6 @@ void BoardDriver::saveLedSettings() {
 }
 
 void BoardDriver::triggerCalibration() {
-  calibration_.trigger();
+  BoardCalibration calibration(this);
+  calibration.trigger();
 }

@@ -2,13 +2,13 @@
 #define BOARD_GUI_H
 
 #include "assistance.h"
-#include "diagnostics.h"
+#include "board/diagnostics.h"
 #include "feedback.h"
-#include "layering.h"
+#include "board/core/layering.h"
+#include "board/core/system.h"
 #include "menu.h"
 #include "selection.h"
 #include "stack.h"
-#include "system.h"
 
 #include "game.h"
 #include "logger.h"

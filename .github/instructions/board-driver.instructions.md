@@ -5,13 +5,13 @@ applyTo: "src/board/**, src/system_utils.*"
 
 # Board Firmware & Hardware Patterns
 
-`src/board/board.*` is the firmware-facing facade and the only board header consumed outside `src/board/`. It hides colors, menu IDs, diagnostics types, `BoardGui`, `BoardLayering`, `BoardStack`, `BoardDrawable`, scheduler internals, and raw LED batching behind semantic methods and getters such as `confirmResume()`, `pollGameSelectionMenu()`, and `sensorReadDelayMs()`. `src/board/gui.*` is the board-internal visual coordinator; it owns/wires feedback, assistance, diagnostics, board menus, `BoardStack`, `BoardLayering`, and selection/resume visual policy. `src/board/layering.*` owns the persistent base layer plus overlay layer and renders them through `BoardSystem::batchLEDs()`. `src/board/system.*` is the board-internal service boundary consumed by board-local modules; it composes `BoardDriver`, `BoardScheduler`, and the `LibreChess::board::BoardState` transition snapshot. `src/board/driver.*` remains the low-level hardware owner. `src/board/animations.*` owns `AnimationJob` definitions, factory builders, metadata helpers, and visual animation execution through `BoardLEDBatch`; `src/board/scheduler.*` owns the FreeRTOS queue/task, LED mutex, stop flags, and queue barrier.
+`src/board/board.*` is the firmware-facing facade and the only board header consumed outside `src/board/`. It hides colors, menu IDs, diagnostics types, `BoardGui`, `BoardLayering`, `BoardStack`, `BoardDrawable`, scheduler internals, and raw LED batching behind semantic methods and getters such as `confirmResume()`, `pollGameSelectionMenu()`, and `sensorReadDelayMs()`. `src/board/core/` holds board runtime primitives: `system.*` is the board-internal service boundary, `driver.*` owns low-level hardware, `state.*` owns physical occupancy transitions, `colors.h` owns semantic LED colors, `layering.*` owns persistent base + overlay composition, `animations.*` owns value-based animation job factories and visual execution, and `scheduler.*` owns the FreeRTOS queue/task, LED mutex, stop flags, and queue barrier. `src/board/gui/gui.*` is the board-internal visual coordinator; it owns/wires feedback, assistance, diagnostics, board menus, `BoardStack`, `BoardLayering`, and selection/resume visual policy.
 
-`src/board/drawable.h` defines the minimal `BoardDrawable` contract for modal board visuals. `src/board/stack.*` owns modal push/pop/back behavior over non-owning `BoardDrawable*` entries; menus are the first concrete drawable. Overlay composition belongs to `BoardLayering`, not `BoardStack`.
+`src/board/gui/drawable.h` defines the minimal `BoardDrawable` contract for modal board visuals. `src/board/gui/stack.*` owns modal push/pop/back behavior over non-owning `BoardDrawable*` entries; menus are the first concrete drawable. Overlay composition belongs to `BoardLayering`, not `BoardStack`.
 
-`src/board/assistance.*` owns physical chess guidance: setup prompts, configurable legal-move assistance (`BoardAssistanceLevel`), castling prompts, remote-move completion prompts, and capture placement prompts. It may read `Game` through public APIs for display decisions, but it must not mutate chess state, talk to engine providers, or call WiFi APIs.
+`src/board/gui/assistance.*` owns physical chess guidance: setup prompts, configurable legal-move assistance (`BoardAssistanceLevel`), castling prompts, remote-move completion prompts, and capture placement prompts. It may read `Game` through public APIs for display decisions, but it must not mutate chess state, talk to engine providers, or call WiFi APIs.
 
-`src/board/feedback.*` owns always-on visual feedback: illegal move blink, resign progress, post-move confirmation, capture/promotion/check/game-end effects, thinking/waiting status animations, remote game-end display, and error flashes.
+`src/board/gui/feedback.*` owns always-on visual feedback: illegal move blink, resign progress, post-move confirmation, capture/promotion/check/game-end effects, thinking/waiting status animations, remote game-end display, and error flashes.
 
 `src/board/calibration.*` owns the serial-guided calibration workflow and NVS mapping persistence. It is board-internal and uses `BoardDriver` friendship for raw GPIO scanning, strip writes, mapping arrays, and `boardCal` persistence. `BoardDriver::begin()` delegates `load()`/`run()`/`save()` to `BoardCalibration`; `BoardDriver` applies the resulting mapping during normal sensor and LED operations.
 
@@ -68,7 +68,7 @@ Animations run on a dedicated FreeRTOS task owned by `BoardScheduler` that deque
 
 ## Color Semantics
 
-Colors in `LedColors` (`src/board/colors.h`) have **fixed semantic meanings**. Never use a color for a different purpose.
+Colors in `LedColors` (`src/board/core/colors.h`) have **fixed semantic meanings**. Never use a color for a different purpose.
 
 | Color | Meaning | Usage |
 |-------|---------|-------|
@@ -129,7 +129,7 @@ Settings stored via Arduino `Preferences`. Always call `SystemUtils::ensureNvsIn
 
 - **The facade must not re-export board internals** — `Board` exists to shield the rest of firmware from `LedColors`, `BoardMenu`, `MenuId`, diagnostics workflow state, `BoardGui`, `BoardLayering`, `BoardStack`, `BoardDrawable`, scheduler internals, and raw LED batching. If code outside `src/board/` needs board-specific behavior or timing values, expose a semantic facade method or getter instead of including another board header.
 
-- **Colors have fixed semantics** — the color table in `src/board/colors.h` is a project-wide contract. Cyan always means "piece origin", red always means "capture/error", etc. This consistency lets players learn the visual language once and apply it everywhere. Never reuse a color for a different meaning.
+- **Colors have fixed semantics** — the color table in `src/board/core/colors.h` is a project-wide contract. Cyan always means "piece origin", red always means "capture/error", etc. This consistency lets players learn the visual language once and apply it everywhere. Never reuse a color for a different meaning.
 
 - **Guidance and feedback are separate board concerns** — `BoardAssistance` owns optional/physical guidance such as legal-move hints and sensor-blocking prompts, while `BoardFeedback` owns mandatory outcomes and status visuals. This lets assistance levels evolve without disabling core mode feedback or duplicating guidance logic between local and bot modes.
 

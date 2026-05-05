@@ -1,7 +1,6 @@
 #ifndef BOARD_DRIVER_H
 #define BOARD_DRIVER_H
 
-#include "calibration.h"
 #include "colors.h"
 #include <NeoPixelBusLg.h>
 
@@ -78,7 +77,6 @@ class BoardDriver {
 
  private:
   NeoPixelBusLg<NeoGrbFeature, NeoEsp32I2s0800KbpsMethod, NeoGammaNullMethod> strip;
-  BoardCalibration calibration_;
   bool sensorState[NUM_ROWS][NUM_COLS];
   bool sensorRaw[NUM_ROWS][NUM_COLS];
   unsigned long sensorDebounceTime[NUM_ROWS][NUM_COLS];

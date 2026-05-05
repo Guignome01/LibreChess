@@ -1,8 +1,8 @@
 #ifndef BOARD_DIAGNOSTICS_H
 #define BOARD_DIAGNOSTICS_H
 
-#include "system.h"
-#include "state.h"
+#include "core/state.h"
+#include "core/system.h"
 
 class BoardLayering;
 

@@ -1,9 +1,9 @@
 #ifndef BOARD_FEEDBACK_H
 #define BOARD_FEEDBACK_H
 
-#include "colors.h"
+#include "board/core/colors.h"
+#include "board/core/system.h"
 #include "game.h"
-#include "system.h"
 
 #include <atomic>
 

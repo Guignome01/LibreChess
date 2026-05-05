@@ -3,7 +3,7 @@
 
 #include "game.h"
 #include "logger.h"
-#include "selection.h"
+#include "gui/selection.h"
 
 #include <atomic>
 #include <cstdint>

@@ -1,8 +1,8 @@
 #include "calibration.h"
 
-#include "driver.h"
+#include "core/driver.h"
 #include "game.h"
-#include "../system_utils.h"
+#include "system_utils.h"
 
 #include <Arduino.h>
 #include <Preferences.h>

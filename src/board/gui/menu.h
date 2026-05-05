@@ -1,10 +1,10 @@
 #ifndef BOARD_MENU_H
 #define BOARD_MENU_H
 
-#include "colors.h"
+#include "board/core/colors.h"
+#include "board/core/state.h"
+#include "board/core/system.h"
 #include "drawable.h"
-#include "state.h"
-#include "system.h"
 
 #include <stdint.h>
 

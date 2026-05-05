@@ -4,7 +4,7 @@ GPIO pin assignments and wiring connections for the LibreChess chessboard.
 
 ## Pin Configuration
 
-All GPIO pins are defined in `src/board/driver.h`. The calibration system maps physical pin order to logical board coordinates, so the order in which row pins are connected does not matter — calibration handles the mapping.
+All GPIO pins are defined in `src/board/core/driver.h`. The calibration system maps physical pin order to logical board coordinates, so the order in which row pins are connected does not matter — calibration handles the mapping.
 
 ### LED Strip
 

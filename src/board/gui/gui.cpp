@@ -1,8 +1,8 @@
 #include "gui.h"
 
-#include "animations.h"
-#include "colors.h"
-#include "config.h"
+#include "board/config.h"
+#include "board/core/animations.h"
+#include "board/core/colors.h"
 
 #include <Arduino.h>
 

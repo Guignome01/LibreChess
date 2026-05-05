@@ -1,10 +1,10 @@
 #ifndef BOARD_ASSISTANCE_H
 #define BOARD_ASSISTANCE_H
 
-#include "colors.h"
+#include "board/core/colors.h"
+#include "board/core/system.h"
 #include "game.h"
 #include "logger.h"
-#include "system.h"
 
 #include <stdint.h>
 

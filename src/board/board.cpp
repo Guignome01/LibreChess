@@ -1,7 +1,7 @@
 #include "board.h"
 
-#include "gui.h"
-#include "system.h"
+#include "core/system.h"
+#include "gui/gui.h"
 
 #include <Arduino.h>
 
