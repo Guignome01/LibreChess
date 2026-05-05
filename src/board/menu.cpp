@@ -1,5 +1,7 @@
 #include "menu.h"
 
+#include "layering.h"
+
 #include <Arduino.h>
 
 // Back button LED color
@@ -9,8 +11,9 @@ static constexpr LedRGB BACK_BUTTON_COLOR = LedColors::White;
 // BoardMenu
 // ---------------------------
 
-BoardMenu::BoardMenu(BoardSystem* system)
-  : system_(system),
+BoardMenu::BoardMenu(BoardSystem* system, BoardLayering* layering)
+    : system_(system),
+      layering_(layering),
       items_(nullptr),
       itemCount_(0),
       flipped_(false),
@@ -73,7 +76,7 @@ void BoardMenu::setFlipped(bool flipped) {
 }
 
 void BoardMenu::show() {
-  system_->batchLEDs([&](BoardSystem::LEDWriter& leds) {
+  auto drawMenu = [&](auto& leds) {
     leds.clearAllLEDs(false);
     for (uint8_t i = 0; i < itemCount_; ++i) {
       auto square = transformSquare(items_[i].row, items_[i].col);
@@ -84,10 +87,19 @@ void BoardMenu::show() {
       leds.setSquareLED(square.row, square.col, BACK_BUTTON_COLOR);
     }
     leds.showLEDs();
-  });
+  };
+
+  if (layering_)
+    layering_->replaceBase(drawMenu);
+  else
+    system_->batchLEDs(drawMenu);
 }
 
 void BoardMenu::hide() {
+  if (layering_) {
+    layering_->clearBase();
+    return;
+  }
   system_->batchLEDs([&](BoardSystem::LEDWriter& leds) {
     leds.clearAllLEDs(false);
     leds.showLEDs();
@@ -153,13 +165,13 @@ int BoardMenu::waitForSelection() {
 // boardConfirm
 // ---------------------------
 
-bool boardConfirm(BoardSystem* system, bool flipped) {
+bool boardConfirm(BoardSystem* system, BoardLayering* layering, bool flipped) {
   static constexpr MenuItem confirmItems[] = {
       {4, 3, LedColors::Green, 1}, // Yes — d4
       {4, 4, LedColors::Red, 0},   // No  — e4
   };
 
-  BoardMenu menu(system);
+  BoardMenu menu(system, layering);
   menu.setItems(confirmItems, 2);
   menu.setFlipped(flipped);
   return menu.waitForSelection() == 1;

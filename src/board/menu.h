@@ -2,10 +2,13 @@
 #define BOARD_MENU_H
 
 #include "colors.h"
+#include "drawable.h"
 #include "state.h"
 #include "system.h"
 
 #include <stdint.h>
+
+class BoardLayering;
 
 // ---------------------------
 // Board Menu System
@@ -26,15 +29,15 @@ struct MenuItem {
 
 /// Reusable board menu with two-phase debounce selection.
 /// All state is stack-allocated — no heap usage.
-class BoardMenu {
+class BoardMenu : public BoardDrawable {
  public:
-  static constexpr int RESULT_NONE = -1;
-  static constexpr int RESULT_BACK = -2;
+  static constexpr int RESULT_NONE = BoardDrawable::RESULT_NONE;
+  static constexpr int RESULT_BACK = BoardDrawable::RESULT_BACK;
   static constexpr int MAX_ITEMS = 16;
 
-  BoardMenu() : system_(nullptr), items_(nullptr), itemCount_(0),
-    flipped_(false), hasBack_(false), backRow_(0), backCol_(0) {}
-  explicit BoardMenu(BoardSystem* system);
+  BoardMenu() : system_(nullptr), layering_(nullptr), items_(nullptr), itemCount_(0),
+                flipped_(false), hasBack_(false), backRow_(0), backCol_(0) {}
+  explicit BoardMenu(BoardSystem* system, BoardLayering* layering = nullptr);
 
   // Delete copy — menus should not be duplicated
   BoardMenu(const BoardMenu&) = delete;
@@ -42,6 +45,9 @@ class BoardMenu {
 
   /// Set or change the board-system pointer (for two-phase init).
   void setSystem(BoardSystem* system) { system_ = system; }
+
+  /// Set or change the visual layering subsystem used for drawing.
+  void setLayering(BoardLayering* layering) { layering_ = layering; }
 
   /// Configure menu options. Items pointer must outlive the menu
   /// (use constexpr file-scoped arrays). Does NOT copy the array.
@@ -61,21 +67,21 @@ class BoardMenu {
   void setFlipped(bool flipped);
 
   /// Light all menu items and back button on the board.
-  /// Runs one lifecycle-owned LED update batch.
-  void show();
+  /// Runs one scheduler-owned LED update batch.
+  void show() override;
 
-  /// Clear all LEDs in one lifecycle-owned LED update batch.
-  void hide();
+  /// Clear all LEDs in one scheduler-owned LED update batch.
+  void hide() override;
 
   /// Reset all debounce counters for a fresh selection cycle.
-  void reset();
+  void reset() override;
 
   /// Non-blocking poll. Call after system->readSensors().
   /// Returns:
   ///   - MenuItem::id on confirmed selection (with blink feedback)
   ///   - RESULT_BACK if back button selected
   ///   - RESULT_NONE if no selection yet
-  int poll();
+  int poll() override;
 
   /// Blocking convenience: reset() → show() → poll loop → return id.
   /// Includes delay(SENSOR_READ_DELAY_MS) per iteration for watchdog safety.
@@ -105,6 +111,7 @@ class BoardMenu {
   };
 
   BoardSystem* system_;
+  BoardLayering* layering_;
   const MenuItem* items_;
   uint8_t itemCount_;
   bool flipped_;
@@ -126,6 +133,6 @@ class BoardMenu {
 /// Blocking yes/no confirmation dialog.
 /// Shows two center squares (green = yes, red = no), waits for selection.
 /// Returns true for yes, false for no.
-bool boardConfirm(BoardSystem* system, bool flipped = false);
+bool boardConfirm(BoardSystem* system, BoardLayering* layering = nullptr, bool flipped = false);
 
 #endif // BOARD_MENU_H

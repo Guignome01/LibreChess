@@ -1,18 +1,28 @@
 #include "feedback.h"
 
+#include "layering.h"
+
 namespace {
 
 static constexpr float RESIGN_BRIGHTNESS_LEVELS[] = {0.25f, 0.50f, 0.75f, 1.0f};
 
 }  // namespace
 
-BoardFeedback::BoardFeedback(BoardSystem* system) : system_(system) {}
+BoardFeedback::BoardFeedback(BoardSystem* system, BoardLayering* layering) : system_(system), layering_(layering) {}
 
 void BoardFeedback::clearBoard(bool show) {
+  if (layering_) {
+    layering_->clearAll(show);
+    return;
+  }
   system_->clearAllLEDs(show);
 }
 
 void BoardFeedback::clearSquare(int row, int col) {
+  if (layering_) {
+    layering_->clearBaseSquare(row, col);
+    return;
+  }
   system_->batchLEDs([&](BoardSystem::LEDWriter& leds) {
     leds.setSquareLED(row, col, LedColors::Off);
     leds.showLEDs();
@@ -20,6 +30,8 @@ void BoardFeedback::clearSquare(int row, int col) {
 }
 
 void BoardFeedback::showMoveResultFeedback(const LibreChess::MoveResult& result, int toRow, int toCol, const LibreChess::Game& game) {
+  if (layering_) layering_->clearAll(false);
+
   if (result.isCapture())
     system_->runAnimation(AnimationJob::capture(toRow, toCol));
   else
@@ -39,10 +51,25 @@ void BoardFeedback::showMoveResultFeedback(const LibreChess::MoveResult& result,
 }
 
 void BoardFeedback::showIllegalMoveFeedback(int row, int col) {
+  if (layering_) {
+    layering_->runTemporaryAnimation(AnimationJob::blink(row, col, LedColors::Red, 2));
+    return;
+  }
   system_->runAnimation(AnimationJob::blink(row, col, LedColors::Red, 2));
 }
 
 void BoardFeedback::showResignProgress(int row, int col, int level, bool clearFirst) {
+  if (layering_) {
+    if (clearFirst) {
+      layering_->clearBase(false);
+      layering_->clearOverlay(false);
+    }
+    layering_->updateOverlay([&](BoardLayering::LayerWriter& leds) {
+      leds.setSquareLED(row, col, LedColors::scaleColor(LedColors::Orange, RESIGN_BRIGHTNESS_LEVELS[level]));
+      leds.showLEDs();
+    });
+    return;
+  }
   system_->batchLEDs([&](BoardSystem::LEDWriter& leds) {
     if (clearFirst) leds.clearAllLEDs(false);
     leds.setSquareLED(row, col, LedColors::scaleColor(LedColors::Orange, RESIGN_BRIGHTNESS_LEVELS[level]));
@@ -51,18 +78,28 @@ void BoardFeedback::showResignProgress(int row, int col, int level, bool clearFi
 }
 
 void BoardFeedback::clearResignFeedback(int row, int col) {
+  if (layering_) {
+    layering_->clearOverlaySquare(row, col);
+    return;
+  }
   clearSquare(row, col);
 }
 
 void BoardFeedback::showWinner(LibreChess::Color winnerColor) {
+  if (layering_) layering_->clearAll(false);
   system_->runAnimation(AnimationJob::firework(LedColors::forPieceColor(winnerColor)));
 }
 
 void BoardFeedback::showRemoteGameEnd(char winnerColor) {
+  if (layering_) layering_->clearAll(false);
   system_->runAnimation(AnimationJob::firework(LedColors::forWinner(winnerColor)));
 }
 
 void BoardFeedback::showError() {
+  if (layering_) {
+    layering_->runTemporaryAnimation(AnimationJob::flash(LedColors::Red));
+    return;
+  }
   system_->runAnimation(AnimationJob::flash(LedColors::Red));
 }
 
@@ -78,6 +115,7 @@ std::atomic<bool>* BoardFeedback::startWaiting() {
 
 void BoardFeedback::stopAnimation(std::atomic<bool>*& stopFlag) {
   system_->stopAndWaitForAnimation(stopFlag);
+  if (layering_) layering_->render();
 }
 
 void BoardFeedback::confirmSquareCompletion(int row, int col) {

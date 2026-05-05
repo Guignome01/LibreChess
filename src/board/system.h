@@ -3,7 +3,7 @@
 
 #include "colors.h"
 #include "driver.h"
-#include "lifecycle.h"
+#include "scheduler.h"
 #include "state.h"
 
 #include <atomic>
@@ -35,14 +35,14 @@ class BoardLEDBatch {
   BoardDriver& driver_;
 };
 
-/// Board-internal dispatcher for low-level driver and lifecycle operations.
+/// Board-internal service boundary for low-level driver and scheduler operations.
 class BoardSystem {
  public:
   using LEDWriter = BoardLEDBatch;
 
   BoardSystem();
 
-  /// Initialize low-level hardware and the animation lifecycle.
+  /// Initialize low-level hardware and the animation scheduler.
   bool begin();
 
   /// Poll debounced sensor state from the low-level driver and refresh the
@@ -83,13 +83,13 @@ class BoardSystem {
     endLEDBatch();
   }
 
-  /// Clear all LEDs through a lifecycle-owned direct batch.
+  /// Clear all LEDs through a scheduler-owned direct batch.
   void clearAllLEDs(bool show = true);
 
-  /// Set one square LED through a lifecycle-owned direct batch.
+  /// Set one square LED through a scheduler-owned direct batch.
   void setSquareLED(int row, int col, LedRGB color);
 
-  /// Flush LED changes through a lifecycle-owned direct batch.
+  /// Flush LED changes through a scheduler-owned direct batch.
   void showLEDs();
 
   /// Queue one prebuilt fire-and-forget animation job.
@@ -113,10 +113,10 @@ class BoardSystem {
   /// Return configured dark-square dim multiplier.
   uint8_t getDimMultiplier() const;
 
-  /// Set LED strip brightness under the lifecycle-owned LED mutex.
+  /// Set LED strip brightness under the scheduler-owned LED mutex.
   void setBrightness(uint8_t value);
 
-  /// Set the dim multiplier under the lifecycle-owned LED mutex.
+  /// Set the dim multiplier under the scheduler-owned LED mutex.
   void setDimMultiplier(uint8_t value);
 
   /// Persist current LED settings.
@@ -130,7 +130,7 @@ class BoardSystem {
 
  private:
   BoardDriver driver_;
-  BoardAnimationLifecycle lifecycle_;
+  BoardScheduler scheduler_;
   LibreChess::board::BoardState state_;
 
   void beginLEDBatch();

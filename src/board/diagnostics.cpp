@@ -1,8 +1,11 @@
 #include "diagnostics.h"
 
+#include "layering.h"
+
 #include <Arduino.h>
 
-BoardDiagnostics::BoardDiagnostics(BoardSystem* system) : system_(system), visited_{}, complete_(false), visitedCount_(0) {}
+BoardDiagnostics::BoardDiagnostics(BoardSystem* system, BoardLayering* layering)
+  : system_(system), layering_(layering), visited_{}, complete_(false), visitedCount_(0) {}
 
 void BoardDiagnostics::begin() {
   Serial.println("Sensor Test: Visit all squares with a piece to complete the test.");
@@ -25,6 +28,7 @@ void BoardDiagnostics::update() {
   if (visitedCount_ == LibreChess::board::BOARD_SQUARES) {
     complete_ = true;
     Serial.println("Sensor Test complete! All squares verified.");
+    if (layering_) layering_->clearAll(false);
     system_->runAnimation(AnimationJob::firework());
   }
 }
@@ -61,7 +65,7 @@ void BoardDiagnostics::recordVisitedSquare(int row, int col) {
 }
 
 void BoardDiagnostics::showVisitedSquares() {
-  system_->batchLEDs([&](BoardSystem::LEDWriter& leds) {
+  auto drawVisited = [&](auto& leds) {
     leds.clearAllLEDs(false);
 
     for (int row = 0; row < LibreChess::board::BOARD_ROWS; ++row) {
@@ -72,5 +76,10 @@ void BoardDiagnostics::showVisitedSquares() {
     }
 
     leds.showLEDs();
-  });
+  };
+
+  if (layering_)
+    layering_->replaceBase(drawVisited);
+  else
+    system_->batchLEDs(drawVisited);
 }

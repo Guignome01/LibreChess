@@ -4,10 +4,12 @@
 #include "system.h"
 #include "state.h"
 
+class BoardLayering;
+
 // Board-owned diagnostics mode for validating physical sensor coverage.
 class BoardDiagnostics {
  public:
-  explicit BoardDiagnostics(BoardSystem* system);
+  explicit BoardDiagnostics(BoardSystem* system, BoardLayering* layering = nullptr);
 
   void begin();
   void update();
@@ -15,6 +17,7 @@ class BoardDiagnostics {
 
  private:
   BoardSystem* system_;
+  BoardLayering* layering_;
   bool visited_[LibreChess::board::BOARD_ROWS][LibreChess::board::BOARD_COLS];
   bool complete_;
   uint8_t visitedCount_;

@@ -34,11 +34,11 @@ void BoardLEDBatch::setDimMultiplier(uint8_t value) {
   driver_.setDimMultiplier(value);
 }
 
-BoardSystem::BoardSystem() : driver_(), lifecycle_(), state_() {}
+BoardSystem::BoardSystem() : driver_(), scheduler_(), state_() {}
 
 bool BoardSystem::begin() {
   driver_.begin();
-  return lifecycle_.begin(&driver_);
+  return scheduler_.begin(&driver_);
 }
 
 void BoardSystem::readSensors() {
@@ -97,23 +97,23 @@ void BoardSystem::showLEDs() {
 }
 
 bool BoardSystem::runAnimation(const AnimationJob& job) {
-  return lifecycle_.runAnimation(job);
+  return scheduler_.runAnimation(job);
 }
 
 void BoardSystem::runAnimationNow(const AnimationJob& job) {
-  lifecycle_.runAnimationNow(job);
+  scheduler_.runAnimationNow(job);
 }
 
 std::atomic<bool>* BoardSystem::startAnimation(AnimationType type) {
-  return lifecycle_.startAnimation(type);
+  return scheduler_.startAnimation(type);
 }
 
 void BoardSystem::stopAndWaitForAnimation(std::atomic<bool>*& stopFlag) {
-  lifecycle_.stopAndWaitForAnimation(stopFlag);
+  scheduler_.stopAndWaitForAnimation(stopFlag);
 }
 
 void BoardSystem::waitForAnimationQueueDrain() {
-  lifecycle_.waitForAnimationQueueDrain();
+  scheduler_.waitForAnimationQueueDrain();
 }
 
 uint8_t BoardSystem::getBrightness() const {
@@ -149,11 +149,11 @@ uint16_t BoardSystem::sensorReadDelayMs() const {
 }
 
 void BoardSystem::beginLEDBatch() {
-  lifecycle_.acquireLEDs();
+  scheduler_.acquireLEDs();
 }
 
 void BoardSystem::endLEDBatch() {
-  lifecycle_.releaseLEDs();
+  scheduler_.releaseLEDs();
 }
 
 void BoardSystem::refreshState(bool initializeBaseline) {

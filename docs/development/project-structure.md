@@ -29,15 +29,19 @@ A comprehensive map of the codebase, covering firmware, web frontend, build tool
 |------|---------|
 | `main.cpp` | Entry point: `setup()` and `loop()`. Game mode selection, WiFi/resign/board-edit relay, and game lifecycle management. Board-owned selection and diagnostics workflows are consumed only through the `Board` facade. |
 | `board/board.h/.cpp` | Firmware-facing physical-board facade and the only board header included outside `src/board/`. Hides colors, menu IDs, diagnostics types, and raw LED batching behind semantic methods for setup guidance, move feedback, selection menus, diagnostics, polling, calibration, and settings. |
-| `board/system.h/.cpp` | Board-internal dispatch/state layer. Owns `BoardDriver`, `BoardAnimationLifecycle`, and `BoardState`; batches direct LED writes through `BoardLEDBatch`; and forwards transition queries, generic animation submission, settings, and calibration operations to board-local modules. |
+| `board/gui.h/.cpp` | Board-internal visual coordinator. Owns/wires feedback, assistance, diagnostics, menu instances, `BoardStack`, `BoardLayering`, and game-selection/resume visual policy while delegating hardware services to `BoardSystem`. |
+| `board/layering.h/.cpp` | Board-internal LED composition layer. Stores persistent base visuals plus an overlay layer, exposes `BoardLayerWriter`, and renders composed frames through `BoardSystem::batchLEDs()`. |
+| `board/system.h/.cpp` | Board-internal service/state layer. Owns `BoardDriver`, `BoardScheduler`, and `BoardState`; batches direct LED writes through `BoardLEDBatch`; and forwards transition queries, generic animation submission, settings, and calibration operations to board-local modules. |
+| `board/selection.h` | Shared public-safe game-selection result types used by `Board` and `BoardGui` without exposing GUI internals. |
+| `board/drawable.h` | Minimal board-internal drawable contract for stackable visual surfaces. |
 | `board/colors.h` | `LedRGB` struct, named color constants (Cyan, White, Red, Green, Yellow, Purple, Orange, Blue, etc.), chess-side color mapping, and `scaleColor()` brightness helper. |
 | `board/state.h/.cpp` | `BoardState`: current/previous physical occupancy snapshots, lifted/placed/changed predicates, changed-square collection, and safe display-coordinate queries. |
 | `board/driver.h/.cpp` | Hardware abstraction: LED strip (NeoPixelBus, I2S DMA), sensor grid (shift register scan + GPIO reads), saved calibration mapping application, LED settings (brightness, dimming), and GPIO pin definitions. |
-| `board/lifecycle.h/.cpp` | Async animation lifecycle: FreeRTOS queue/task, LED mutex, stop flags, completion semaphore, and queue-drain barrier. |
+| `board/scheduler.h/.cpp` | Async board visual scheduler: FreeRTOS queue/task, LED mutex, stop flags, completion semaphore, and queue-drain barrier. |
 | `board/assistance.h/.cpp` | Physical chess guidance: board setup prompts, configurable legal-move assistance, castling/remote move completion, and capture placement prompts. Reads `Game` only through public APIs and never mutates chess state. |
 | `board/feedback.h/.cpp` | Visual feedback/status layer: illegal move blink, resign progress, move-result animations, check/game-end effects, thinking/waiting animations, remote game-end display, and error flashes. |
 | `board/calibration.h/.cpp` | Board-internal serial-guided calibration workflow and NVS mapping persistence (`boardCal` namespace). Uses `BoardDriver` raw scan/strip primitives and writes the mapping tables that the driver applies during normal operation. |
-| `board/animations.h/.cpp` | Value-based `AnimationJob` definitions, factory helpers, animation metadata, and visual animation execution through `BoardLEDBatch`. `board/lifecycle.*` owns queueing/concurrency; this module owns animation visuals. |
+| `board/animations.h/.cpp` | Value-based `AnimationJob` definitions, factory helpers, animation metadata, and visual animation execution through `BoardLEDBatch`. `board/scheduler.*` owns queueing/concurrency; this module owns animation visuals. |
 | `board/diagnostics.h/.cpp` | Board-internal diagnostic workflow implementation. The Sensor Test mode records an initial occupancy snapshot, tracks newly visited squares through `BoardState` changed-square entries, lights them white, and completes when all 64 are visited. External firmware enters it only through `Board::beginDiagnostics()` / `updateDiagnostics()` / `diagnosticsComplete()`. |
 | `system_utils.h/.cpp` | Arduino/ESP32 utility functions such as `ensureNvsInitialized()` (Preferences guard). Not available in native tests. |
 
@@ -69,9 +73,9 @@ A comprehensive map of the codebase, covering firmware, web frontend, build tool
 | `wifi_manager_esp32.h/.cpp` | WiFi connection management (state machine with AP/STA modes), async web server (ESPAsyncWebServer), all HTTP API endpoints, mDNS, known-networks registry (NVS), OTA password management, and board state relay to the web UI. |
 | `storage/littrefs.h/.cpp` | Concrete `IGameStorage` backed by LittleFS. The dedicated `storage/` folder leaves room for additional persistence backends without crowding the firmware root. Manages `/games/` directory, binary game files (header + moves + FEN table), storage limits enforcement, and JSON game list API for the web UI. |
 | `serial_logger.h/.cpp` | Concrete `ILogger` using Arduino `Serial`. |
-| `board/menu.h/.cpp` | Board-internal reusable menu primitive. Displays options as colored LEDs, owns its empty-then-occupied selection debounce and orientation transform, supports orientation flipping, back buttons, and blink feedback. Also provides the internal `boardConfirm()` dialog used by the facade. |
-| `board/navigator.h/.cpp` | Stack-based menu orchestrator (max depth 4). Push/pop navigation, auto back-button handling, parent menu re-display. |
-| `board/config.h/.cpp` | Board-internal menu layout definitions. `MenuId` namespace with ID ranges per level, `constexpr MenuItem[]` arrays for each menu, and `configureMenus()` for wiring the facade-owned menu instances. |
+| `board/menu.h/.cpp` | Board-internal reusable `BoardDrawable` menu primitive. Displays options as colored LEDs, owns its empty-then-occupied selection debounce and orientation transform, supports orientation flipping, back buttons, and blink feedback. Also provides the internal `boardConfirm()` dialog used by `BoardGui`. |
+| `board/stack.h/.cpp` | Board-internal modal visual stack (max depth 4). Push/pop navigation over non-owning `BoardDrawable*` entries, auto back-button handling, and parent drawable re-display. |
+| `board/config.h/.cpp` | Board-internal menu layout definitions. `MenuId` namespace with ID ranges per level, `constexpr MenuItem[]` arrays for each menu, and `configureMenus()` for wiring the `BoardGui`-owned menu instances. |
 
 ## Web Frontend (`src/web/`)
 

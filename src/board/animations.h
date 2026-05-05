@@ -83,7 +83,7 @@ namespace BoardAnimations {
 /// Return whether this animation type requires a caller-owned stop flag.
 bool isCancellable(AnimationType type);
 
-/// Return whether the lifecycle should release its completion semaphore.
+/// Return whether the scheduler should release its completion semaphore.
 bool signalsCompletion(AnimationType type);
 
 /// Execute one queued animation job. The caller owns queueing and LED mutexing.

@@ -8,6 +8,8 @@
 
 #include <stdint.h>
 
+class BoardLayering;
+
 /// Optional move hinting mode for board-owned chess assistance.
 enum class BoardAssistanceLevel : uint8_t {
   NONE = 0,
@@ -18,7 +20,8 @@ enum class BoardAssistanceLevel : uint8_t {
 // Board-owned physical guidance for chess play.
 class BoardAssistance {
  public:
-  explicit BoardAssistance(BoardSystem* system = nullptr, BoardAssistanceLevel level = BoardAssistanceLevel::LEGAL_MOVES);
+  explicit BoardAssistance(BoardSystem* system = nullptr, BoardAssistanceLevel level = BoardAssistanceLevel::LEGAL_MOVES,
+                           BoardLayering* layering = nullptr);
 
   void setLevel(BoardAssistanceLevel level) { level_ = level; }
   BoardAssistanceLevel level() const { return level_; }
@@ -32,6 +35,7 @@ class BoardAssistance {
  private:
   BoardSystem* system_;
   BoardAssistanceLevel level_;
+  BoardLayering* layering_;
 };
 
 #endif  // BOARD_ASSISTANCE_H

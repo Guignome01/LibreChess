@@ -8,9 +8,11 @@
 #include <atomic>
 
 // Board-owned visual feedback for move outcomes, status, and errors.
+class BoardLayering;
+
 class BoardFeedback {
  public:
-  explicit BoardFeedback(BoardSystem* system = nullptr);
+  explicit BoardFeedback(BoardSystem* system = nullptr, BoardLayering* layering = nullptr);
 
   void clearBoard(bool show = true);
   void clearSquare(int row, int col);
@@ -28,6 +30,7 @@ class BoardFeedback {
 
  private:
   BoardSystem* system_;
+  BoardLayering* layering_;
 
   void confirmSquareCompletion(int row, int col);
 };

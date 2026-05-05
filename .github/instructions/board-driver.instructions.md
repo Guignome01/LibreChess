@@ -1,11 +1,13 @@
 ---
-description: "Use when modifying BoardDriver, BoardDiagnostics, LED animations, sensor reading, calibration, or any hardware interaction code. Covers LED mutex rules, animation queue lifecycle, color semantics, sensor debounce, and NVS persistence."
+description: "Use when modifying BoardDriver, BoardGui, BoardDiagnostics, LED animations, sensor reading, calibration, or any hardware interaction code. Covers LED mutex rules, scheduler queue lifecycle, color semantics, sensor debounce, and NVS persistence."
 applyTo: "src/board/**, src/system_utils.*"
 ---
 
 # Board Firmware & Hardware Patterns
 
-`src/board/board.*` is the firmware-facing facade and the only board header consumed outside `src/board/`. It hides colors, menu IDs, diagnostics types, and raw LED batching behind semantic methods and getters such as `confirmResume()`, `pollGameSelectionMenu()`, and `sensorReadDelayMs()`. `src/board/system.*` is the board-internal dispatch boundary consumed by board-local modules; it composes `BoardDriver`, `BoardAnimationLifecycle`, and the `LibreChess::board::BoardState` transition snapshot. `src/board/driver.*` remains the low-level hardware owner. `src/board/animations.*` owns `AnimationJob` definitions, factory builders, metadata helpers, and visual animation execution through `BoardLEDBatch`; `src/board/lifecycle.*` owns the FreeRTOS queue/task, LED mutex, stop flags, and queue barrier.
+`src/board/board.*` is the firmware-facing facade and the only board header consumed outside `src/board/`. It hides colors, menu IDs, diagnostics types, `BoardGui`, `BoardLayering`, `BoardStack`, `BoardDrawable`, scheduler internals, and raw LED batching behind semantic methods and getters such as `confirmResume()`, `pollGameSelectionMenu()`, and `sensorReadDelayMs()`. `src/board/gui.*` is the board-internal visual coordinator; it owns/wires feedback, assistance, diagnostics, board menus, `BoardStack`, `BoardLayering`, and selection/resume visual policy. `src/board/layering.*` owns the persistent base layer plus overlay layer and renders them through `BoardSystem::batchLEDs()`. `src/board/system.*` is the board-internal service boundary consumed by board-local modules; it composes `BoardDriver`, `BoardScheduler`, and the `LibreChess::board::BoardState` transition snapshot. `src/board/driver.*` remains the low-level hardware owner. `src/board/animations.*` owns `AnimationJob` definitions, factory builders, metadata helpers, and visual animation execution through `BoardLEDBatch`; `src/board/scheduler.*` owns the FreeRTOS queue/task, LED mutex, stop flags, and queue barrier.
+
+`src/board/drawable.h` defines the minimal `BoardDrawable` contract for modal board visuals. `src/board/stack.*` owns modal push/pop/back behavior over non-owning `BoardDrawable*` entries; menus are the first concrete drawable. Overlay composition belongs to `BoardLayering`, not `BoardStack`.
 
 `src/board/assistance.*` owns physical chess guidance: setup prompts, configurable legal-move assistance (`BoardAssistanceLevel`), castling prompts, remote-move completion prompts, and capture placement prompts. It may read `Game` through public APIs for display decisions, but it must not mutate chess state, talk to engine providers, or call WiFi APIs.
 
@@ -17,7 +19,7 @@ applyTo: "src/board/**, src/system_utils.*"
 
 ## LED Access
 
-The LED strip is shared between the main loop and a dedicated animation FreeRTOS task, guarded by the mutex owned by `BoardAnimationLifecycle`.
+The LED strip is shared between the main loop and a dedicated animation FreeRTOS task, guarded by the mutex owned by `BoardScheduler`.
 
 ### Batched Direct LED Updates
 
@@ -33,18 +35,20 @@ system->batchLEDs([&](BoardSystem::LEDWriter& leds) {
 });
 ```
 
-`BoardSystem` owns direct dispatch between board-local helpers, the driver, and the lifecycle. The lifecycle owns the mutex completely. Callers should describe the LED batch they want to draw; they should not acquire or release the strip manually. Semantic facade calls such as `clearAllLEDs()` or `showMoveResultFeedback()` lock internally through the system.
+`BoardSystem` owns direct dispatch between board-local helpers, the driver, and the scheduler. The scheduler owns the mutex completely. Callers should describe the LED batch they want to draw; they should not acquire or release the strip manually. Semantic facade calls such as `clearAllLEDs()` or `showMoveResultFeedback()` route through `BoardGui` and lock internally through the system.
+
+Persistent board visuals should prefer `BoardLayering` over direct full-board batches. The base layer stores menus, setup prompts, legal-move highlights, remote-move guidance, and diagnostics. The overlay layer stores temporary or higher-priority visuals such as resign progress. `BoardLayering` renders both layers through one `BoardSystem::batchLEDs()` call, while short animations remain value-based `AnimationJob`s.
 
 Single queued animations are built with `AnimationJob` factory helpers and submitted through `BoardSystem::runAnimation()`. They acquire the mutex internally — no guard needed by the caller.
 
 ### Animation Queue
 
-Animations run on a dedicated FreeRTOS task owned by `BoardAnimationLifecycle` that dequeues factory-built `AnimationJob` structs. Each job has a type and type-specific params. Board-local semantic modules build jobs with helpers such as `AnimationJob::capture(...)`, `AnimationJob::blink(...)`, and `AnimationJob::firework(...)`, then submit them through `BoardSystem::runAnimation(job)`. Direct one-shot animations, currently WiFi connecting, use `BoardSystem::runAnimationNow(AnimationJob::connecting())` so they still run under the lifecycle-owned LED mutex.
+Animations run on a dedicated FreeRTOS task owned by `BoardScheduler` that dequeues factory-built `AnimationJob` structs. Each job has a type and type-specific params. Board-local semantic modules build jobs with helpers such as `AnimationJob::capture(...)`, `AnimationJob::blink(...)`, and `AnimationJob::firework(...)`, then submit them through `BoardSystem::runAnimation(job)`. Direct one-shot animations, currently WiFi connecting, use `BoardSystem::runAnimationNow(AnimationJob::connecting())` so they still run under the scheduler-owned LED mutex.
 
 **Short animations** (capture, promotion, blink, firework, flash) — fire-and-forget. Build a value job with `AnimationJob` helpers, enqueue through `BoardSystem::runAnimation()`, and return.
 
 **Long-running animations** (thinking, waiting) — start through `BoardSystem::startAnimation(AnimationType::THINKING/WAITING)` and return `std::atomic<bool>*` (heap-allocated stop flag). The animation checks the flag each frame. To stop:
-1. Call `stopAndWaitForAnimation(flag)` — sets the flag, blocks on the lifecycle completion semaphore, then deletes the flag.
+1. Call `stopAndWaitForAnimation(flag)` — sets the flag, blocks on the scheduler completion semaphore, then deletes the flag.
 2. **Never** set the flag directly or delete it without waiting — the animation task may still hold the LED mutex mid-frame.
 
 **Barrier**: Call `waitForAnimationQueueDrain()` before writing LEDs directly. It enqueues a `SYNC` no-op and blocks until the worker processes it. Without this, a stale queued animation can overwrite your direct LED writes.
@@ -109,9 +113,13 @@ Settings stored via Arduino `Preferences`. Always call `SystemUtils::ensureNvsIn
 
 ## Design Decisions
 
-- **LED mutex exists because of the animation task** — the LED strip is shared between the main loop (direct LED writes in assistance, feedback, diagnostics, and menus) and the dedicated animation FreeRTOS task. Without the mutex, concurrent writes corrupt the strip state. `BoardAnimationLifecycle` owns the mutex, and `BoardSystem::batchLEDs()` keeps that synchronization detail out of both the public facade and board-local helpers.
+- **LED mutex exists because of the animation task** — the LED strip is shared between the main loop (direct LED writes in assistance, feedback, diagnostics, and menus) and the dedicated animation FreeRTOS task. Without the mutex, concurrent writes corrupt the strip state. `BoardScheduler` owns the mutex, and `BoardSystem::batchLEDs()` keeps that synchronization detail out of both the public facade and board-local helpers.
 
-- **Animation queue lifecycle is separate from hardware scanning** — animations run on a separate task to keep `update()` non-blocking. `BoardAnimationLifecycle` owns generic queue/task/semaphore details, `BoardSystem` wires it to the driver, and `BoardDriver` stays focused on sensors, strip writes, settings, and calibration mapping. The animation module owns job construction through value-based factory helpers, so lifecycle/system APIs do not grow one wrapper per animation type. The queue provides natural sequencing: multiple animations play in order without explicit coordination.
+- **Visual coordination is separate from board services** — `BoardGui` owns visual policy and composes feedback, assistance, diagnostics, menus, and the modal `BoardStack`. `BoardSystem` remains the service boundary for sensors, state snapshots, settings, calibration, LED batches, and animation submission. `Board` delegates semantic visual calls to `BoardGui` while keeping public firmware isolated from board-local types.
+
+- **Layering is separate from modal navigation** — `BoardLayering` owns persistent base + overlay composition for simultaneous LED visuals. `BoardStack` owns modal push/pop flow only. This keeps menu navigation, overlay priority, and low-level LED locking from collapsing into one class.
+
+- **Animation scheduling is separate from hardware scanning** — animations run on a separate task to keep `update()` non-blocking. `BoardScheduler` owns generic queue/task/semaphore details, `BoardSystem` wires it to the driver, and `BoardDriver` stays focused on sensors, strip writes, settings, and calibration mapping. The animation module owns job construction through value-based factory helpers, so scheduler/system APIs do not grow one wrapper per animation type. The queue provides natural sequencing: multiple animations play in order without explicit coordination.
 
 - **Long-running animations use atomic stop flags** — thinking/waiting animations loop indefinitely. A heap-allocated `std::atomic<bool>*` is returned to the caller who controls when it stops. The flag is heap-allocated because both the caller and the animation task need to access it, and either might outlive the other during shutdown. `stopAndWaitForAnimation()` ensures the animation has fully released the LED mutex before the caller continues.
 
@@ -119,7 +127,7 @@ Settings stored via Arduino `Preferences`. Always call `SystemUtils::ensureNvsIn
 
 - **Driver debounce plus `BoardState` transitions prevent glitch reads** — `sensorRaw` captures the latest hardware read, `sensorState` exposes only debounced stable occupancy, and `BoardState` compares previous/current stable snapshots for `wasLifted()`/`wasPlaced()` queries. The debounce window (125ms) eliminates false triggers from magnet edge effects when pieces slide between squares.
 
-- **The facade must not re-export board internals** — `Board` exists to shield the rest of firmware from `LedColors`, `BoardMenu`, `MenuId`, diagnostics lifecycles, and raw LED batching. If code outside `src/board/` needs board-specific behavior or timing values, expose a semantic facade method or getter instead of including another board header.
+- **The facade must not re-export board internals** — `Board` exists to shield the rest of firmware from `LedColors`, `BoardMenu`, `MenuId`, diagnostics workflow state, `BoardGui`, `BoardLayering`, `BoardStack`, `BoardDrawable`, scheduler internals, and raw LED batching. If code outside `src/board/` needs board-specific behavior or timing values, expose a semantic facade method or getter instead of including another board header.
 
 - **Colors have fixed semantics** — the color table in `src/board/colors.h` is a project-wide contract. Cyan always means "piece origin", red always means "capture/error", etc. This consistency lets players learn the visual language once and apply it everywhere. Never reuse a color for a different meaning.
 

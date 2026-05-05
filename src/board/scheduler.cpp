@@ -1,14 +1,14 @@
-#include "lifecycle.h"
+#include "scheduler.h"
 
 #include "driver.h"
 #include "system.h"
 
 #include <new>
 
-BoardAnimationLifecycle::BoardAnimationLifecycle()
+BoardScheduler::BoardScheduler()
     : driver_(nullptr), queue_(nullptr), taskHandle_(nullptr), ledMutex_(nullptr), doneSemaphore_(nullptr), initialized_(false) {}
 
-bool BoardAnimationLifecycle::begin(BoardDriver* driver) {
+bool BoardScheduler::begin(BoardDriver* driver) {
   driver_ = driver;
   ledMutex_ = xSemaphoreCreateMutex();
   doneSemaphore_ = xSemaphoreCreateBinary();
@@ -28,21 +28,21 @@ bool BoardAnimationLifecycle::begin(BoardDriver* driver) {
   return true;
 }
 
-void BoardAnimationLifecycle::acquireLEDs() {
+void BoardScheduler::acquireLEDs() {
   if (!initialized_) return;
   xSemaphoreTake(ledMutex_, portMAX_DELAY);
 }
 
-void BoardAnimationLifecycle::releaseLEDs() {
+void BoardScheduler::releaseLEDs() {
   if (!initialized_) return;
   xSemaphoreGive(ledMutex_);
 }
 
-bool BoardAnimationLifecycle::runAnimation(const AnimationJob& job) {
+bool BoardScheduler::runAnimation(const AnimationJob& job) {
   return enqueue(job);
 }
 
-void BoardAnimationLifecycle::runAnimationNow(const AnimationJob& job) {
+void BoardScheduler::runAnimationNow(const AnimationJob& job) {
   if (!initialized_ || !driver_) return;
   acquireLEDs();
   BoardLEDBatch leds(*driver_);
@@ -50,7 +50,7 @@ void BoardAnimationLifecycle::runAnimationNow(const AnimationJob& job) {
   releaseLEDs();
 }
 
-std::atomic<bool>* BoardAnimationLifecycle::startAnimation(AnimationType type) {
+std::atomic<bool>* BoardScheduler::startAnimation(AnimationType type) {
   if (!initialized_ || !BoardAnimations::isCancellable(type)) return nullptr;
   auto* stopFlag = new (std::nothrow) std::atomic<bool>(false);
   if (!stopFlag) return nullptr;
@@ -65,7 +65,7 @@ std::atomic<bool>* BoardAnimationLifecycle::startAnimation(AnimationType type) {
   return stopFlag;
 }
 
-void BoardAnimationLifecycle::stopAndWaitForAnimation(std::atomic<bool>*& stopFlag) {
+void BoardScheduler::stopAndWaitForAnimation(std::atomic<bool>*& stopFlag) {
   if (!stopFlag) return;
   stopFlag->store(true);
   if (!initialized_) {
@@ -78,18 +78,18 @@ void BoardAnimationLifecycle::stopAndWaitForAnimation(std::atomic<bool>*& stopFl
   stopFlag = nullptr;
 }
 
-void BoardAnimationLifecycle::waitForAnimationQueueDrain() {
+void BoardScheduler::waitForAnimationQueueDrain() {
   if (!initialized_) return;
   AnimationJob job = AnimationJob::sync();
   if (!enqueue(job)) return;
   xSemaphoreTake(doneSemaphore_, portMAX_DELAY);
 }
 
-void BoardAnimationLifecycle::workerTask(void* param) {
-  static_cast<BoardAnimationLifecycle*>(param)->runWorker();
+void BoardScheduler::workerTask(void* param) {
+  static_cast<BoardScheduler*>(param)->runWorker();
 }
 
-void BoardAnimationLifecycle::runWorker() {
+void BoardScheduler::runWorker() {
   AnimationJob job;
   while (true) {
     if (xQueueReceive(queue_, &job, portMAX_DELAY) == pdTRUE) {
@@ -104,11 +104,11 @@ void BoardAnimationLifecycle::runWorker() {
   }
 }
 
-bool BoardAnimationLifecycle::enqueue(const AnimationJob& job) {
+bool BoardScheduler::enqueue(const AnimationJob& job) {
   return initialized_ && xQueueSend(queue_, &job, portMAX_DELAY) == pdTRUE;
 }
 
-void BoardAnimationLifecycle::releaseResources() {
+void BoardScheduler::releaseResources() {
   if (queue_) {
     vQueueDelete(queue_);
     queue_ = nullptr;
@@ -126,7 +126,7 @@ void BoardAnimationLifecycle::releaseResources() {
   initialized_ = false;
 }
 
-void BoardAnimationLifecycle::signalCompletionFor(const AnimationJob& job) {
+void BoardScheduler::signalCompletionFor(const AnimationJob& job) {
   if (BoardAnimations::signalsCompletion(job.type))
     xSemaphoreGive(doneSemaphore_);
 }

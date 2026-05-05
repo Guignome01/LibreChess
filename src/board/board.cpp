@@ -1,60 +1,16 @@
 #include "board.h"
 
-#include "assistance.h"
-#include "colors.h"
-#include "config.h"
-#include "diagnostics.h"
-#include "feedback.h"
-#include "menu.h"
-#include "navigator.h"
+#include "gui.h"
 #include "system.h"
 
 #include <Arduino.h>
 
 struct Board::Impl {
   BoardSystem system;
-  BoardFeedback feedback;
-  BoardAssistance assistance;
-  BoardDiagnostics diagnostics;
-  BoardMenu gameMenu;
-  BoardMenu botDifficultyMenu;
-  BoardMenu botColorMenu;
-  MenuNavigator navigator;
-  uint8_t pendingBotDifficulty;
+  BoardGui gui;
 
-  Impl()
-      : system(),
-        feedback(&system),
-        assistance(&system),
-        diagnostics(&system),
-        gameMenu(&system),
-        botDifficultyMenu(&system),
-        botColorMenu(&system),
-        navigator(),
-        pendingBotDifficulty(4) {
-    configureMenus(gameMenu, botDifficultyMenu, botColorMenu);
-  }
+  Impl() : system(), gui(system) {}
 };
-
-namespace {
-
-LedRGB resumeIndicatorColor(Board::GameSelectionMode mode) {
-  switch (mode) {
-    case Board::GameSelectionMode::CHESS_MOVES:
-      return LedColors::Blue;
-    case Board::GameSelectionMode::BOT:
-      return LedColors::Green;
-    case Board::GameSelectionMode::LICHESS:
-      return LedColors::Yellow;
-    case Board::GameSelectionMode::BOARD_DIAGNOSTICS:
-      return LedColors::Red;
-    case Board::GameSelectionMode::NONE:
-    default:
-      return LedColors::White;
-  }
-}
-
-}  // namespace
 
 Board::Board() : impl_(std::make_unique<Impl>()) {}
 
@@ -62,7 +18,7 @@ Board::~Board() = default;
 
 void Board::begin() {
   if (!impl_->system.begin()) {
-    Serial.println("Board animation lifecycle initialization failed");
+    Serial.println("Board scheduler initialization failed");
   }
   impl_->system.syncOccupancyBaseline();
 }
@@ -114,178 +70,120 @@ void Board::syncOccupancyBaseline() {
 }
 
 void Board::waitForBoardSetup(const LibreChess::Game& game, LibreChess::Log& logger) {
-  impl_->assistance.waitForSetup(game, logger);
+  impl_->gui.waitForBoardSetup(game, logger);
 }
 
 void Board::showLegalMoveHighlights(int fromRow, int fromCol, const LibreChess::MoveList& moves, const LibreChess::Game& game) {
-  impl_->assistance.showLegalMoveHighlights(fromRow, fromCol, moves, game);
+  impl_->gui.showLegalMoveHighlights(fromRow, fromCol, moves, game);
 }
 
 void Board::showCapturePlacementPrompt(int row, int col) {
-  impl_->assistance.showCapturePlacementPrompt(row, col);
+  impl_->gui.showCapturePlacementPrompt(row, col);
 }
 
 void Board::guideCastling(int kingFromRow, int kingFromCol, int kingToRow, int kingToCol,
                           const LibreChess::CastlingInfo& castling,
                           bool waitForKingCompletion, LibreChess::Log& logger) {
-  impl_->assistance.guideCastling(kingFromRow, kingFromCol, kingToRow, kingToCol,
-                                  castling, waitForKingCompletion, logger);
+  impl_->gui.guideCastling(kingFromRow, kingFromCol, kingToRow, kingToCol,
+                           castling, waitForKingCompletion, logger);
 }
 
 void Board::guideRemoteMoveCompletion(int fromRow, int fromCol, int toRow, int toCol,
                                       bool isCapture, bool isEnPassant,
                                       int enPassantCapturedPawnRow,
                                       LibreChess::Log& logger) {
-  impl_->assistance.guideRemoteMoveCompletion(fromRow, fromCol, toRow, toCol,
-                                              isCapture, isEnPassant,
-                                              enPassantCapturedPawnRow, logger);
+  impl_->gui.guideRemoteMoveCompletion(fromRow, fromCol, toRow, toCol,
+                                       isCapture, isEnPassant,
+                                       enPassantCapturedPawnRow, logger);
 }
 
 void Board::clearBoardFeedback(bool show) {
-  impl_->feedback.clearBoard(show);
+  impl_->gui.clearBoardFeedback(show);
 }
 
 void Board::clearFeedbackSquare(int row, int col) {
-  impl_->feedback.clearSquare(row, col);
+  impl_->gui.clearFeedbackSquare(row, col);
 }
 
 void Board::showMoveResultFeedback(const LibreChess::MoveResult& result, int toRow,
                                    int toCol, const LibreChess::Game& game) {
-  impl_->feedback.showMoveResultFeedback(result, toRow, toCol, game);
+  impl_->gui.showMoveResultFeedback(result, toRow, toCol, game);
 }
 
 void Board::showIllegalMoveFeedback(int row, int col) {
-  impl_->feedback.showIllegalMoveFeedback(row, col);
+  impl_->gui.showIllegalMoveFeedback(row, col);
 }
 
 void Board::showResignProgress(int row, int col, int level, bool clearFirst) {
-  impl_->feedback.showResignProgress(row, col, level, clearFirst);
+  impl_->gui.showResignProgress(row, col, level, clearFirst);
 }
 
 void Board::clearResignFeedback(int row, int col) {
-  impl_->feedback.clearResignFeedback(row, col);
+  impl_->gui.clearResignFeedback(row, col);
 }
 
 void Board::showWinner(LibreChess::Color winnerColor) {
-  impl_->feedback.showWinner(winnerColor);
+  impl_->gui.showWinner(winnerColor);
 }
 
 void Board::showRemoteGameEnd(char winnerColor) {
-  impl_->feedback.showRemoteGameEnd(winnerColor);
+  impl_->gui.showRemoteGameEnd(winnerColor);
 }
 
 void Board::showErrorFeedback() {
-  impl_->feedback.showError();
+  impl_->gui.showErrorFeedback();
 }
 
 std::atomic<bool>* Board::startThinkingStatus() {
-  return impl_->feedback.startThinking();
+  return impl_->gui.startThinkingStatus();
 }
 
 std::atomic<bool>* Board::startWaitingStatus() {
-  return impl_->feedback.startWaiting();
+  return impl_->gui.startWaitingStatus();
 }
 
 void Board::stopStatusAnimation(std::atomic<bool>*& stopFlag) {
-  impl_->feedback.stopAnimation(stopFlag);
+  impl_->gui.stopStatusAnimation(stopFlag);
 }
 
 void Board::clearAllLEDs(bool show) {
-  impl_->system.clearAllLEDs(show);
+  impl_->gui.clearAllLEDs(show);
 }
 
 void Board::showConnectingAnimation() {
-  impl_->system.runAnimationNow(AnimationJob::connecting());
+  impl_->gui.showConnectingAnimation();
 }
 
 void Board::startGameSelectionMenu() {
-  clearGameSelectionMenu();
-  impl_->pendingBotDifficulty = 4;
-  impl_->navigator.push(&impl_->gameMenu);
+  impl_->gui.startGameSelectionMenu();
 }
 
 void Board::clearGameSelectionMenu() {
-  impl_->navigator.clear();
+  impl_->gui.clearGameSelectionMenu();
 }
 
 Board::GameSelection Board::pollGameSelectionMenu() {
-  readSensors();
-
-  GameSelection selection;
-  int result = impl_->navigator.poll();
-  if (result == BoardMenu::RESULT_NONE || result == BoardMenu::RESULT_BACK)
-    return selection;
-
-  switch (result) {
-    case MenuId::CHESS_MOVES:
-      selection.mode = GameSelectionMode::CHESS_MOVES;
-      clearGameSelectionMenu();
-      return selection;
-    case MenuId::BOT:
-      impl_->navigator.push(&impl_->botDifficultyMenu);
-      return selection;
-    case MenuId::LICHESS:
-      selection.mode = GameSelectionMode::LICHESS;
-      clearGameSelectionMenu();
-      return selection;
-    case MenuId::BOARD_DIAGNOSTICS:
-      selection.mode = GameSelectionMode::BOARD_DIAGNOSTICS;
-      clearGameSelectionMenu();
-      return selection;
-    case MenuId::DIFF_1:
-    case MenuId::DIFF_2:
-    case MenuId::DIFF_3:
-    case MenuId::DIFF_4:
-    case MenuId::DIFF_5:
-    case MenuId::DIFF_6:
-    case MenuId::DIFF_7:
-    case MenuId::DIFF_8:
-      impl_->pendingBotDifficulty = static_cast<uint8_t>(result - MenuId::DIFF_1 + 1);
-      impl_->navigator.push(&impl_->botColorMenu);
-      return selection;
-    case MenuId::PLAY_WHITE:
-      selection.mode = GameSelectionMode::BOT;
-      selection.botDifficulty = impl_->pendingBotDifficulty;
-      selection.playerColor = 'w';
-      clearGameSelectionMenu();
-      return selection;
-    case MenuId::PLAY_BLACK:
-      selection.mode = GameSelectionMode::BOT;
-      selection.botDifficulty = impl_->pendingBotDifficulty;
-      selection.playerColor = 'b';
-      clearGameSelectionMenu();
-      return selection;
-    case MenuId::PLAY_RANDOM:
-      selection.mode = GameSelectionMode::BOT;
-      selection.botDifficulty = impl_->pendingBotDifficulty;
-      selection.playerColor = (random(2) == 0) ? 'w' : 'b';
-      clearGameSelectionMenu();
-      return selection;
-    default:
-      return selection;
-  }
+  return impl_->gui.pollGameSelectionMenu();
 }
 
 bool Board::confirmAction(bool flipped) {
-  return boardConfirm(&impl_->system, flipped);
+  return impl_->gui.confirmAction(flipped);
 }
 
 bool Board::confirmResume(GameSelectionMode mode, bool flipped) {
-  impl_->system.runAnimation(AnimationJob::blink(3, 3, resumeIndicatorColor(mode), 2));
-  impl_->system.waitForAnimationQueueDrain();
-  return confirmAction(flipped);
+  return impl_->gui.confirmResume(mode, flipped);
 }
 
 void Board::beginDiagnostics() {
-  impl_->diagnostics.begin();
+  impl_->gui.beginDiagnostics();
 }
 
 void Board::updateDiagnostics() {
-  impl_->diagnostics.update();
+  impl_->gui.updateDiagnostics();
 }
 
 bool Board::diagnosticsComplete() const {
-  return impl_->diagnostics.isComplete();
+  return impl_->gui.diagnosticsComplete();
 }
 
 uint8_t Board::getBrightness() const {

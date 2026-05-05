@@ -1,5 +1,7 @@
 #include "assistance.h"
 
+#include "layering.h"
+
 #include <Arduino.h>
 
 namespace {
@@ -18,14 +20,16 @@ void waitForSquareOccupied(BoardSystem* system, int row, int col) {
   }
 }
 
-void showMovePrompt(BoardSystem::LEDWriter& leds, int fromRow, int fromCol, int toRow, int toCol, LedRGB destinationColor) {
+template <typename LEDWriter>
+void showMovePrompt(LEDWriter& leds, int fromRow, int fromCol, int toRow, int toCol, LedRGB destinationColor) {
   leds.clearAllLEDs(false);
   leds.setSquareLED(fromRow, fromCol, LedColors::Cyan);
   leds.setSquareLED(toRow, toCol, destinationColor);
   leds.showLEDs();
 }
 
-void showDestinationPrompt(BoardSystem::LEDWriter& leds, int row, int col, LedRGB color) {
+template <typename LEDWriter>
+void showDestinationPrompt(LEDWriter& leds, int row, int col, LedRGB color) {
   leds.clearAllLEDs(false);
   leds.setSquareLED(row, col, color);
   leds.showLEDs();
@@ -33,7 +37,8 @@ void showDestinationPrompt(BoardSystem::LEDWriter& leds, int row, int col, LedRG
 
 }  // namespace
 
-BoardAssistance::BoardAssistance(BoardSystem* system, BoardAssistanceLevel level) : system_(system), level_(level) {}
+BoardAssistance::BoardAssistance(BoardSystem* system, BoardAssistanceLevel level, BoardLayering* layering)
+  : system_(system), level_(level), layering_(layering) {}
 
 void BoardAssistance::waitForSetup(const LibreChess::Game& game, LibreChess::Log& logger) {
   logger.info("Set up the board in the required position...");
@@ -42,7 +47,7 @@ void BoardAssistance::waitForSetup(const LibreChess::Game& game, LibreChess::Log
   while (!allCorrect) {
     system_->readSensors();
 
-    system_->batchLEDs([&](BoardSystem::LEDWriter& leds) {
+    auto drawSetup = [&](auto& leds) {
       allCorrect = true;
 
       game.forEachSquare([&](int row, int col, LibreChess::Piece piece) {
@@ -60,12 +65,18 @@ void BoardAssistance::waitForSetup(const LibreChess::Game& game, LibreChess::Log
         }
       });
       leds.showLEDs();
-    });
+    };
+
+    if (layering_)
+      layering_->replaceBase(drawSetup);
+    else
+      system_->batchLEDs(drawSetup);
 
     delay(SENSOR_READ_DELAY_MS);
   }
 
   logger.info("Board setup complete! Game starting...");
+  if (layering_) layering_->clearBase(false);
   system_->runAnimation(AnimationJob::firework());
   system_->readSensors();
   system_->syncOccupancyBaseline();
@@ -75,11 +86,14 @@ void BoardAssistance::showLegalMoveHighlights(int fromRow, int fromCol, const Li
   system_->waitForAnimationQueueDrain();
 
   if (level_ != BoardAssistanceLevel::LEGAL_MOVES) {
-    system_->clearAllLEDs();
+    if (layering_)
+      layering_->clearBase();
+    else
+      system_->clearAllLEDs();
     return;
   }
 
-  system_->batchLEDs([&](BoardSystem::LEDWriter& leds) {
+  auto drawHighlights = [&](auto& leds) {
     leds.setSquareLED(fromRow, fromCol, LedColors::Cyan);
 
     for (int i = 0; i < moves.count; i++) {
@@ -96,7 +110,12 @@ void BoardAssistance::showLegalMoveHighlights(int fromRow, int fromCol, const Li
       }
     }
     leds.showLEDs();
-  });
+  };
+
+  if (layering_)
+    layering_->replaceBase(drawHighlights);
+  else
+    system_->batchLEDs(drawHighlights);
 }
 
 void BoardAssistance::showCapturePlacementPrompt(int row, int col) {
@@ -111,15 +130,26 @@ void BoardAssistance::guideCastling(int kingFromRow, int kingFromCol, int kingTo
                  LibreChess::Game::squareName(kingFromRow, kingFromCol).c_str(),
                  LibreChess::Game::squareName(kingToRow, kingToCol).c_str());
 
-    system_->batchLEDs([&](BoardSystem::LEDWriter& leds) {
+    auto drawKingPrompt = [&](auto& leds) {
       showMovePrompt(leds, kingFromRow, kingFromCol, kingToRow, kingToCol, LedColors::White);
-    });
+    };
+    if (layering_)
+      layering_->replaceBase(drawKingPrompt);
+    else
+      system_->batchLEDs(drawKingPrompt);
     waitForSquareEmpty(system_, kingFromRow, kingFromCol);
-    system_->batchLEDs([&](BoardSystem::LEDWriter& leds) {
+    auto drawKingDestination = [&](auto& leds) {
       showDestinationPrompt(leds, kingToRow, kingToCol, LedColors::White);
-    });
+    };
+    if (layering_)
+      layering_->replaceBase(drawKingDestination);
+    else
+      system_->batchLEDs(drawKingDestination);
     waitForSquareOccupied(system_, kingToRow, kingToCol);
-    system_->clearAllLEDs();
+    if (layering_)
+      layering_->clearBase();
+    else
+      system_->clearAllLEDs();
   }
 
   int rookFromRow = LibreChess::squareToRow(castling.rookFromSq);
@@ -131,24 +161,41 @@ void BoardAssistance::guideCastling(int kingFromRow, int kingFromCol, int kingTo
                LibreChess::Game::squareName(rookFromRow, rookFromCol).c_str(),
                LibreChess::Game::squareName(rookToRow, rookToCol).c_str());
 
-  system_->batchLEDs([&](BoardSystem::LEDWriter& leds) {
+  auto drawRookPrompt = [&](auto& leds) {
     showMovePrompt(leds, rookFromRow, rookFromCol, rookToRow, rookToCol, LedColors::White);
-  });
+  };
+  if (layering_)
+    layering_->replaceBase(drawRookPrompt);
+  else
+    system_->batchLEDs(drawRookPrompt);
   waitForSquareEmpty(system_, rookFromRow, rookFromCol);
-  system_->batchLEDs([&](BoardSystem::LEDWriter& leds) {
+  auto drawRookDestination = [&](auto& leds) {
     showDestinationPrompt(leds, rookToRow, rookToCol, LedColors::White);
-  });
+  };
+  if (layering_)
+    layering_->replaceBase(drawRookDestination);
+  else
+    system_->batchLEDs(drawRookDestination);
   waitForSquareOccupied(system_, rookToRow, rookToCol);
-  system_->clearAllLEDs();
+  if (layering_)
+    layering_->clearBase();
+  else
+    system_->clearAllLEDs();
 }
 
+
 void BoardAssistance::guideRemoteMoveCompletion(int fromRow, int fromCol, int toRow, int toCol, bool isCapture, bool isEnPassant, int enPassantCapturedPawnRow, LibreChess::Log& logger) {
-  system_->batchLEDs([&](BoardSystem::LEDWriter& leds) {
+  auto drawRemotePrompt = [&](auto& leds) {
     showMovePrompt(leds, fromRow, fromCol, toRow, toCol, isCapture ? LedColors::Red : LedColors::White);
     if (isEnPassant)
       leds.setSquareLED(enPassantCapturedPawnRow, toCol, LedColors::Purple);
     leds.showLEDs();
-  });
+  };
+
+  if (layering_)
+    layering_->replaceBase(drawRemotePrompt);
+  else
+    system_->batchLEDs(drawRemotePrompt);
 
   bool piecePickedUp = false;
   bool capturedPieceRemoved = false;
@@ -183,5 +230,8 @@ void BoardAssistance::guideRemoteMoveCompletion(int fromRow, int fromCol, int to
     system_->syncOccupancyBaseline();
   }
 
-  system_->clearAllLEDs();
+  if (layering_)
+    layering_->clearBase();
+  else
+    system_->clearAllLEDs();
 }

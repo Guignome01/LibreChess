@@ -1,5 +1,5 @@
-#ifndef BOARD_LIFECYCLE_H
-#define BOARD_LIFECYCLE_H
+#ifndef BOARD_SCHEDULER_H
+#define BOARD_SCHEDULER_H
 
 #include "animations.h"
 
@@ -12,10 +12,10 @@
 class BoardDriver;
 class BoardSystem;
 
-// Board-internal lifecycle owner for asynchronous LED animation execution.
-class BoardAnimationLifecycle {
+/// Board-internal scheduler for asynchronous LED animation execution.
+class BoardScheduler {
  public:
-  BoardAnimationLifecycle();
+  BoardScheduler();
 
   /// Initialize queue, mutex, completion semaphore, and worker task.
   bool begin(BoardDriver* driver);
@@ -54,4 +54,4 @@ class BoardAnimationLifecycle {
   void signalCompletionFor(const AnimationJob& job);
 };
 
-#endif  // BOARD_LIFECYCLE_H
+#endif  // BOARD_SCHEDULER_H

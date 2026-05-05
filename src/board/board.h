@@ -3,6 +3,7 @@
 
 #include "game.h"
 #include "logger.h"
+#include "selection.h"
 
 #include <atomic>
 #include <cstdint>
@@ -12,21 +13,8 @@
 // occupancy state. This is the only board header consumed outside src/board/.
 class Board {
  public:
-  enum class GameSelectionMode : uint8_t {
-    NONE = 0,
-    CHESS_MOVES = 1,
-    BOT = 2,
-    LICHESS = 3,
-    BOARD_DIAGNOSTICS = 4,
-  };
-
-  struct GameSelection {
-    GameSelectionMode mode = GameSelectionMode::NONE;
-    uint8_t botDifficulty = 0;
-    char playerColor = ' ';
-
-    bool hasSelection() const { return mode != GameSelectionMode::NONE; }
-  };
+  using GameSelectionMode = BoardGameSelectionMode;
+  using GameSelection = BoardGameSelection;
 
   Board();
   ~Board();
