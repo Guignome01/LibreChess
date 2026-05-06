@@ -1,9 +1,9 @@
 #include "player_mode.h"
-#include "../board/board.h"
+#include "board/gameplay.h"
 #include "game.h"
 #include <Arduino.h>
 
-PlayerMode::PlayerMode(Board* board, WiFiManagerESP32* wm, Game* cg, ILogger* logger) : GameMode(board, wm, cg, logger) {}
+PlayerMode::PlayerMode(BoardGameplay* gameplay, WiFiManagerESP32* wm, Game* cg, ILogger* logger) : GameMode(gameplay, wm, cg, logger) {}
 
 void PlayerMode::begin() {
   logger_.info("=== Starting Chess Moves Mode ===");
@@ -15,7 +15,7 @@ void PlayerMode::begin() {
 }
 
 void PlayerMode::update() {
-  board_->readSensors();
+  gameplay_->readSensors();
 
   if (processResign()) return;
 
@@ -23,5 +23,5 @@ void PlayerMode::update() {
   if (tryPlayerMove(chess_->sideToMove(), fromRow, fromCol, toRow, toCol))
     applyMove(fromRow, fromCol, toRow, toCol);
 
-  board_->syncOccupancyBaseline();
+  gameplay_->syncOccupancyBaseline();
 }

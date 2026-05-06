@@ -7,7 +7,7 @@ description: "Firmware engine providers: EngineProvider base class, StockfishPro
 
 ## Overview
 
-`EngineProvider` (abstract base) → `StockfishProvider` | `LichessProvider` | `LibreChessProvider`. Each provider handles computation/communication in FreeRTOS background tasks and returns data only. Providers never touch the `Board` facade, `BoardDriver`, or any hardware; `LibreChessProvider` is the exception that receives a non-owning `Game*` for on-board search through public Game APIs.
+`EngineProvider` (abstract base) → `StockfishProvider` | `LichessProvider` | `LibreChessProvider`. Each provider handles computation/communication in FreeRTOS background tasks and returns data only. Providers never touch board workflows, `BoardDriver`, or any hardware; `LibreChessProvider` is the exception that receives a non-owning `Game*` for on-board search through public Game APIs.
 
 Providers are composed into `BotMode` via pointer injection (`BotMode` owns the pointer).
 

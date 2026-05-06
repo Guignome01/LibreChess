@@ -61,6 +61,6 @@ static constexpr MenuItem botColorItems[] = {
 };
 
 /// Configure the board-internal menu instances with layouts and back buttons.
-void configureMenus(BoardMenu& gameMenu, BoardMenu& botDifficultyMenu, BoardMenu& botColorMenu);
+void configureMenus(MenuView& gameMenu, MenuView& botDifficultyMenu, MenuView& botColorMenu);
 
 #endif // BOARD_CONFIG_H

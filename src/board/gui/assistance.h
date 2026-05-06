@@ -17,25 +17,31 @@ enum class BoardAssistanceLevel : uint8_t {
   BEST_MOVE = 2,
 };
 
-// Board-owned physical guidance for chess play.
+/// Board-owned physical guidance for chess play. Persistent visuals always
+/// route through BoardLayering so highlights, prompts, and overlays compose.
 class BoardAssistance {
  public:
-  explicit BoardAssistance(BoardSystem* system = nullptr, BoardAssistanceLevel level = BoardAssistanceLevel::LEGAL_MOVES,
-                           BoardLayering* layering = nullptr);
+  BoardAssistance(BoardSystem& system, BoardLayering& layering,
+                  BoardAssistanceLevel level = BoardAssistanceLevel::LEGAL_MOVES);
 
   void setLevel(BoardAssistanceLevel level) { level_ = level; }
   BoardAssistanceLevel level() const { return level_; }
 
   void waitForSetup(const LibreChess::Game& game, LibreChess::Log& logger);
-  void showLegalMoveHighlights(int fromRow, int fromCol, const LibreChess::MoveList& moves, const LibreChess::Game& game);
+  void showLegalMoveHighlights(int fromRow, int fromCol, const LibreChess::MoveList& moves,
+                               const LibreChess::Game& game);
   void showCapturePlacementPrompt(int row, int col);
-  void guideCastling(int kingFromRow, int kingFromCol, int kingToRow, int kingToCol, const LibreChess::CastlingInfo& castling, bool waitForKingCompletion, LibreChess::Log& logger);
-  void guideRemoteMoveCompletion(int fromRow, int fromCol, int toRow, int toCol, bool isCapture, bool isEnPassant, int enPassantCapturedPawnRow, LibreChess::Log& logger);
+  void guideCastling(int kingFromRow, int kingFromCol, int kingToRow, int kingToCol,
+                     const LibreChess::CastlingInfo& castling, bool waitForKingCompletion,
+                     LibreChess::Log& logger);
+  void guideRemoteMoveCompletion(int fromRow, int fromCol, int toRow, int toCol, bool isCapture,
+                                 bool isEnPassant, int enPassantCapturedPawnRow,
+                                 LibreChess::Log& logger);
 
  private:
-  BoardSystem* system_;
+  BoardSystem& system_;
+  BoardLayering& layering_;
   BoardAssistanceLevel level_;
-  BoardLayering* layering_;
 };
 
 #endif  // BOARD_ASSISTANCE_H

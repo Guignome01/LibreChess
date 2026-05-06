@@ -1,8 +1,10 @@
 #include "wifi_manager_esp32.h"
 #include "board/board.h"
+#include "board/calibration.h"
+#include "board/status.h"
 #include "game.h"
 #include "engine/lichess/lichess_config.h"
-#include "system_utils.h"
+#include "shared/utils.h"
 #include "storage/littrefs.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
@@ -46,7 +48,7 @@ WiFiManagerESP32* WiFiManagerESP32::instance = nullptr;
 // WiFiManagerESP32
 // ===========================
 
-WiFiManagerESP32::WiFiManagerESP32(Board* board, LittleFSStorage* st) : board_(board), storage_(st), server(AP_PORT), gameMode("0"), lichessToken(""), botPlayerColor('w'), currentFen(INITIAL_FEN), hasPendingEdit(false), boardEvaluation(0.0f) {}
+WiFiManagerESP32::WiFiManagerESP32(Board* board, BoardStatus* status, BoardCalibration* calibration, LittleFSStorage* st) : board_(board), status_(status), calibration_(calibration), storage_(st), server(AP_PORT), gameMode("0"), lichessToken(""), botPlayerColor('w'), currentFen(INITIAL_FEN), hasPendingEdit(false), boardEvaluation(0.0f) {}
 
 void WiFiManagerESP32::begin() {
   Serial.println("=== Starting LibreChess WiFi Manager (ESP32) ===");
@@ -351,7 +353,7 @@ bool WiFiManagerESP32::connectToNetwork(uint8_t index) {
 
   int attempts = 0;
   while (WiFi.status() != WL_CONNECTED && attempts < 10) {
-    board_->showConnectingAnimation();
+    status_->showConnectingAnimation();
     attempts++;
     Serial.printf("  Attempt %d/10 — status: %d\n", attempts, WiFi.status());
   }
@@ -774,7 +776,7 @@ void WiFiManagerESP32::handleBoardSettings(AsyncWebServerRequest* request) {
 }
 
 void WiFiManagerESP32::handleBoardCalibration(AsyncWebServerRequest* request) {
-  board_->triggerCalibration();
+  calibration_->trigger();
   sendJsonOk(request);
 }
 

@@ -79,9 +79,9 @@ The calibration produces three mappings stored in NVS:
 
 - **Axis swap flag** — whether ranks correspond to GPIO rows or shift register columns
 - **Row/column mapping tables** — physical pin/output → logical row/column index
-- **LED index map** — pixel index → logical (row, col) coordinate
+- **LED index map** — logical (row, col) coordinate → physical pixel index
 
-`BoardCalibration` owns the workflow and writes the mapping to NVS. `BoardDriver` loads and applies that mapping for every sensor read and LED write operation throughout normal operation.
+`BoardCalibrationWorkflow` owns the serial-guided workflow and writes the mapping to NVS through the board system startup path. `BoardDriver` applies that mapping for every sensor read and LED write operation throughout normal operation.
 
 ## Troubleshooting
 

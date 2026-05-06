@@ -13,7 +13,7 @@ enum class BotState { PLAYER_TURN, ENGINE_THINKING };
 // The provider runs HTTP in a FreeRTOS task; update() stays non-blocking.
 class BotMode : public GameMode {
  public:
-  BotMode(Board* board, WiFiManagerESP32* wm, Game* cg, EngineProvider* provider,
+  BotMode(BoardGameplay* gameplay, WiFiManagerESP32* wm, Game* cg, EngineProvider* provider,
           ILogger* logger = nullptr);
   ~BotMode() override;
 
@@ -49,9 +49,6 @@ class BotMode : public GameMode {
   void onBeforeResignConfirm() override;
   void onResignCancelled() override;
   void onResignConfirmed(Color resignColor) override;
-
-  // Remote move guidance (LED + sensor blocking). Shared by all engines.
-  void waitForRemoteMoveCompletion(int fromRow, int fromCol, int toRow, int toCol, bool isCapture, bool isEnPassant = false, int enPassantCapturedPawnRow = -1) override;
 };
 
 #endif  // GAME_BOT_MODE_H

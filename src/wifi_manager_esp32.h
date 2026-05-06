@@ -17,6 +17,8 @@ using namespace LibreChess;
 
 struct LichessConfig;
 class Board;
+class BoardCalibration;
+class BoardStatus;
 class LittleFSStorage;
 
 // ---------------------------
@@ -76,6 +78,8 @@ class WiFiManagerESP32 : public IGameObserver {
 
   LittleFSStorage* storage_;
   Board* board_;
+  BoardStatus* status_;
+  BoardCalibration* calibration_;
   std::string currentFen;
   float boardEvaluation;
 
@@ -157,7 +161,7 @@ class WiFiManagerESP32 : public IGameObserver {
   void handleDeleteGame(AsyncWebServerRequest* request);
 
  public:
-  WiFiManagerESP32(Board* board, LittleFSStorage* storage);
+  WiFiManagerESP32(Board* board, BoardStatus* status, BoardCalibration* calibration, LittleFSStorage* storage);
   void begin();
   void update(); // Called from loop() — handles reconnection
 

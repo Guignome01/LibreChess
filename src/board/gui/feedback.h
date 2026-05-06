@@ -7,16 +7,19 @@
 
 #include <atomic>
 
-// Board-owned visual feedback for move outcomes, status, and errors.
 class BoardLayering;
 
+/// Board-internal visual feedback for move outcomes, status, and errors.
+/// All persistent rendering goes through BoardLayering; one-shot animations
+/// go through BoardSystem's animation submission API.
 class BoardFeedback {
  public:
-  explicit BoardFeedback(BoardSystem* system = nullptr, BoardLayering* layering = nullptr);
+  BoardFeedback(BoardSystem& system, BoardLayering& layering);
 
   void clearBoard(bool show = true);
   void clearSquare(int row, int col);
-  void showMoveResultFeedback(const LibreChess::MoveResult& result, int toRow, int toCol, const LibreChess::Game& game);
+  void showMoveResultFeedback(const LibreChess::MoveResult& result, int toRow, int toCol,
+                              const LibreChess::Game& game);
   void showIllegalMoveFeedback(int row, int col);
   void showResignProgress(int row, int col, int level, bool clearFirst = false);
   void clearResignFeedback(int row, int col);
@@ -29,8 +32,8 @@ class BoardFeedback {
   void stopAnimation(std::atomic<bool>*& stopFlag);
 
  private:
-  BoardSystem* system_;
-  BoardLayering* layering_;
+  BoardSystem& system_;
+  BoardLayering& layering_;
 
   void confirmSquareCompletion(int row, int col);
 };

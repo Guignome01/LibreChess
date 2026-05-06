@@ -1,6 +1,6 @@
 #include "config.h"
 
-void configureMenus(BoardMenu& gameMenu, BoardMenu& botDifficultyMenu, BoardMenu& botColorMenu) {
+void configureMenus(MenuView& gameMenu, MenuView& botDifficultyMenu, MenuView& botColorMenu) {
     gameMenu.setItems(gameMenuItems);
     botDifficultyMenu.setItems(botDifficultyItems);
     botDifficultyMenu.setBackButton(4, 4);

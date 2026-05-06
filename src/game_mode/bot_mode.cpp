@@ -1,13 +1,13 @@
 #include "bot_mode.h"
-#include "../board/board.h"
+#include "board/gameplay.h"
 #include "game.h"
 
 #include "wifi_manager_esp32.h"
 #include <Arduino.h>
 
-BotMode::BotMode(Board* board, WiFiManagerESP32* wm, Game* cg, EngineProvider* provider,
+BotMode::BotMode(BoardGameplay* gameplay, WiFiManagerESP32* wm, Game* cg, EngineProvider* provider,
                  ILogger* logger)
-  : GameMode(board, wm, cg, logger), provider_(provider) {}
+  : GameMode(gameplay, wm, cg, logger), provider_(provider) {}
 
 BotMode::~BotMode() {
   delete provider_;
@@ -26,12 +26,12 @@ void BotMode::begin() {
   }
 
   // Provider may block (e.g., Lichess game discovery). Show waiting animation.
-  std::atomic<bool>* waitAnim = board_->startWaitingStatus();
+  std::atomic<bool>* waitAnim = gameplay_->startWaitingStatus();
 
   EngineInitResult initResult;
   bool ok = provider_->initialize(initResult);
 
-  board_->stopStatusAnimation(waitAnim);
+  gameplay_->stopStatusAnimation(waitAnim);
 
   if (!ok) {
     abortWithError("Engine initialization failed");
@@ -77,7 +77,7 @@ bool BotMode::isNavigationAllowed() const {
 void BotMode::update() {
   if (chess_->isGameOver()) return;
 
-  board_->readSensors();
+  gameplay_->readSensors();
 
   if (processResign()) return;
 
@@ -129,7 +129,7 @@ void BotMode::update() {
     }
   }
 
-  board_->syncOccupancyBaseline();
+  gameplay_->syncOccupancyBaseline();
 }
 
 // ---------------------------------------------------------------
@@ -160,13 +160,13 @@ bool BotMode::applyEngineMove(const std::string& move) {
 }
 
 void BotMode::handleRemoteGameEnd(const EngineResult& result) {
-  board_->showRemoteGameEnd(result.winnerColor);
+  gameplay_->showRemoteGameEnd(result.winnerColor);
   chess_->endGame(result.gameResult, result.winnerColor);
 }
 
 void BotMode::abortWithError(const char* message) {
   logger_.errorf("BotMode ABORT: %s", message);
-  board_->showErrorFeedback();
+  gameplay_->showErrorFeedback();
   chess_->endGame(GameResult::ABORTED, ' ');
 }
 
@@ -199,20 +199,11 @@ void BotMode::onResignConfirmed(Color resignColor) {
 // ---------------------------------------------------------------
 
 void BotMode::startThinking() {
-  thinkingAnimation_ = board_->startThinkingStatus();
+  thinkingAnimation_ = gameplay_->startThinkingStatus();
 }
 
 void BotMode::stopThinking() {
   if (thinkingAnimation_) {
-    board_->stopStatusAnimation(thinkingAnimation_);
+    gameplay_->stopStatusAnimation(thinkingAnimation_);
   }
-}
-
-// ---------------------------------------------------------------
-// Remote move guidance (LED + sensor blocking)
-// Guides the player to physically execute the engine's move.
-// ---------------------------------------------------------------
-
-void BotMode::waitForRemoteMoveCompletion(int fromRow, int fromCol, int toRow, int toCol, bool isCapture, bool isEnPassant, int enPassantCapturedPawnRow) {
-  board_->guideRemoteMoveCompletion(fromRow, fromCol, toRow, toCol, isCapture, isEnPassant, enPassantCapturedPawnRow, logger_);
 }

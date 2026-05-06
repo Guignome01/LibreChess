@@ -1,8 +1,11 @@
 #include "calibration.h"
 
+#include "board.h"
 #include "core/driver.h"
+#include "core/system.h"
 #include "game.h"
-#include "system_utils.h"
+#include "services.h"
+#include "shared/utils.h"
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -21,9 +24,15 @@ static char shiftRegOutput(int col) {
 
 }  // namespace
 
-BoardCalibration::BoardCalibration(BoardDriver* driver) : driver_(driver) {}
+BoardCalibration::BoardCalibration(Board& board) : board_(board) {}
 
-bool BoardCalibration::load() {
+void BoardCalibration::trigger() {
+  board_.services().makeCalibrationWorkflow().trigger();
+}
+
+BoardCalibrationWorkflow::BoardCalibrationWorkflow(BoardDriver& driver) : driver_(driver) {}
+
+bool BoardCalibrationWorkflow::load() {
   if (!SystemUtils::ensureNvsInitialized()) {
     Serial.println("NVS init failed - calibration not loaded");
     return false;
@@ -62,22 +71,27 @@ bool BoardCalibration::load() {
     prefs.end();
     return false;
   }
-  driver_->swapAxes = prefs.getUChar("swap", 0);
-  prefs.getBytes("row", driver_->toLogicalRow, NUM_ROWS);
-  prefs.getBytes("col", driver_->toLogicalCol, NUM_COLS);
+  driver_.setCalibrationSwapAxes(prefs.getUChar("swap", 0));
+  uint8_t rowMap[NUM_ROWS];
+  uint8_t colMap[NUM_COLS];
+  prefs.getBytes("row", rowMap, NUM_ROWS);
+  prefs.getBytes("col", colMap, NUM_COLS);
+  for (int i = 0; i < NUM_ROWS; i++)
+    driver_.setLogicalRowMapping(i, rowMap[i]);
+  for (int i = 0; i < NUM_COLS; i++)
+    driver_.setLogicalColMapping(i, colMap[i]);
   uint8_t ledFlat[LED_COUNT];
   prefs.getBytes("led", ledFlat, LED_COUNT);
   int idx = 0;
   for (int row = 0; row < NUM_ROWS; row++)
     for (int col = 0; col < NUM_COLS; col++)
-      driver_->ledIndexMap[row][col] = ledFlat[idx++];
+      driver_.setLedCalibrationIndex(row, col, ledFlat[idx++]);
   prefs.end();
-  driver_->calibrationLoaded = true;
   Serial.println("Board calibration loaded from NVS");
   return true;
 }
 
-void BoardCalibration::save() {
+void BoardCalibrationWorkflow::save() {
   if (!SystemUtils::ensureNvsInitialized()) {
     Serial.println("NVS init failed - calibration not saved");
     return;
@@ -91,28 +105,33 @@ void BoardCalibration::save() {
   prefs.putBytes("rowPins", rowPinsU8, sizeof(rowPinsU8));
   uint8_t srPins[3] = {static_cast<uint8_t>(SR_CLK_PIN), static_cast<uint8_t>(SR_LATCH_PIN), static_cast<uint8_t>(SR_SER_DATA_PIN)};
   prefs.putBytes("srPins", srPins, sizeof(srPins));
-  prefs.putUChar("swap", driver_->swapAxes);
-  prefs.putBytes("row", driver_->toLogicalRow, NUM_ROWS);
-  prefs.putBytes("col", driver_->toLogicalCol, NUM_COLS);
+  prefs.putUChar("swap", driver_.calibrationSwapAxes());
+  uint8_t rowMap[NUM_ROWS];
+  uint8_t colMap[NUM_COLS];
+  for (int i = 0; i < NUM_ROWS; i++)
+    rowMap[i] = driver_.logicalRowMapping(i);
+  for (int i = 0; i < NUM_COLS; i++)
+    colMap[i] = driver_.logicalColMapping(i);
+  prefs.putBytes("row", rowMap, NUM_ROWS);
+  prefs.putBytes("col", colMap, NUM_COLS);
   uint8_t ledFlat[LED_COUNT];
   int idx = 0;
   for (int row = 0; row < NUM_ROWS; row++)
     for (int col = 0; col < NUM_COLS; col++)
-      ledFlat[idx++] = driver_->ledIndexMap[row][col];
+      ledFlat[idx++] = driver_.ledCalibrationIndex(row, col);
   prefs.putBytes("led", ledFlat, LED_COUNT);
   prefs.end();
-  driver_->calibrationLoaded = true;
   Serial.println("Board calibration saved to NVS");
 }
 
-bool BoardCalibration::run() {
+bool BoardCalibrationWorkflow::run() {
   for (int i = 0; i < LED_COUNT; i++) {
-    driver_->strip.SetPixelColor(i, RgbColor(LedColors::White.r, LedColors::White.g, LedColors::White.b));
-    driver_->showLEDs();
+    driver_.setRawCalibrationLED(i, LedColors::White);
+    driver_.showLEDs();
     delay(50);
   }
   delay(500);
-  driver_->clearAllLEDs();
+  driver_.clearRawCalibrationLEDs();
 
   Serial.println("========================== Board calibration required ==========================");
   Serial.println("- Type 'skip' within 5 seconds to temporarily skip it (reboot to calibrate later)");
@@ -127,9 +146,8 @@ bool BoardCalibration::run() {
         Serial.println("[SKIP] Calibration skipped - using raw identity mapping");
         Serial.println("[SKIP] Sensors/LEDs will NOT work correctly!");
         Serial.println("[SKIP] You will be asked to calibrate again on next reboot");
-        driver_->resetLogicalMapping();
-        driver_->loadRawIdentityLedMapping();
-        driver_->calibrationLoaded = true;
+        driver_.resetCalibrationMapping();
+        driver_.loadRawIdentityCalibrationLedMapping();
         return true;
       } else {
         Serial.println("Unknown command \"" + input + "\" Type \"skip\" to skip calibration or wait 5 seconds for calibration to begin");
@@ -146,29 +164,28 @@ bool BoardCalibration::run() {
   Serial.println("================================================================================");
   waitForBoardEmpty();
 
-  bool swapAxes1 = calibrateAxis(Axis::ROWS, driver_->toLogicalRow, NUM_ROWS, false);
-  bool swapAxes2 = calibrateAxis(Axis::COLS, driver_->toLogicalCol, NUM_COLS, swapAxes1);
+  bool swapAxes1 = calibrateAxis(Axis::ROWS, false);
+  bool swapAxes2 = calibrateAxis(Axis::COLS, swapAxes1);
   if (swapAxes1 != swapAxes2) {
     Serial.println("Inconsistent axis orientation detected during calibration. Restarting calibration.");
     showCalibrationError();
     return run();
   }
-  driver_->swapAxes = swapAxes1 ? 1 : 0;
+  driver_.setCalibrationSwapAxes(swapAxes1 ? 1 : 0);
 
   Serial.println("LED mapping calibration:");
 
   bool logicalUsed[NUM_ROWS][NUM_COLS] = {false};
 
   auto displayCalibrationLEDs = [&](int currentPixel) {
-    for (int i = 0; i < LED_COUNT; i++)
-      driver_->strip.SetPixelColor(i, RgbColor(0));
+    driver_.clearRawCalibrationLEDs(false);
     for (int row = 0; row < NUM_ROWS; row++)
       for (int col = 0; col < NUM_COLS; col++)
         if (logicalUsed[row][col])
-          driver_->strip.SetPixelColor(driver_->ledIndexMap[row][col], RgbColor(LedColors::Green.r, LedColors::Green.g, LedColors::Green.b));
+          driver_.setRawCalibrationLED(driver_.ledCalibrationIndex(row, col), LedColors::Green);
     if (currentPixel < LED_COUNT)
-      driver_->strip.SetPixelColor(currentPixel, RgbColor(LedColors::White.r, LedColors::White.g, LedColors::White.b));
-    driver_->showLEDs();
+      driver_.setRawCalibrationLED(currentPixel, LedColors::White);
+    driver_.showLEDs();
   };
 
   for (int pixelIndex = 0; pixelIndex < LED_COUNT; pixelIndex++) {
@@ -178,8 +195,8 @@ bool BoardCalibration::run() {
     Serial.println("Place a piece on the white LED");
     waitForSingleRawPress(row, col);
 
-    uint8_t logicalRow = driver_->toLogicalRow[driver_->swapAxes ? col : row];
-    uint8_t logicalCol = driver_->toLogicalCol[driver_->swapAxes ? row : col];
+    uint8_t logicalRow = driver_.logicalRowMapping(driver_.calibrationSwapAxes() ? col : row);
+    uint8_t logicalCol = driver_.logicalColMapping(driver_.calibrationSwapAxes() ? row : col);
     if (logicalUsed[logicalRow][logicalCol]) {
       Serial.printf("Duplicate square %c%c detected. Retry LED %d.\n", static_cast<char>('a' + logicalCol), static_cast<char>('8' - logicalRow), pixelIndex);
       showCalibrationError();
@@ -187,7 +204,7 @@ bool BoardCalibration::run() {
       continue;
     }
     logicalUsed[logicalRow][logicalCol] = true;
-    driver_->ledIndexMap[logicalRow][logicalCol] = pixelIndex;
+    driver_.setLedCalibrationIndex(logicalRow, logicalCol, pixelIndex);
     Serial.printf("  LED %d -> %c%c\n", pixelIndex, static_cast<char>('a' + logicalCol), static_cast<char>('8' - logicalRow));
 
     displayCalibrationLEDs(pixelIndex + 1);
@@ -196,12 +213,12 @@ bool BoardCalibration::run() {
     waitForBoardEmpty(100);
   }
 
-  driver_->clearAllLEDs();
+  driver_.clearAllLEDs();
   Serial.println("Calibration complete");
   return false;
 }
 
-void BoardCalibration::trigger() {
+void BoardCalibrationWorkflow::trigger() {
   if (!SystemUtils::ensureNvsInitialized()) {
     Serial.println("NVS init failed - cannot trigger calibration");
     return;
@@ -214,20 +231,11 @@ void BoardCalibration::trigger() {
   ESP.restart();
 }
 
-void BoardCalibration::readRawSensors(bool (&rawState)[8][8]) {
-  for (int row = 0; row < NUM_ROWS; row++)
-    for (int col = 0; col < NUM_COLS; col++)
-      rawState[row][col] = false;
-
-  for (int col = 0; col < NUM_COLS; col++) {
-    driver_->enableCol(col);
-    for (int row = 0; row < NUM_ROWS; row++)
-      rawState[row][col] = (digitalRead(rowPins[row]) == LOW);
-  }
-  driver_->disableAllCols();
+void BoardCalibrationWorkflow::readRawSensors(bool (&rawState)[8][8]) {
+  driver_.readRawCalibrationSensors(rawState);
 }
 
-bool BoardCalibration::waitForBoardEmpty(unsigned long stableMs) {
+bool BoardCalibrationWorkflow::waitForBoardEmpty(unsigned long stableMs) {
   bool rawState[NUM_ROWS][NUM_COLS];
   unsigned long lastWarningTime = millis();
   unsigned long stableStart = 0;
@@ -261,7 +269,7 @@ bool BoardCalibration::waitForBoardEmpty(unsigned long stableMs) {
   }
 }
 
-bool BoardCalibration::waitForSingleRawPress(int& rawRow, int& rawCol, unsigned long stableMs) {
+bool BoardCalibrationWorkflow::waitForSingleRawPress(int& rawRow, int& rawCol, unsigned long stableMs) {
   bool rawState[NUM_ROWS][NUM_COLS];
   int lastRow = -1;
   int lastCol = -1;
@@ -320,17 +328,17 @@ bool BoardCalibration::waitForSingleRawPress(int& rawRow, int& rawCol, unsigned 
   }
 }
 
-void BoardCalibration::showCalibrationError() {
+void BoardCalibrationWorkflow::showCalibrationError() {
   for (int i = 0; i < LED_COUNT; i++)
-    driver_->strip.SetPixelColor(i, RgbColor(LedColors::Red.r, LedColors::Red.g, LedColors::Red.b));
-  driver_->showLEDs();
+    driver_.setRawCalibrationLED(i, LedColors::Red);
+  driver_.showLEDs();
   delay(500);
   waitForBoardEmpty();
-  driver_->clearAllLEDs();
+  driver_.clearRawCalibrationLEDs();
 }
 
-bool BoardCalibration::calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t pinCount, bool firstAxisSwapped) {
-  if ((NUM_ROWS != NUM_COLS) || (NUM_ROWS != static_cast<int>(pinCount))) {
+bool BoardCalibrationWorkflow::calibrateAxis(Axis axis, bool firstAxisSwapped) {
+  if (NUM_ROWS != NUM_COLS) {
     Serial.println("Non-square boards not supported for calibration");
     return false;
   }
@@ -339,20 +347,20 @@ bool BoardCalibration::calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t p
   int firstRow = -1;
   int firstCol = -1;
   uint8_t counts[NUM_ROWS] = {0};
-  for (size_t i = 0; i < pinCount; i++)
-    axisPinsOrder[i] = 0xFF;
+  for (size_t i = 0; i < NUM_ROWS; i++)
+    setAxisMapping(axis, i, 0xFF);
 
   int expectedRawPin = -1;
   bool useRow = true;
   if (axis == Axis::COLS)
     for (int i = 0; i < NUM_ROWS; i++)
-      if (driver_->toLogicalRow[i] == 7) {
+      if (driver_.logicalRowMapping(i) == 7) {
         expectedRawPin = i;
         useRow = !firstAxisSwapped;
         break;
       }
 
-  for (size_t i = 0; i < pinCount; i++) {
+  for (size_t i = 0; i < NUM_ROWS; i++) {
     char square[3];
     if (axis == Axis::ROWS) {
       square[0] = 'a';
@@ -393,12 +401,12 @@ bool BoardCalibration::calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t p
     if (detectedAxis == Axis::UNKNOWN && i == 1) {
       if (row == firstRow && col != firstCol) {
         detectedAxis = Axis::COLS;
-        axisPinsOrder[firstCol] = static_cast<uint8_t>(i - 1);
+        setAxisMapping(axis, firstCol, static_cast<uint8_t>(i - 1));
         counts[firstCol]++;
         Serial.printf("%s calibration using cols %s\n", axisToChessRankFile(axis), axis != detectedAxis ? "(axis swap)" : "(no axis swap)");
       } else if (col == firstCol && row != firstRow) {
         detectedAxis = Axis::ROWS;
-        axisPinsOrder[firstRow] = static_cast<uint8_t>(i - 1);
+        setAxisMapping(axis, firstRow, static_cast<uint8_t>(i - 1));
         counts[firstRow]++;
         Serial.printf("%s calibration using rows %s\n", axisToChessRankFile(axis), axis != detectedAxis ? "(axis swap)" : "(no axis swap)");
       } else {
@@ -422,7 +430,7 @@ bool BoardCalibration::calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t p
 
     int pin = (detectedAxis == Axis::ROWS) ? row : col;
     if (counts[pin] > 0) {
-      int assignedIndex = axisPinsOrder[pin];
+      int assignedIndex = axisMapping(axis, pin);
       char assignedRankFile[8];
       if (axis == Axis::ROWS)
         snprintf(assignedRankFile, sizeof(assignedRankFile), "rank %c", LibreChess::Game::rankChar(assignedIndex));
@@ -437,7 +445,7 @@ bool BoardCalibration::calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t p
       continue;
     }
 
-    axisPinsOrder[pin] = static_cast<uint8_t>(i);
+    setAxisMapping(axis, pin, static_cast<uint8_t>(i));
     counts[pin]++;
 
     Serial.println("Remove the piece");
@@ -447,6 +455,17 @@ bool BoardCalibration::calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t p
   return axis != detectedAxis;
 }
 
-const char* BoardCalibration::axisToChessRankFile(Axis axis) const {
+uint8_t BoardCalibrationWorkflow::axisMapping(Axis axis, int rawIndex) const {
+  return axis == Axis::ROWS ? driver_.logicalRowMapping(rawIndex) : driver_.logicalColMapping(rawIndex);
+}
+
+void BoardCalibrationWorkflow::setAxisMapping(Axis axis, int rawIndex, uint8_t logicalIndex) {
+  if (axis == Axis::ROWS)
+    driver_.setLogicalRowMapping(rawIndex, logicalIndex);
+  else
+    driver_.setLogicalColMapping(rawIndex, logicalIndex);
+}
+
+const char* BoardCalibrationWorkflow::axisToChessRankFile(Axis axis) const {
   return (axis == Axis::ROWS) ? "Rank" : ((axis == Axis::COLS) ? "File" : "Unknown");
 }

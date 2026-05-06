@@ -1,16 +1,6 @@
 #include "system.h"
 
-namespace {
-
-void snapshotOccupancy(BoardDriver& driver, bool (&occupancy)[LibreChess::board::BOARD_ROWS][LibreChess::board::BOARD_COLS]) {
-  for (int row = 0; row < LibreChess::board::BOARD_ROWS; ++row) {
-    for (int col = 0; col < LibreChess::board::BOARD_COLS; ++col) {
-      occupancy[row][col] = driver.getSensorState(row, col);
-    }
-  }
-}
-
-}  // namespace
+#include "board/calibration.h"
 
 BoardLEDBatch::BoardLEDBatch(BoardDriver& driver) : driver_(driver) {}
 
@@ -34,48 +24,26 @@ void BoardLEDBatch::setDimMultiplier(uint8_t value) {
   driver_.setDimMultiplier(value);
 }
 
-BoardSystem::BoardSystem() : driver_(), scheduler_(), state_() {}
+BoardSystem::BoardSystem() : driver_(), scheduler_() {}
 
 bool BoardSystem::begin() {
   driver_.begin();
+  BoardCalibrationWorkflow calibration(driver_);
+  if (!calibration.load()) {
+    bool wasSkipped = calibration.run();
+    if (!wasSkipped) {
+      calibration.save();
+    }
+  }
   return scheduler_.begin(&driver_);
 }
 
 void BoardSystem::readSensors() {
   driver_.readSensors();
-  refreshState(false);
-}
-
-void BoardSystem::syncOccupancyBaseline() {
-  refreshState(true);
 }
 
 bool BoardSystem::occupied(int row, int col) const {
-  return state_.occupied(row, col);
-}
-
-bool BoardSystem::wasOccupied(int row, int col) const {
-  return state_.wasOccupied(row, col);
-}
-
-bool BoardSystem::wasLifted(int row, int col) const {
-  return state_.wasLifted(row, col);
-}
-
-bool BoardSystem::wasPlaced(int row, int col) const {
-  return state_.wasPlaced(row, col);
-}
-
-bool BoardSystem::changed(int row, int col) const {
-  return state_.changed(row, col);
-}
-
-uint8_t BoardSystem::changedCount() const {
-  return state_.changedCount();
-}
-
-LibreChess::board::BoardSquare BoardSystem::changedSquare(uint8_t index) const {
-  return state_.changedSquare(index);
+  return driver_.getSensorState(row, col);
 }
 
 void BoardSystem::clearAllLEDs(bool show) {
@@ -140,8 +108,8 @@ void BoardSystem::saveLedSettings() {
   driver_.saveLedSettings();
 }
 
-void BoardSystem::triggerCalibration() {
-  driver_.triggerCalibration();
+BoardCalibrationWorkflow BoardSystem::makeCalibrationWorkflow() {
+  return BoardCalibrationWorkflow(driver_);
 }
 
 uint16_t BoardSystem::sensorReadDelayMs() const {
@@ -154,14 +122,4 @@ void BoardSystem::beginLEDBatch() {
 
 void BoardSystem::endLEDBatch() {
   scheduler_.releaseLEDs();
-}
-
-void BoardSystem::refreshState(bool initializeBaseline) {
-  bool occupancy[LibreChess::board::BOARD_ROWS][LibreChess::board::BOARD_COLS];
-  snapshotOccupancy(driver_, occupancy);
-
-  if (initializeBaseline)
-    state_.sync(occupancy);
-  else
-    state_.update(occupancy);
 }

@@ -2,9 +2,9 @@
 #define BOARD_LAYERING_H
 
 #include "animations.h"
-#include "colors.h"
-#include "state.h"
-#include "system.h"
+#include "board/board.h"
+#include "board/core/colors.h"
+#include "board/core/system.h"
 
 #include <stdint.h>
 #include <utility>

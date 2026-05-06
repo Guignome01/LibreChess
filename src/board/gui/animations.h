@@ -1,7 +1,7 @@
 #ifndef BOARD_ANIMATIONS_H
 #define BOARD_ANIMATIONS_H
 
-#include "colors.h"
+#include "board/core/colors.h"
 
 #include <atomic>
 #include <stdint.h>

@@ -11,7 +11,7 @@
 using namespace LibreChess;
 
 // Forward declaration to avoid circular dependency
-class Board;
+class BoardGameplay;
 class WiFiManagerESP32;
 
 // ---------------------------------------------------------------------------
@@ -53,18 +53,16 @@ inline GameMeta readMeta(const uint8_t* raw) {
 // which atomically updates the board, records moves, and notifies observers.
 class GameMode {
  protected:
-  Board* board_;
+  BoardGameplay* gameplay_;
   WiFiManagerESP32* wifiManager_;
   Game* chess_;
   Log logger_;
 
   // --- Resign ---
-  static constexpr unsigned long RESIGN_HOLD_MS = 3000;       // Duration king must stay off its square to initiate resign
-  static constexpr unsigned long RESIGN_LIFT_WINDOW_MS = 1000; // Max time per quick lift during gesture
   bool resignPending_ = false;    // Set by web resign endpoint
 
   // Constructor
-  GameMode(Board* board, WiFiManagerESP32* wm, Game* cg, ILogger* logger = nullptr);
+  GameMode(BoardGameplay* gameplay, WiFiManagerESP32* wm, Game* cg, ILogger* logger = nullptr);
 
   // Common initialization and game flow methods
   void waitForBoardSetup();
@@ -80,11 +78,6 @@ class GameMode {
   /// Unified resign entry point. Call at the start of update() after readSensors().
   /// Returns true if the game loop should return early.
   bool processResign();
-  /// Handle resign confirmation and game-end sequence.
-  /// Uses virtual hooks so subclasses can customize behavior without
-  /// duplicating the flow.
-  bool handleResign(Color resignColor);
-
   // --- Resign hooks (override in subclasses) ---
 
   /// Board orientation for the confirm dialog (true = black at bottom).
@@ -98,11 +91,8 @@ class GameMode {
   virtual void onResignConfirmed(Color resignColor) {}
 
  private:
-  /// Blocking loop for the 2 quick lifts after the initial king return.
-  /// Called inline from tryPlayerMove(). Returns true if resign was confirmed.
-  bool continueResignGesture(int row, int col, Color color);
-  // Virtual hooks for remote move handling (overridden in subclasses)
-  virtual void waitForRemoteMoveCompletion(int fromRow, int fromCol, int toRow, int toCol, bool isCapture, bool isEnPassant = false, int enPassantCapturedPawnRow = -1) {}
+  /// Bridge a board-detected resign request into the Game mutation boundary.
+  bool completeResign(Color resignColor);
 
  public:
   virtual ~GameMode() {}

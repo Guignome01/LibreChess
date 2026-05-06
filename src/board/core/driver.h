@@ -1,8 +1,9 @@
 #ifndef BOARD_DRIVER_H
 #define BOARD_DRIVER_H
 
-#include "colors.h"
 #include <NeoPixelBusLg.h>
+
+#include "colors.h"
 
 // ---------------------------
 // Hardware Configuration
@@ -73,8 +74,6 @@ inline constexpr int rowPins[NUM_ROWS] = {
 // Logical board coordinates: row 0 = rank 8, column 0 = file a
 // ---------------------------
 class BoardDriver {
-  friend class BoardCalibration;
-
  private:
   NeoPixelBusLg<NeoGrbFeature, NeoEsp32I2s0800KbpsMethod, NeoGammaNullMethod> strip;
   bool sensorState[NUM_ROWS][NUM_COLS];
@@ -92,23 +91,59 @@ class BoardDriver {
   uint8_t toLogicalRow[NUM_ROWS];
   uint8_t toLogicalCol[NUM_COLS];
   uint8_t ledIndexMap[NUM_ROWS][NUM_COLS];
-  bool calibrationLoaded;
 
   void loadLedSettings();
-  void resetLogicalMapping();
   void loadDefaultLedMapping();
-  void loadRawIdentityLedMapping();
 
   void loadShiftRegister(byte data, int bits = 8);
   void disableAllCols();
   void enableCol(int col);
-  int getPixelIndex(int row, int col);
+  int getPixelIndex(int row, int col) const;
 
  public:
   BoardDriver();
   void begin();
   void readSensors();
-  bool getSensorState(int row, int col);
+  bool getSensorState(int row, int col) const;
+
+  /// Read the physical sensor matrix without debounce or logical mapping.
+  void readRawCalibrationSensors(bool (&rawState)[NUM_ROWS][NUM_COLS]);
+
+  /// Set one physical LED pixel directly during calibration.
+  void setRawCalibrationLED(int pixelIndex, LedRGB color);
+
+  /// Clear all physical LED pixels directly during calibration.
+  void clearRawCalibrationLEDs(bool show = true);
+
+  /// Reset logical sensor mapping to identity before calibration or skip mode.
+  void resetCalibrationMapping();
+
+  /// Use raw row-major LED mapping when calibration is skipped.
+  void loadRawIdentityCalibrationLedMapping();
+
+  /// Return whether raw row/column axes are swapped by calibration.
+  uint8_t calibrationSwapAxes() const { return swapAxes; }
+
+  /// Store whether raw row/column axes are swapped by calibration.
+  void setCalibrationSwapAxes(uint8_t value) { swapAxes = value; }
+
+  /// Return logical row assigned to one raw row/column index.
+  uint8_t logicalRowMapping(int rawIndex) const { return toLogicalRow[rawIndex]; }
+
+  /// Assign logical row to one raw row/column index.
+  void setLogicalRowMapping(int rawIndex, uint8_t logicalRow) { toLogicalRow[rawIndex] = logicalRow; }
+
+  /// Return logical column assigned to one raw row/column index.
+  uint8_t logicalColMapping(int rawIndex) const { return toLogicalCol[rawIndex]; }
+
+  /// Assign logical column to one raw row/column index.
+  void setLogicalColMapping(int rawIndex, uint8_t logicalCol) { toLogicalCol[rawIndex] = logicalCol; }
+
+  /// Return physical LED pixel assigned to one logical square.
+  uint8_t ledCalibrationIndex(int row, int col) const { return ledIndexMap[row][col]; }
+
+  /// Assign physical LED pixel to one logical square.
+  void setLedCalibrationIndex(int row, int col, uint8_t pixelIndex) { ledIndexMap[row][col] = pixelIndex; }
 
   void clearAllLEDs(bool show = true);
   void setSquareLED(int row, int col, LedRGB color);
@@ -120,7 +155,6 @@ class BoardDriver {
   void setBrightness(uint8_t value);
   void setDimMultiplier(uint8_t value);
   void saveLedSettings();
-  void triggerCalibration();
 };
 
 #endif // BOARD_DRIVER_H

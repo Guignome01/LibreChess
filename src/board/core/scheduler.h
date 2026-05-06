@@ -1,7 +1,7 @@
 #ifndef BOARD_SCHEDULER_H
 #define BOARD_SCHEDULER_H
 
-#include "animations.h"
+#include "board/gui/animations.h"
 
 #include <atomic>
 #include <freertos/FreeRTOS.h>

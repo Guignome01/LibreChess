@@ -1,61 +1,51 @@
 #include "diagnostics.h"
 
-#include "core/layering.h"
+#include "board.h"
+#include "gui/animations.h"
+#include "gui/layering.h"
+#include "services.h"
 
 #include <Arduino.h>
 
-BoardDiagnostics::BoardDiagnostics(BoardSystem* system, BoardLayering* layering)
-  : system_(system), layering_(layering), visited_{}, complete_(false), visitedCount_(0) {}
+BoardDiagnostics::BoardDiagnostics(Board& board)
+    : services_(board.services()), visited_{}, complete_(false), visitedCount_(0) {}
 
 void BoardDiagnostics::begin() {
   Serial.println("Sensor Test: Visit all squares with a piece to complete the test.");
   complete_ = false;
   clearVisited();
-  system_->waitForAnimationQueueDrain();
-  system_->readSensors();
+  services_.waitForAnimationQueueDrain();
+  services_.readSensors();
   recordCurrentOccupancy();
   showVisitedSquares();
-  system_->syncOccupancyBaseline();
 }
 
 void BoardDiagnostics::update() {
   if (complete_) return;
 
-  system_->readSensors();
-  recordChangedOccupancy();
+  services_.readSensors();
+  recordCurrentOccupancy();
   showVisitedSquares();
 
   if (visitedCount_ == LibreChess::board::BOARD_SQUARES) {
     complete_ = true;
     Serial.println("Sensor Test complete! All squares verified.");
-    if (layering_) layering_->clearAll(false);
-    system_->runAnimation(AnimationJob::firework());
+    services_.layering().clearAll(false);
+    services_.runAnimation(AnimationJob::firework());
   }
 }
 
 void BoardDiagnostics::clearVisited() {
   visitedCount_ = 0;
-  for (int row = 0; row < LibreChess::board::BOARD_ROWS; ++row) {
-    for (int col = 0; col < LibreChess::board::BOARD_COLS; ++col) {
+  for (int row = 0; row < LibreChess::board::BOARD_ROWS; ++row)
+    for (int col = 0; col < LibreChess::board::BOARD_COLS; ++col)
       visited_[row][col] = false;
-    }
-  }
 }
 
 void BoardDiagnostics::recordCurrentOccupancy() {
-  for (int row = 0; row < LibreChess::board::BOARD_ROWS; ++row) {
-    for (int col = 0; col < LibreChess::board::BOARD_COLS; ++col) {
-      if (system_->occupied(row, col)) recordVisitedSquare(row, col);
-    }
-  }
-}
-
-void BoardDiagnostics::recordChangedOccupancy() {
-  for (uint8_t index = 0; index < system_->changedCount(); ++index) {
-    auto square = system_->changedSquare(index);
-    if (square.valid() && system_->occupied(square.row, square.col))
-      recordVisitedSquare(square.row, square.col);
-  }
+  for (int row = 0; row < LibreChess::board::BOARD_ROWS; ++row)
+    for (int col = 0; col < LibreChess::board::BOARD_COLS; ++col)
+      if (services_.occupied(row, col)) recordVisitedSquare(row, col);
 }
 
 void BoardDiagnostics::recordVisitedSquare(int row, int col) {
@@ -65,21 +55,11 @@ void BoardDiagnostics::recordVisitedSquare(int row, int col) {
 }
 
 void BoardDiagnostics::showVisitedSquares() {
-  auto drawVisited = [&](auto& leds) {
+  services_.layering().replaceBase([&](BoardLayering::LayerWriter& leds) {
     leds.clearAllLEDs(false);
-
-    for (int row = 0; row < LibreChess::board::BOARD_ROWS; ++row) {
-      for (int col = 0; col < LibreChess::board::BOARD_COLS; ++col) {
-        if (visited_[row][col])
-          leds.setSquareLED(row, col, LedColors::White);
-      }
-    }
-
+    for (int row = 0; row < LibreChess::board::BOARD_ROWS; ++row)
+      for (int col = 0; col < LibreChess::board::BOARD_COLS; ++col)
+        if (visited_[row][col]) leds.setSquareLED(row, col, LedColors::White);
     leds.showLEDs();
-  };
-
-  if (layering_)
-    layering_->replaceBase(drawVisited);
-  else
-    system_->batchLEDs(drawVisited);
+  });
 }

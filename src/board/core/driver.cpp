@@ -1,7 +1,6 @@
 #include "driver.h"
 
-#include "board/calibration.h"
-#include "system_utils.h"
+#include "shared/utils.h"
 
 #include <Arduino.h>
 #include <Preferences.h>
@@ -35,16 +34,15 @@ BoardDriver::BoardDriver()
       lastEnabledCol(-2),
       brightness(BRIGHTNESS),
       dimMultiplier(70),
-      swapAxes(0),
-      calibrationLoaded(false) {
-  resetLogicalMapping();
+      swapAxes(0) {
+  resetCalibrationMapping();
   loadDefaultLedMapping();
   for (int row = 0; row < NUM_ROWS; row++)
     for (int col = 0; col < NUM_COLS; col++)
       currentColors[row][col] = LedColors::Off;
 }
 
-void BoardDriver::resetLogicalMapping() {
+void BoardDriver::resetCalibrationMapping() {
   for (int i = 0; i < NUM_ROWS; i++)
     toLogicalRow[i] = i;
   for (int i = 0; i < NUM_COLS; i++)
@@ -58,7 +56,7 @@ void BoardDriver::loadDefaultLedMapping() {
       ledIndexMap[row][col] = defaultLedIndex(row, col);
 }
 
-void BoardDriver::loadRawIdentityLedMapping() {
+void BoardDriver::loadRawIdentityCalibrationLedMapping() {
   for (int row = 0; row < NUM_ROWS; row++)
     for (int col = 0; col < NUM_COLS; col++)
       ledIndexMap[row][col] = rawIdentityLedIndex(row, col);
@@ -84,14 +82,6 @@ void BoardDriver::begin() {
       sensorRaw[row][col] = false;
       sensorDebounceTime[row][col] = 0;
     }
-
-  BoardCalibration calibration(this);
-  if (!calibration.load()) {
-    bool wasSkipped = calibration.run();
-    if (!wasSkipped) {
-      calibration.save();
-    }
-  }
 }
 
 void BoardDriver::loadShiftRegister(byte data, int bits) {
@@ -159,11 +149,36 @@ void BoardDriver::readSensors() {
   disableAllCols();
 }
 
-bool BoardDriver::getSensorState(int row, int col) {
+bool BoardDriver::getSensorState(int row, int col) const {
   return sensorState[row][col];
 }
 
-int BoardDriver::getPixelIndex(int row, int col) {
+void BoardDriver::readRawCalibrationSensors(bool (&rawState)[NUM_ROWS][NUM_COLS]) {
+  for (int row = 0; row < NUM_ROWS; row++)
+    for (int col = 0; col < NUM_COLS; col++)
+      rawState[row][col] = false;
+
+  for (int col = 0; col < NUM_COLS; col++) {
+    enableCol(col);
+    for (int row = 0; row < NUM_ROWS; row++)
+      rawState[row][col] = (digitalRead(rowPins[row]) == LOW);
+  }
+  disableAllCols();
+}
+
+void BoardDriver::setRawCalibrationLED(int pixelIndex, LedRGB color) {
+  if (pixelIndex < 0 || pixelIndex >= LED_COUNT) return;
+  strip.SetPixelColor(pixelIndex, RgbColor(color.r, color.g, color.b));
+}
+
+void BoardDriver::clearRawCalibrationLEDs(bool show) {
+  for (int pixelIndex = 0; pixelIndex < LED_COUNT; pixelIndex++)
+    strip.SetPixelColor(pixelIndex, RgbColor(0));
+  if (show)
+    showLEDs();
+}
+
+int BoardDriver::getPixelIndex(int row, int col) const {
   return ledIndexMap[row][col];
 }
 
@@ -227,9 +242,4 @@ void BoardDriver::saveLedSettings() {
   prefs.putUChar("dimMult", dimMultiplier);
   prefs.end();
   Serial.printf("LED settings saved: brightness=%d, dimMultiplier=%d\n", brightness, dimMultiplier);
-}
-
-void BoardDriver::triggerCalibration() {
-  BoardCalibration calibration(this);
-  calibration.trigger();
 }

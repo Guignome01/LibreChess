@@ -1,22 +1,21 @@
-#ifndef BOARD_MENU_H
-#define BOARD_MENU_H
+#ifndef BOARD_MENU_VIEW_H
+#define BOARD_MENU_VIEW_H
 
+#include "board/board.h"
 #include "board/core/colors.h"
-#include "board/core/state.h"
 #include "board/core/system.h"
 #include "drawable.h"
+#include "layering.h"
 
 #include <stdint.h>
 
-class BoardLayering;
-
 // ---------------------------
-// Board Menu System
+// Board Menu View (drawable primitive)
 // ---------------------------
-// Reusable menu primitive for the 8x8 LED board.
-// Items are placed freely on the grid. Selection uses two-phase
-// debounce (empty → occupied) for reliable piece-placement detection.
-// Supports orientation flipping so menus face the active player.
+// Reusable menu primitive for the 8x8 LED board, drawn through BoardLayering.
+// Items are placed freely on the grid. Selection uses two-phase debounce
+// (empty -> occupied) for reliable piece-placement detection. Supports
+// orientation flipping so menus face the active player.
 
 /// A single selectable option on the board.
 /// Coordinates are authored in white-side orientation (row 7 = rank 1 = white's back rank).
@@ -24,68 +23,52 @@ struct MenuItem {
   int8_t row;
   int8_t col;
   LedRGB color;
-  int8_t id; // Unique identifier returned on selection
+  int8_t id;  // Unique identifier returned on selection
 };
 
-/// Reusable board menu with two-phase debounce selection.
-/// All state is stack-allocated — no heap usage.
-class BoardMenu : public BoardDrawable {
+/// Reusable board menu drawable with two-phase debounce selection.
+/// All state is stack-allocated -- no heap usage.
+class MenuView : public BoardDrawable {
  public:
   static constexpr int RESULT_NONE = BoardDrawable::RESULT_NONE;
   static constexpr int RESULT_BACK = BoardDrawable::RESULT_BACK;
   static constexpr int MAX_ITEMS = 16;
 
-  BoardMenu() : system_(nullptr), layering_(nullptr), items_(nullptr), itemCount_(0),
-                flipped_(false), hasBack_(false), backRow_(0), backCol_(0) {}
-  explicit BoardMenu(BoardSystem* system, BoardLayering* layering = nullptr);
+  MenuView(BoardSystem& system, BoardLayering& layering);
 
-  // Delete copy — menus should not be duplicated
-  BoardMenu(const BoardMenu&) = delete;
-  BoardMenu& operator=(const BoardMenu&) = delete;
+  MenuView(const MenuView&) = delete;
+  MenuView& operator=(const MenuView&) = delete;
 
-  /// Set or change the board-system pointer (for two-phase init).
-  void setSystem(BoardSystem* system) { system_ = system; }
-
-  /// Set or change the visual layering subsystem used for drawing.
-  void setLayering(BoardLayering* layering) { layering_ = layering; }
-
-  /// Configure menu options. Items pointer must outlive the menu
-  /// (use constexpr file-scoped arrays). Does NOT copy the array.
+  /// Configure menu options. Items pointer must outlive the menu.
   void setItems(const MenuItem* items, uint8_t count);
 
-  /// Convenience: configure items with automatic count deduction.
   template <uint8_t N>
   void setItems(const MenuItem (&items)[N]) { setItems(items, N); }
 
   /// Designate a corner/edge square as a back button (lit with LedColors::White).
-  /// Omit for root menus that have no parent.
   void setBackButton(int8_t row, int8_t col);
 
   /// Set orientation. When true, coordinates are vertically mirrored
   /// (row' = 7 - row) so the menu faces a player on the black side.
-  /// Defaults to false (white-side / standard orientation).
   void setFlipped(bool flipped);
 
-  /// Light all menu items and back button on the board.
-  /// Runs one scheduler-owned LED update batch.
+  /// Light all menu items and back button on the persistent base layer.
   void show() override;
 
-  /// Clear all LEDs in one scheduler-owned LED update batch.
+  /// Clear the menu from the persistent base layer.
   void hide() override;
 
   /// Reset all debounce counters for a fresh selection cycle.
   void reset() override;
 
-  /// Non-blocking poll. Call after system->readSensors().
+  /// Non-blocking poll. Call after system.readSensors().
   /// Returns:
   ///   - MenuItem::id on confirmed selection (with blink feedback)
   ///   - RESULT_BACK if back button selected
   ///   - RESULT_NONE if no selection yet
   int poll() override;
 
-  /// Blocking convenience: reset() → show() → poll loop → return id.
-  /// Includes delay(SENSOR_READ_DELAY_MS) per iteration for watchdog safety.
-  /// Does NOT auto-hide — caller controls LED state after selection.
+  /// Blocking convenience: reset() -> show() -> poll loop -> return id.
   int waitForSelection();
 
  private:
@@ -95,11 +78,7 @@ class BoardMenu : public BoardDrawable {
   class SelectionDebouncer {
    public:
     explicit SelectionDebouncer(uint8_t stableCycles = DEFAULT_DEBOUNCE_CYCLES);
-
-    /// Reset counters and require a fresh empty phase before selection.
     void reset();
-
-    /// Update with current occupancy. Returns true exactly once per selection.
     bool update(bool occupied);
 
    private:
@@ -110,8 +89,8 @@ class BoardMenu : public BoardDrawable {
     bool selectionLatched_;
   };
 
-  BoardSystem* system_;
-  BoardLayering* layering_;
+  BoardSystem& system_;
+  BoardLayering& layering_;
   const MenuItem* items_;
   uint8_t itemCount_;
   bool flipped_;
@@ -123,16 +102,7 @@ class BoardMenu : public BoardDrawable {
   SelectionDebouncer states_[MAX_ITEMS + 1];
 
   LibreChess::board::BoardSquare transformSquare(int8_t row, int8_t col) const;
-
-  /// Check one square for a confirmed selection. Handles debounce,
-  /// blink feedback, and waiting for piece removal.
-  /// Returns the given id on selection, or RESULT_NONE.
   int trySelect(SelectionDebouncer& state, int8_t row, int8_t col, LedRGB color, int id);
 };
 
-/// Blocking yes/no confirmation dialog.
-/// Shows two center squares (green = yes, red = no), waits for selection.
-/// Returns true for yes, false for no.
-bool boardConfirm(BoardSystem* system, BoardLayering* layering = nullptr, bool flipped = false);
-
-#endif // BOARD_MENU_H
+#endif  // BOARD_MENU_VIEW_H

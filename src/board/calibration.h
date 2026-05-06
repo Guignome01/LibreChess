@@ -5,11 +5,23 @@
 #include <stdint.h>
 
 class BoardDriver;
+class Board;
 
-// Board-internal calibration workflow and NVS mapping persistence.
+// External board calibration mode used by application and WiFi flows.
 class BoardCalibration {
  public:
-  explicit BoardCalibration(BoardDriver* driver);
+  explicit BoardCalibration(Board& board);
+
+  void trigger();
+
+ private:
+  Board& board_;
+};
+
+// Board-internal calibration workflow and NVS mapping persistence.
+class BoardCalibrationWorkflow {
+ public:
+  explicit BoardCalibrationWorkflow(BoardDriver& driver);
 
   bool load();
   void save();
@@ -23,13 +35,15 @@ class BoardCalibration {
     UNKNOWN = 2,
   };
 
-  BoardDriver* driver_;
+  BoardDriver& driver_;
 
   void readRawSensors(bool (&rawState)[8][8]);
   bool waitForBoardEmpty(unsigned long stableMs = 500);
   bool waitForSingleRawPress(int& rawRow, int& rawCol, unsigned long stableMs = 500);
   void showCalibrationError();
-  bool calibrateAxis(Axis axis, uint8_t* axisPinsOrder, size_t pinCount, bool firstAxisSwapped);
+  bool calibrateAxis(Axis axis, bool firstAxisSwapped);
+  uint8_t axisMapping(Axis axis, int rawIndex) const;
+  void setAxisMapping(Axis axis, int rawIndex, uint8_t logicalIndex);
   const char* axisToChessRankFile(Axis axis) const;
 };
 

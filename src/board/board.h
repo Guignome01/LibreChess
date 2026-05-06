@@ -1,21 +1,62 @@
 #ifndef BOARD_H
 #define BOARD_H
 
-#include "game.h"
-#include "logger.h"
 #include "gui/selection.h"
 
-#include <atomic>
 #include <cstdint>
 #include <memory>
 
-// Public facade for physical board hardware, interaction workflows, and
-// occupancy state. This is the only board header consumed outside src/board/.
+class BoardCalibration;
+class BoardDiagnostics;
+class BoardGameplay;
+class BoardGui;
+class BoardMenu;
+class BoardServices;
+class BoardStatus;
+class BoardSystem;
+
+namespace LibreChess {
+namespace board {
+
+static constexpr int BOARD_ROWS = 8;
+static constexpr int BOARD_COLS = 8;
+static constexpr int BOARD_SQUARES = BOARD_ROWS * BOARD_COLS;
+
+/// Return whether a row/column pair is inside the physical board.
+inline constexpr bool isValidSquare(int row, int col) {
+  return row >= 0 && row < BOARD_ROWS && col >= 0 && col < BOARD_COLS;
+}
+
+/// Display-coordinate square on the physical board.
+struct BoardSquare {
+  int8_t row;
+  int8_t col;
+
+  /// Return whether this square is within the 8x8 board.
+  bool valid() const { return isValidSquare(row, col); }
+};
+
+/// Compare two physical board squares.
+inline bool operator==(BoardSquare lhs, BoardSquare rhs) {
+  return lhs.row == rhs.row && lhs.col == rhs.col;
+}
+
+/// Compare two physical board squares.
+inline bool operator!=(BoardSquare lhs, BoardSquare rhs) {
+  return !(lhs == rhs);
+}
+
+}  // namespace board
+}  // namespace LibreChess
+
+/// Public physical-board entry point. Owns the low-level board internals
+/// (BoardSystem, BoardGui) but exposes them only to a bounded friend list of
+/// board-internal workflow classes via the BoardServices facade. External
+/// firmware may construct, destroy, and configure LED settings on a Board,
+/// but never touches BoardSystem, BoardGui, BoardLayering, BoardServices,
+/// BoardFeedback, or BoardAssistance directly.
 class Board {
  public:
-  using GameSelectionMode = BoardGameSelectionMode;
-  using GameSelection = BoardGameSelection;
-
   Board();
   ~Board();
 
@@ -24,89 +65,33 @@ class Board {
   Board(Board&&) = delete;
   Board& operator=(Board&&) = delete;
 
+  /// Initialize hardware. Must be called once before any other method.
   void begin();
 
-  /// Poll sensors and update the physical occupancy transition state.
-  void tick();
-
-  /// Poll sensors and update the physical occupancy transition state.
-  void readSensors();
-
-  /// Return current physical occupancy for a logical square.
-  bool occupied(int row, int col) const;
-
-  /// Return previous physical occupancy for a logical square.
-  bool wasOccupied(int row, int col) const;
-
-  /// Return whether a piece was lifted from a square on the latest poll.
-  bool wasLifted(int row, int col) const;
-
-  /// Return whether a piece was placed on a square on the latest poll.
-  bool wasPlaced(int row, int col) const;
-
-  /// Return whether a square changed on the latest poll.
-  bool changed(int row, int col) const;
-
-  /// Return how many squares changed on the latest poll.
-  uint8_t changedCount() const;
-
-  /// Return one changed square through row/col out-params.
-  /// Returns false when the index is out of range.
-  bool changedSquare(uint8_t index, int& row, int& col) const;
-
-  /// Reset the transition baseline to the current physical occupancy.
-  void syncOccupancyBaseline();
-
-  void waitForBoardSetup(const LibreChess::Game& game, LibreChess::Log& logger);
-  void showLegalMoveHighlights(int fromRow, int fromCol, const LibreChess::MoveList& moves, const LibreChess::Game& game);
-  void showCapturePlacementPrompt(int row, int col);
-  void guideCastling(int kingFromRow, int kingFromCol, int kingToRow, int kingToCol,
-                     const LibreChess::CastlingInfo& castling, bool waitForKingCompletion,
-                     LibreChess::Log& logger);
-  void guideRemoteMoveCompletion(int fromRow, int fromCol, int toRow, int toCol,
-                                 bool isCapture, bool isEnPassant,
-                                 int enPassantCapturedPawnRow,
-                                 LibreChess::Log& logger);
-
-  void clearBoardFeedback(bool show = true);
-  void clearFeedbackSquare(int row, int col);
-  void showMoveResultFeedback(const LibreChess::MoveResult& result, int toRow, int toCol,
-                              const LibreChess::Game& game);
-  void showIllegalMoveFeedback(int row, int col);
-  void showResignProgress(int row, int col, int level, bool clearFirst = false);
-  void clearResignFeedback(int row, int col);
-  void showWinner(LibreChess::Color winnerColor);
-  void showRemoteGameEnd(char winnerColor);
-  void showErrorFeedback();
-
-  std::atomic<bool>* startThinkingStatus();
-  std::atomic<bool>* startWaitingStatus();
-  void stopStatusAnimation(std::atomic<bool>*& stopFlag);
-
-  void clearAllLEDs(bool show = true);
-  void showConnectingAnimation();
-
-  void startGameSelectionMenu();
-  void clearGameSelectionMenu();
-  GameSelection pollGameSelectionMenu();
-
-  bool confirmAction(bool flipped = false);
-  bool confirmResume(GameSelectionMode mode, bool flipped = false);
-
-  void beginDiagnostics();
-  void updateDiagnostics();
-  bool diagnosticsComplete() const;
-
+  // --- LED settings (publicly exposed so WiFi/web UI can persist them) ---
   uint8_t getBrightness() const;
   uint8_t getDimMultiplier() const;
   void setBrightness(uint8_t value);
   void setDimMultiplier(uint8_t value);
   void saveLedSettings();
-  void triggerCalibration();
 
+  /// Polling delay used by debounced sensor scans, exposed to coordinate
+  /// firmware-side timing loops with the board's sensor cadence.
   uint16_t sensorReadDelayMs() const;
 
  private:
+  // Bounded friend list: only board-internal workflow classes may reach the
+  // BoardServices facade. Anything outside this list must use the public API.
+  friend class BoardCalibration;
+  friend class BoardDiagnostics;
+  friend class BoardGameplay;
+  friend class BoardMenu;
+  friend class BoardStatus;
+
+  /// Internal facade shared by friend workflow classes. Only callers in the
+  /// friend list above may call this.
+  BoardServices& services();
+
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };

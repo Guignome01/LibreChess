@@ -4,11 +4,12 @@
 #include "colors.h"
 #include "driver.h"
 #include "scheduler.h"
-#include "state.h"
 
 #include <atomic>
 #include <stdint.h>
 #include <utility>
+
+class BoardCalibrationWorkflow;
 
 /// LED-only adapter used during batched strip updates.
 class BoardLEDBatch {
@@ -45,33 +46,11 @@ class BoardSystem {
   /// Initialize low-level hardware and the animation scheduler.
   bool begin();
 
-  /// Poll debounced sensor state from the low-level driver and refresh the
-  /// physical occupancy transition snapshot.
+  /// Poll debounced sensor state from the low-level driver.
   void readSensors();
-
-  /// Reset the transition baseline to the current physical occupancy.
-  void syncOccupancyBaseline();
 
   /// Return current physical occupancy for a logical square.
   bool occupied(int row, int col) const;
-
-  /// Return previous physical occupancy for a logical square.
-  bool wasOccupied(int row, int col) const;
-
-  /// Return whether a piece was lifted from a square on the latest poll.
-  bool wasLifted(int row, int col) const;
-
-  /// Return whether a piece was placed on a square on the latest poll.
-  bool wasPlaced(int row, int col) const;
-
-  /// Return whether a square changed on the latest poll.
-  bool changed(int row, int col) const;
-
-  /// Return how many squares changed on the latest poll.
-  uint8_t changedCount() const;
-
-  /// Return one changed square, or an invalid square when out of range.
-  LibreChess::board::BoardSquare changedSquare(uint8_t index) const;
 
   /// Run one batch of direct LED writes while exposing only LED operations to
   /// the callback.
@@ -122,8 +101,10 @@ class BoardSystem {
   /// Persist current LED settings.
   void saveLedSettings();
 
-  /// Request calibration on the next driver initialization path.
-  void triggerCalibration();
+  /// Construct a calibration workflow bound to the low-level driver.
+  /// Returned by value because BoardCalibrationWorkflow is cheap to build
+  /// and lifetimes are tied to one calibration cycle.
+  BoardCalibrationWorkflow makeCalibrationWorkflow();
 
   /// Return the expected polling delay used by the debounced sensor scan.
   uint16_t sensorReadDelayMs() const;
@@ -131,11 +112,9 @@ class BoardSystem {
  private:
   BoardDriver driver_;
   BoardScheduler scheduler_;
-  LibreChess::board::BoardState state_;
 
   void beginLEDBatch();
   void endLEDBatch();
-  void refreshState(bool initializeBaseline);
 };
 
 #endif  // BOARD_SYSTEM_H

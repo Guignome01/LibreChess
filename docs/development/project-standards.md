@@ -22,7 +22,7 @@ Formatting is enforced via `.clang-format` at the project root (Google style bas
 
 Each class owns a single responsibility and never crosses into another's domain:
 
-- `Board` is the firmware-facing physical-board facade and the only board header consumed outside `src/board/`; it exposes semantic operations and getters rather than board-local constants, colors, menu IDs, or helper types. `BoardGui` is the internal visual coordinator for feedback, assistance, diagnostics, menus, modal stack flow, and `BoardLayering`. `BoardLayering` owns persistent base + overlay visual composition. `BoardSystem` is the internal hardware/state/settings/scheduler service boundary consumed by board-local modules. `BoardDriver` handles low-level hardware interaction (LEDs, sensors, settings); `BoardScheduler` owns animation queue concurrency; `BoardCalibration` owns the calibration workflow; `BoardAssistance` owns physical chess guidance. No board module mutates chess state.
+- `Board` is the shared physical-board base layer for capabilities that are true in every workflow: lifecycle, root/resume menus, display clearing/status primitives, LED settings, timing, and restricted access to `BoardSystem`/`BoardGui` for board-owned workflows. `BoardGameplay`, `BoardDiagnostics`, and `BoardCalibration` are purpose-specific workflows composed around that base and imported directly for their use case. `BoardGui` is the internal visual coordinator for feedback, assistance, menus, modal stack flow, and `BoardLayering`. `BoardLayering` owns persistent base + overlay visual composition. `BoardSystem` is the internal hardware/settings/scheduler service boundary consumed by board-local modules. `BoardDriver` handles low-level hardware interaction (LEDs, sensors, settings); `BoardScheduler` owns animation queue concurrency; `BoardGameplay` owns physical chess interaction transitions. No board module mutates chess state.
 - `movegen`/`rules` namespaces implement chess rules and move generation. No hardware access, no network calls.
 - `WiFiManagerESP32` manages WiFi, the web server, and API endpoints. Doesn't touch the board hardware directly.
 - `History` + concrete storage backends such as `LittleFSStorage` own game persistence. Don't know about sensors or LEDs.
@@ -47,7 +47,7 @@ New features should build on existing infrastructure. For example, `LichessProvi
 - Use `waitForAnimationQueueDrain()` inside board-local code as a barrier before writing LEDs directly.
 - Colors in `LedColors` have fixed semantic meanings (see [architecture.md](architecture.md#color-semantics)). Use consistently.
 
-- Outside `src/board/`, use facade getters such as `Board::sensorReadDelayMs()` instead of board-local macros such as `SENSOR_READ_DELAY_MS`.
+- Outside `src/board/`, use `Board::sensorReadDelayMs()` instead of board-local macros such as `SENSOR_READ_DELAY_MS`.
 
 ## ESP32 Patterns
 
@@ -87,7 +87,7 @@ All HTML pages call `Api.*` methods. No page contains raw `fetch()` calls to API
 - **Tests guard correctness** — never modify a test to make it pass. If a test fails, fix the production code.
 - **Tests must stay in sync** — when changing chess logic in `lib/core/`, update or add tests in the same change.
 - **Always test changes** — every logic change must be validated by running the test suite (`pio test -e native`) before committing.
-- **Core library boundary** — only code in `lib/core/` (no Arduino dependencies) is testable natively. Arduino/ESP32 utilities live in `src/system_utils.*`.
+- **Core library boundary** — only code in `lib/core/` (no Arduino dependencies) is testable natively. Arduino/ESP32 utilities live in `src/shared/utils.*`.
 - **Board setup** — tests that call `getPossibleMoves()` must always have both kings on the board (the engine filters moves that leave the king in check, and returns no moves if no king is found).
 
 For details on test architecture and suites, see [project-structure.md — Unit Tests](project-structure.md#unit-tests-test).
