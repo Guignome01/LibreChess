@@ -1,15 +1,18 @@
-#ifndef BOARD_SYSTEM_H
-#define BOARD_SYSTEM_H
+#ifndef BOARD_CORE_CONTROLLER_H
+#define BOARD_CORE_CONTROLLER_H
 
-#include "colors.h"
-#include "driver.h"
-#include "scheduler.h"
+#include "board/core/driver.h"
+#include "board/core/scheduler.h"
+#include "board/gui/assistance.h"
+#include "board/gui/feedback.h"
+#include "board/gui/layering.h"
+#include "board/gui/stack.h"
 
 #include <atomic>
 #include <stdint.h>
 #include <utility>
 
-class BoardCalibrationWorkflow;
+class BoardCalibration;
 
 /// LED-only adapter used during batched strip updates.
 class BoardLEDBatch {
@@ -36,20 +39,24 @@ class BoardLEDBatch {
   BoardDriver& driver_;
 };
 
-/// Board-internal service boundary for low-level driver and scheduler operations.
-class BoardSystem {
+/// Board-internal runtime owner shared by all board workflows. External
+/// firmware consumes the public Board package root instead of this class.
+class BoardController {
  public:
   using LEDWriter = BoardLEDBatch;
 
-  BoardSystem();
+  BoardController();
 
-  /// Initialize low-level hardware and the animation scheduler.
+  BoardController(const BoardController&) = delete;
+  BoardController& operator=(const BoardController&) = delete;
+
+  /// Initialize low-level hardware, startup calibration, and scheduler resources.
   bool begin();
 
-  /// Poll debounced sensor state from the low-level driver.
+  /// Poll debounced sensors.
   void readSensors();
 
-  /// Return current physical occupancy for a logical square.
+  /// Return current debounced occupancy for a logical square.
   bool occupied(int row, int col) const;
 
   /// Run one batch of direct LED writes while exposing only LED operations to
@@ -62,19 +69,10 @@ class BoardSystem {
     endLEDBatch();
   }
 
-  /// Clear all LEDs through a scheduler-owned direct batch.
-  void clearAllLEDs(bool show = true);
-
-  /// Set one square LED through a scheduler-owned direct batch.
-  void setSquareLED(int row, int col, LedRGB color);
-
-  /// Flush LED changes through a scheduler-owned direct batch.
-  void showLEDs();
-
-  /// Queue one prebuilt fire-and-forget animation job.
+  /// Queue one fire-and-forget animation.
   bool runAnimation(const AnimationJob& job);
 
-  /// Execute one prebuilt animation immediately under the LED mutex.
+  /// Run one animation immediately under the LED mutex.
   void runAnimationNow(const AnimationJob& job);
 
   /// Queue a cancellable animation type and return its stop flag.
@@ -83,7 +81,7 @@ class BoardSystem {
   /// Stop a cancellable animation and wait until its worker finishes.
   void stopAndWaitForAnimation(std::atomic<bool>*& stopFlag);
 
-  /// Wait until all queued animation work before this call has completed.
+  /// Wait until queued animation work before this call has completed.
   void waitForAnimationQueueDrain();
 
   /// Return configured LED strip brightness.
@@ -92,29 +90,48 @@ class BoardSystem {
   /// Return configured dark-square dim multiplier.
   uint8_t getDimMultiplier() const;
 
-  /// Set LED strip brightness under the scheduler-owned LED mutex.
+  /// Set LED strip brightness.
   void setBrightness(uint8_t value);
 
-  /// Set the dim multiplier under the scheduler-owned LED mutex.
+  /// Set dark-square dim multiplier.
   void setDimMultiplier(uint8_t value);
 
   /// Persist current LED settings.
   void saveLedSettings();
 
-  /// Construct a calibration workflow bound to the low-level driver.
-  /// Returned by value because BoardCalibrationWorkflow is cheap to build
-  /// and lifetimes are tied to one calibration cycle.
-  BoardCalibrationWorkflow makeCalibrationWorkflow();
-
-  /// Return the expected polling delay used by the debounced sensor scan.
+  /// Return the debounced sensor polling cadence.
   uint16_t sensorReadDelayMs() const;
 
+  /// Clear all persistent board visuals.
+  void clearAllLEDs(bool show = true);
+
+  /// Run the synchronous WiFi-connecting animation.
+  void showConnectingAnimation();
+
+  /// Persistent visual layer compositor.
+  BoardLayering& layering();
+
+  /// Mandatory status/outcome visual feedback.
+  BoardFeedback& feedback();
+
+  /// Optional physical guidance visuals.
+  BoardAssistance& assistance();
+
+  /// Modal board drawable stack.
+  BoardStack& stack();
+
  private:
+  friend class BoardCalibration;
+
   BoardDriver driver_;
   BoardScheduler scheduler_;
+  BoardLayering layering_;
+  BoardFeedback feedback_;
+  BoardAssistance assistance_;
+  BoardStack stack_;
 
   void beginLEDBatch();
   void endLEDBatch();
 };
 
-#endif  // BOARD_SYSTEM_H
+#endif  // BOARD_CORE_CONTROLLER_H

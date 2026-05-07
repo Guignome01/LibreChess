@@ -3,22 +3,20 @@
 
 #include "gui/menu.h"
 #include "gui/selection.h"
+#include "workflow.h"
 
 #include <stdint.h>
-
-class Board;
-class BoardServices;
 
 /// External board workflow that owns the physical-board selection menu flow
 /// (game/difficulty/color), plus modal yes/no and resume confirmation prompts.
 /// `BoardConfirm` is folded in as a method here because it is structurally a
 /// modal menu prompt rather than a separate workflow.
-class BoardMenu {
+class BoardMenu : private BoardWorkflow {
  public:
   using GameSelectionMode = BoardGameSelectionMode;
   using GameSelection = BoardGameSelection;
 
-  explicit BoardMenu(Board& board);
+  explicit BoardMenu(BoardController& board);
 
   BoardMenu(const BoardMenu&) = delete;
   BoardMenu& operator=(const BoardMenu&) = delete;
@@ -44,7 +42,6 @@ class BoardMenu {
   bool confirmResume(GameSelectionMode mode, bool flipped = false);
 
  private:
-  BoardServices& services_;
   MenuView gameMenu_;
   MenuView botDifficultyMenu_;
   MenuView botColorMenu_;

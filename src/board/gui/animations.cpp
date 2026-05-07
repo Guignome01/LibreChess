@@ -1,6 +1,6 @@
 #include "animations.h"
 
-#include "board/core/system.h"
+#include "board/core/controller.h"
 
 #include <Arduino.h>
 #include <freertos/FreeRTOS.h>

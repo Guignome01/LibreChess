@@ -81,7 +81,7 @@ The calibration produces three mappings stored in NVS:
 - **Row/column mapping tables** — physical pin/output → logical row/column index
 - **LED index map** — logical (row, col) coordinate → physical pixel index
 
-`BoardCalibrationWorkflow` owns the serial-guided workflow and writes the mapping to NVS through the board system startup path. `BoardDriver` applies that mapping for every sensor read and LED write operation throughout normal operation.
+`BoardCalibration` owns the serial-guided workflow and writes the mapping to NVS through the board system startup path. External callers use the same class only to trigger recalibration. `BoardDriver` applies that mapping for every sensor read and LED write operation throughout normal operation.
 
 ## Troubleshooting
 

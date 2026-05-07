@@ -4,11 +4,11 @@
 #include "animations.h"
 #include "board/board.h"
 #include "board/core/colors.h"
-#include "board/core/system.h"
 
 #include <stdint.h>
 #include <utility>
 
+class BoardController;
 class BoardLayering;
 
 /// Board-internal visual layer selected by BoardLayerWriter.
@@ -45,8 +45,8 @@ class BoardLayering {
  public:
   using LayerWriter = BoardLayerWriter;
 
-  /// Bind layer rendering to the board service boundary.
-  explicit BoardLayering(BoardSystem& system);
+  /// Bind layer rendering to the shared board controller.
+  explicit BoardLayering(BoardController& board);
 
   BoardLayering(const BoardLayering&) = delete;
   BoardLayering& operator=(const BoardLayering&) = delete;
@@ -109,7 +109,7 @@ class BoardLayering {
  private:
   friend class BoardLayerWriter;
 
-  BoardSystem& system_;
+  BoardController& board_;
   LedRGB base_[LibreChess::board::BOARD_ROWS][LibreChess::board::BOARD_COLS];
   LedRGB overlay_[LibreChess::board::BOARD_ROWS][LibreChess::board::BOARD_COLS];
   bool overlayEnabled_[LibreChess::board::BOARD_ROWS][LibreChess::board::BOARD_COLS];

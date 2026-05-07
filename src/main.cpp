@@ -1,9 +1,6 @@
 #include "board/board.h"
-#include "board/calibration.h"
 #include "board/diagnostics.h"
-#include "board/gameplay.h"
 #include "board/menu.h"
-#include "board/status.h"
 #include "game_mode/player_mode.h"
 #include "game_mode/bot_mode.h"
 #include "engine/stockfish/stockfish_provider.h"
@@ -39,14 +36,9 @@ String botEngine = "stockfish";
 LichessConfig lichessConfig = {""};
 
 Board physicalBoard;
-BoardGameplay boardGameplay(physicalBoard);
-BoardDiagnostics boardDiagnostics(physicalBoard);
-BoardCalibration boardCalibration(physicalBoard);
-BoardMenu boardMenu(physicalBoard);
-BoardStatus boardStatus(physicalBoard);
 SerialLogger logger;
 LittleFSStorage storage(&logger);
-WiFiManagerESP32 wifiManager(&physicalBoard, &boardStatus, &boardCalibration, &storage);
+WiFiManagerESP32 wifiManager(&physicalBoard, &storage);
 Game chess(&storage, &wifiManager, &logger);
 GameMode* activeGame = nullptr;
 
@@ -141,7 +133,7 @@ void checkForResumableGame() {
   Serial.printf("  Found: %s game — confirm resume?\n", modeName);
   Serial.println("  Green = Resume, Red = Discard");
 
-  if (boardMenu.confirmResume(confirmMode, flipped)) {
+  if (physicalBoard.menu().confirmResume(confirmMode, flipped)) {
     Serial.println("  -> Player chose to RESUME");
     switch (resumeMode) {
       case GameModeId::PLAYER:
@@ -211,14 +203,14 @@ void loop() {
     }
     if (selectedMode > 0) {
       modeInitialized = false;
-      boardMenu.clear();
+      physicalBoard.menu().clear();
       wifiManager.resetGameSelection();
-      boardStatus.clearAllLEDs();
+      physicalBoard.clearAllLEDs();
     }
   }
 
   if (currentMode == AppMode::SELECTION) {
-    BoardMenu::GameSelection selection = boardMenu.poll();
+    BoardMenu::GameSelection selection = physicalBoard.menu().poll();
     if (selection.hasSelection())
       handleGameSelection(selection);
     delay(physicalBoard.sensorReadDelayMs());
@@ -279,10 +271,10 @@ void loop() {
       }
       break;
     case AppMode::BOARD_DIAGNOSTICS:
-      if (boardDiagnostics.isComplete())
+      if (physicalBoard.diagnostics().isComplete())
         enterGameSelection();
       else
-        boardDiagnostics.update();
+        physicalBoard.diagnostics().update();
       break;
     default:
       enterGameSelection();
@@ -295,7 +287,7 @@ void loop() {
 void enterGameSelection() {
   currentMode = AppMode::SELECTION;
   modeInitialized = false;
-  boardMenu.start();
+  physicalBoard.menu().start();
   Serial.println("=============== Game Selection Mode ===============");
   Serial.println("Four LEDs are lit in the center of the board:");
   Serial.println("  Blue:   Chess Moves (Human vs Human)");
@@ -351,7 +343,7 @@ void initializeSelectedMode(AppMode mode) {
   switch (mode) {
     case AppMode::CHESS_MOVES:
       Serial.println("Starting 'Chess Moves'...");
-      activeGame = new PlayerMode(&boardGameplay, &wifiManager, &chess, &logger);
+      activeGame = new PlayerMode(&physicalBoard.gameplay(), &wifiManager, &chess, &logger);
       activeGame->begin();
       break;
     case AppMode::BOT: {
@@ -362,18 +354,18 @@ void initializeSelectedMode(AppMode mode) {
       } else {
         provider = new StockfishProvider(botDifficultyLevel, playerColor, &logger);
       }
-      activeGame = new BotMode(&boardGameplay, &wifiManager, &chess, provider, &logger);
+      activeGame = new BotMode(&physicalBoard.gameplay(), &wifiManager, &chess, provider, &logger);
       activeGame->begin();
       break;
     }
     case AppMode::LICHESS:
       Serial.println("Starting 'Lichess Mode'...");
-      activeGame = new BotMode(&boardGameplay, &wifiManager, &chess, new LichessProvider(lichessConfig, &logger), &logger);
+      activeGame = new BotMode(&physicalBoard.gameplay(), &wifiManager, &chess, new LichessProvider(lichessConfig, &logger), &logger);
       activeGame->begin();
       break;
     case AppMode::BOARD_DIAGNOSTICS:
       Serial.println("Starting 'Sensor Test'...");
-      boardDiagnostics.begin();
+      physicalBoard.diagnostics().begin();
       break;
     default:
       enterGameSelection();

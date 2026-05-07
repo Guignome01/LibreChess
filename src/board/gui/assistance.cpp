@@ -1,22 +1,23 @@
 #include "assistance.h"
 
 #include "animations.h"
+#include "board/core/controller.h"
 #include "layering.h"
 
 #include <Arduino.h>
 
 namespace {
 
-void waitForSquareEmpty(BoardSystem& system, int row, int col) {
-  while (system.occupied(row, col)) {
-    system.readSensors();
+void waitForSquareEmpty(BoardController& board, int row, int col) {
+  while (board.occupied(row, col)) {
+    board.readSensors();
     delay(SENSOR_READ_DELAY_MS);
   }
 }
 
-void waitForSquareOccupied(BoardSystem& system, int row, int col) {
-  while (!system.occupied(row, col)) {
-    system.readSensors();
+void waitForSquareOccupied(BoardController& board, int row, int col) {
+  while (!board.occupied(row, col)) {
+    board.readSensors();
     delay(SENSOR_READ_DELAY_MS);
   }
 }
@@ -39,21 +40,21 @@ void showDestinationPrompt(LEDWriter& leds, int row, int col, LedRGB color) {
 
 }  // namespace
 
-BoardAssistance::BoardAssistance(BoardSystem& system, BoardLayering& layering, BoardAssistanceLevel level)
-    : system_(system), layering_(layering), level_(level) {}
+BoardAssistance::BoardAssistance(BoardController& board, BoardLayering& layering, BoardAssistanceLevel level)
+  : board_(board), layering_(layering), level_(level) {}
 
 void BoardAssistance::waitForSetup(const LibreChess::Game& game, LibreChess::Log& logger) {
   logger.info("Set up the board in the required position...");
 
   bool allCorrect = false;
   while (!allCorrect) {
-    system_.readSensors();
+    board_.readSensors();
 
     layering_.replaceBase([&](BoardLayering::LayerWriter& leds) {
       allCorrect = true;
       game.forEachSquare([&](int row, int col, LibreChess::Piece piece) {
         bool shouldHavePiece = !LibreChess::Game::isEmptySquare(piece);
-        bool hasPiece = system_.occupied(row, col);
+        bool hasPiece = board_.occupied(row, col);
         if (shouldHavePiece != hasPiece) allCorrect = false;
         if (shouldHavePiece && !hasPiece)
           leds.setSquareLED(row, col, LedColors::forPieceColor(LibreChess::Game::pieceColor(piece)));
@@ -70,13 +71,13 @@ void BoardAssistance::waitForSetup(const LibreChess::Game& game, LibreChess::Log
 
   logger.info("Board setup complete! Game starting...");
   layering_.clearBase(false);
-  system_.runAnimation(AnimationJob::firework());
-  system_.readSensors();
+  board_.runAnimation(AnimationJob::firework());
+  board_.readSensors();
 }
 
 void BoardAssistance::showLegalMoveHighlights(int fromRow, int fromCol, const LibreChess::MoveList& moves,
                                               const LibreChess::Game& game) {
-  system_.waitForAnimationQueueDrain();
+  board_.waitForAnimationQueueDrain();
 
   if (level_ != BoardAssistanceLevel::LEGAL_MOVES) {
     layering_.clearBase();
@@ -102,7 +103,7 @@ void BoardAssistance::showLegalMoveHighlights(int fromRow, int fromCol, const Li
 }
 
 void BoardAssistance::showCapturePlacementPrompt(int row, int col) {
-  system_.runAnimation(AnimationJob::blink(row, col, LedColors::Red, 1, false));
+  board_.runAnimation(AnimationJob::blink(row, col, LedColors::Red, 1, false));
 }
 
 void BoardAssistance::guideCastling(int kingFromRow, int kingFromCol, int kingToRow, int kingToCol,
@@ -118,11 +119,11 @@ void BoardAssistance::guideCastling(int kingFromRow, int kingFromCol, int kingTo
     layering_.replaceBase([&](BoardLayering::LayerWriter& leds) {
       showMovePrompt(leds, kingFromRow, kingFromCol, kingToRow, kingToCol, LedColors::White);
     });
-    waitForSquareEmpty(system_, kingFromRow, kingFromCol);
+    waitForSquareEmpty(board_, kingFromRow, kingFromCol);
     layering_.replaceBase([&](BoardLayering::LayerWriter& leds) {
       showDestinationPrompt(leds, kingToRow, kingToCol, LedColors::White);
     });
-    waitForSquareOccupied(system_, kingToRow, kingToCol);
+    waitForSquareOccupied(board_, kingToRow, kingToCol);
     layering_.clearBase();
   }
 
@@ -138,11 +139,11 @@ void BoardAssistance::guideCastling(int kingFromRow, int kingFromCol, int kingTo
   layering_.replaceBase([&](BoardLayering::LayerWriter& leds) {
     showMovePrompt(leds, rookFromRow, rookFromCol, rookToRow, rookToCol, LedColors::White);
   });
-  waitForSquareEmpty(system_, rookFromRow, rookFromCol);
+  waitForSquareEmpty(board_, rookFromRow, rookFromCol);
   layering_.replaceBase([&](BoardLayering::LayerWriter& leds) {
     showDestinationPrompt(leds, rookToRow, rookToCol, LedColors::White);
   });
-  waitForSquareOccupied(system_, rookToRow, rookToCol);
+  waitForSquareOccupied(board_, rookToRow, rookToCol);
   layering_.clearBase();
 }
 
@@ -163,23 +164,23 @@ void BoardAssistance::guideRemoteMoveCompletion(int fromRow, int fromCol, int to
   logger.info("Waiting for you to complete the remote move...");
 
   while (!moveCompleted) {
-    system_.readSensors();
+    board_.readSensors();
 
     if (isCapture && !capturedPieceRemoved) {
       int captureCheckRow = isEnPassant ? enPassantCapturedPawnRow : toRow;
-      if (!system_.occupied(captureCheckRow, toCol)) {
+      if (!board_.occupied(captureCheckRow, toCol)) {
         capturedPieceRemoved = true;
         logger.info(isEnPassant ? "En passant captured pawn removed, now complete the move..."
                                 : "Captured piece removed, now complete the move...");
       }
     }
 
-    if (!piecePickedUp && !system_.occupied(fromRow, fromCol)) {
+    if (!piecePickedUp && !board_.occupied(fromRow, fromCol)) {
       piecePickedUp = true;
       logger.info("Piece picked up, now place it on the destination...");
     }
 
-    if (piecePickedUp && system_.occupied(toRow, toCol))
+    if (piecePickedUp && board_.occupied(toRow, toCol))
       if (!isCapture || capturedPieceRemoved) {
         moveCompleted = true;
         logger.info("Move completed on physical board!");

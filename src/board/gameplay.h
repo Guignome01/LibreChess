@@ -2,14 +2,13 @@
 #define BOARD_GAMEPLAY_H
 
 #include "board.h"
-#include "gameplay_snapshot.h"
+#include "core/snapshot.h"
 #include "game.h"
 #include "logger.h"
+#include "workflow.h"
 
 #include <atomic>
 #include <stdint.h>
-
-class BoardServices;
 
 /// Result of polling the physical board for a player interaction.
 enum class BoardGameplayResult : uint8_t {
@@ -28,13 +27,13 @@ struct BoardGameplayMove {
 };
 
 /// Board-owned physical chess interaction mode shared by firmware game modes.
-/// All low-level hardware/visual access flows through BoardServices, which is
-/// the only board internal a workflow ever sees. Occupancy transitions are
-/// tracked in an OccupancySnapshot helper so this class stays focused on
-/// interpreting transitions as chess intent.
-class BoardGameplay {
+/// All low-level hardware/visual access flows through the friend-only Board
+/// surface. Physical occupancy transitions are tracked in a reusable board-core
+/// snapshot so this class stays focused on interpreting transitions as chess
+/// intent.
+class BoardGameplay : private BoardWorkflow {
  public:
-  explicit BoardGameplay(Board& board);
+  explicit BoardGameplay(BoardController& board);
 
   /// Poll sensors and refresh gameplay-owned physical transition state.
   void readSensors();
@@ -79,8 +78,7 @@ class BoardGameplay {
   static constexpr unsigned long RESIGN_HOLD_MS = 3000;
   static constexpr unsigned long RESIGN_LIFT_WINDOW_MS = 1000;
 
-  BoardServices& services_;
-  OccupancySnapshot snapshot_;
+  BoardSnapshot<LibreChess::board::BOARD_ROWS, LibreChess::board::BOARD_COLS> snapshot_;
 
   bool continueResignGesture(int row, int col, LibreChess::Color color, LibreChess::Log& logger);
 };

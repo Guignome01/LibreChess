@@ -1,5 +1,7 @@
 #include "layering.h"
 
+#include "board/core/controller.h"
+
 BoardLayerWriter::BoardLayerWriter(BoardLayering& layering, BoardLayerTarget target)
     : layering_(layering), target_(target), rendered_(false) {}
 
@@ -17,7 +19,7 @@ void BoardLayerWriter::showLEDs() {
   rendered_ = true;
 }
 
-BoardLayering::BoardLayering(BoardSystem& system) : system_(system), base_{}, overlay_{}, overlayEnabled_{} {
+BoardLayering::BoardLayering(BoardController& board) : board_(board), base_{}, overlay_{}, overlayEnabled_{} {
   clearBaseFrame();
   clearOverlayFrame();
 }
@@ -51,7 +53,7 @@ void BoardLayering::clearOverlaySquare(int row, int col, bool show) {
 }
 
 void BoardLayering::render() {
-  system_.batchLEDs([&](BoardSystem::LEDWriter& leds) {
+  board_.batchLEDs([&](BoardController::LEDWriter& leds) {
     for (int row = 0; row < LibreChess::board::BOARD_ROWS; ++row) {
       for (int col = 0; col < LibreChess::board::BOARD_COLS; ++col) {
         LedRGB color = overlayEnabled_[row][col] ? overlay_[row][col] : base_[row][col];
@@ -63,9 +65,9 @@ void BoardLayering::render() {
 }
 
 void BoardLayering::runTemporaryAnimation(const AnimationJob& job) {
-  system_.waitForAnimationQueueDrain();
-  if (system_.runAnimation(job))
-    system_.waitForAnimationQueueDrain();
+  board_.waitForAnimationQueueDrain();
+  if (board_.runAnimation(job))
+    board_.waitForAnimationQueueDrain();
   render();
 }
 

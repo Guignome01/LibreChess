@@ -1,6 +1,7 @@
 #include "feedback.h"
 
 #include "animations.h"
+#include "board/core/controller.h"
 #include "layering.h"
 
 namespace {
@@ -9,8 +10,8 @@ static constexpr float RESIGN_BRIGHTNESS_LEVELS[] = {0.25f, 0.50f, 0.75f, 1.0f};
 
 }  // namespace
 
-BoardFeedback::BoardFeedback(BoardSystem& system, BoardLayering& layering)
-    : system_(system), layering_(layering) {}
+BoardFeedback::BoardFeedback(BoardController& board, BoardLayering& layering)
+  : board_(board), layering_(layering) {}
 
 void BoardFeedback::clearBoard(bool show) {
   layering_.clearAll(show);
@@ -25,20 +26,20 @@ void BoardFeedback::showMoveResultFeedback(const LibreChess::MoveResult& result,
   layering_.clearAll(false);
 
   if (result.isCapture())
-    system_.runAnimation(AnimationJob::capture(toRow, toCol));
+    board_.runAnimation(AnimationJob::capture(toRow, toCol));
   else
     confirmSquareCompletion(toRow, toCol);
 
   if (result.isPromotion())
-    system_.runAnimation(AnimationJob::promotion(toCol));
+    board_.runAnimation(AnimationJob::promotion(toCol));
 
   if (result.gameResult == LibreChess::GameResult::CHECKMATE) {
-    system_.runAnimation(AnimationJob::firework(LedColors::forWinner(result.winnerColor)));
+    board_.runAnimation(AnimationJob::firework(LedColors::forWinner(result.winnerColor)));
   } else if (result.gameResult != LibreChess::GameResult::IN_PROGRESS) {
-    system_.runAnimation(AnimationJob::firework(LedColors::Cyan));
+    board_.runAnimation(AnimationJob::firework(LedColors::Cyan));
   } else if (result.isCheck()) {
     LibreChess::Color turn = game.sideToMove();
-    system_.runAnimation(
+    board_.runAnimation(
         AnimationJob::blink(game.kingRow(turn), game.kingCol(turn), LedColors::Yellow, 3, true, true));
   }
 }
@@ -64,12 +65,12 @@ void BoardFeedback::clearResignFeedback(int row, int col) {
 
 void BoardFeedback::showWinner(LibreChess::Color winnerColor) {
   layering_.clearAll(false);
-  system_.runAnimation(AnimationJob::firework(LedColors::forPieceColor(winnerColor)));
+  board_.runAnimation(AnimationJob::firework(LedColors::forPieceColor(winnerColor)));
 }
 
 void BoardFeedback::showRemoteGameEnd(char winnerColor) {
   layering_.clearAll(false);
-  system_.runAnimation(AnimationJob::firework(LedColors::forWinner(winnerColor)));
+  board_.runAnimation(AnimationJob::firework(LedColors::forWinner(winnerColor)));
 }
 
 void BoardFeedback::showError() {
@@ -77,20 +78,20 @@ void BoardFeedback::showError() {
 }
 
 std::atomic<bool>* BoardFeedback::startThinking() {
-  system_.waitForAnimationQueueDrain();
-  return system_.startAnimation(AnimationType::THINKING);
+  board_.waitForAnimationQueueDrain();
+  return board_.startAnimation(AnimationType::THINKING);
 }
 
 std::atomic<bool>* BoardFeedback::startWaiting() {
-  system_.waitForAnimationQueueDrain();
-  return system_.startAnimation(AnimationType::WAITING);
+  board_.waitForAnimationQueueDrain();
+  return board_.startAnimation(AnimationType::WAITING);
 }
 
 void BoardFeedback::stopAnimation(std::atomic<bool>*& stopFlag) {
-  system_.stopAndWaitForAnimation(stopFlag);
+  board_.stopAndWaitForAnimation(stopFlag);
   layering_.render();
 }
 
 void BoardFeedback::confirmSquareCompletion(int row, int col) {
-  system_.runAnimation(AnimationJob::blink(row, col, LedColors::Green, 1));
+  board_.runAnimation(AnimationJob::blink(row, col, LedColors::Green, 1));
 }

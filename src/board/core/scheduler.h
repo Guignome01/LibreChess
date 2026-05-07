@@ -10,7 +10,7 @@
 #include <freertos/task.h>
 
 class BoardDriver;
-class BoardSystem;
+class BoardController;
 
 /// Board-internal scheduler for asynchronous LED animation execution.
 class BoardScheduler {
@@ -36,7 +36,7 @@ class BoardScheduler {
   void waitForAnimationQueueDrain();
 
  private:
-  friend class BoardSystem;
+  friend class BoardController;
 
   BoardDriver* driver_;
   QueueHandle_t queue_;

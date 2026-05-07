@@ -2,20 +2,18 @@
 #define BOARD_DIAGNOSTICS_H
 
 #include "board.h"
-
-class BoardServices;
+#include "workflow.h"
 
 /// Board-owned diagnostics mode for validating physical sensor coverage.
-class BoardDiagnostics {
+class BoardDiagnostics : private BoardWorkflow {
  public:
-  explicit BoardDiagnostics(Board& board);
+  explicit BoardDiagnostics(BoardController& board);
 
   void begin();
   void update();
   bool isComplete() const { return complete_; }
 
  private:
-  BoardServices& services_;
   bool visited_[LibreChess::board::BOARD_ROWS][LibreChess::board::BOARD_COLS];
   bool complete_;
   uint8_t visitedCount_;

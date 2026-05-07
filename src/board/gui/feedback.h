@@ -2,19 +2,19 @@
 #define BOARD_FEEDBACK_H
 
 #include "board/core/colors.h"
-#include "board/core/system.h"
 #include "game.h"
 
 #include <atomic>
 
+class BoardController;
 class BoardLayering;
 
 /// Board-internal visual feedback for move outcomes, status, and errors.
 /// All persistent rendering goes through BoardLayering; one-shot animations
-/// go through BoardSystem's animation submission API.
+/// go through BoardController's animation submission API.
 class BoardFeedback {
  public:
-  BoardFeedback(BoardSystem& system, BoardLayering& layering);
+  BoardFeedback(BoardController& board, BoardLayering& layering);
 
   void clearBoard(bool show = true);
   void clearSquare(int row, int col);
@@ -32,7 +32,7 @@ class BoardFeedback {
   void stopAnimation(std::atomic<bool>*& stopFlag);
 
  private:
-  BoardSystem& system_;
+  BoardController& board_;
   BoardLayering& layering_;
 
   void confirmSquareCompletion(int row, int col);

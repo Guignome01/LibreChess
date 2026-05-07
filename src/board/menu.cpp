@@ -1,10 +1,10 @@
 #include "menu.h"
 
-#include "board.h"
 #include "config.h"
+#include "core/controller.h"
 #include "core/colors.h"
 #include "gui/animations.h"
-#include "services.h"
+#include "gui/stack.h"
 
 #include <Arduino.h>
 
@@ -28,11 +28,11 @@ LedRGB resumeIndicatorColor(BoardGameSelectionMode mode) {
 
 }  // namespace
 
-BoardMenu::BoardMenu(Board& board)
-    : services_(board.services()),
-      gameMenu_(services_.system(), services_.layering()),
-      botDifficultyMenu_(services_.system(), services_.layering()),
-      botColorMenu_(services_.system(), services_.layering()),
+BoardMenu::BoardMenu(BoardController& board)
+    : BoardWorkflow(board),
+  gameMenu_(board, board.layering()),
+  botDifficultyMenu_(board, board.layering()),
+  botColorMenu_(board, board.layering()),
       pendingBotDifficulty_(4) {
   configureMenus(gameMenu_, botDifficultyMenu_, botColorMenu_);
 }
@@ -40,18 +40,18 @@ BoardMenu::BoardMenu(Board& board)
 void BoardMenu::start() {
   clear();
   pendingBotDifficulty_ = 4;
-  services_.stack().push(&gameMenu_);
+  board().stack().push(&gameMenu_);
 }
 
 void BoardMenu::clear() {
-  services_.stack().clear();
+  board().stack().clear();
 }
 
 BoardMenu::GameSelection BoardMenu::poll() {
-  services_.readSensors();
+  board().readSensors();
 
   GameSelection selection;
-  int result = services_.stack().poll();
+  int result = board().stack().poll();
   if (result == BoardDrawable::RESULT_NONE || result == BoardDrawable::RESULT_BACK)
     return selection;
 
@@ -61,7 +61,7 @@ BoardMenu::GameSelection BoardMenu::poll() {
       clear();
       return selection;
     case MenuId::BOT:
-      services_.stack().push(&botDifficultyMenu_);
+      board().stack().push(&botDifficultyMenu_);
       return selection;
     case MenuId::LICHESS:
       selection.mode = GameSelectionMode::LICHESS;
@@ -80,7 +80,7 @@ BoardMenu::GameSelection BoardMenu::poll() {
     case MenuId::DIFF_7:
     case MenuId::DIFF_8:
       pendingBotDifficulty_ = static_cast<uint8_t>(result - MenuId::DIFF_1 + 1);
-      services_.stack().push(&botColorMenu_);
+      board().stack().push(&botColorMenu_);
       return selection;
     case MenuId::PLAY_WHITE:
       selection.mode = GameSelectionMode::BOT;
@@ -115,14 +115,14 @@ bool BoardMenu::confirmAction(bool flipped) {
       {4, 4, LedColors::Red, 0},    // No  -- e4
   };
 
-  MenuView prompt(services_.system(), services_.layering());
+  MenuView prompt(board(), board().layering());
   prompt.setItems(confirmItems, 2);
   prompt.setFlipped(flipped);
   return prompt.waitForSelection() == 1;
 }
 
 bool BoardMenu::confirmResume(GameSelectionMode mode, bool flipped) {
-  services_.runAnimation(AnimationJob::blink(3, 3, resumeIndicatorColor(mode), 2));
-  services_.waitForAnimationQueueDrain();
+  board().runAnimation(AnimationJob::blink(3, 3, resumeIndicatorColor(mode), 2));
+  board().waitForAnimationQueueDrain();
   return confirmAction(flipped);
 }

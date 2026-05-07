@@ -1,9 +1,11 @@
 #include "gameplay.h"
 
-#include "board.h"
+#include "core/controller.h"
 #include "core/colors.h"
+#include "gui/assistance.h"
+#include "gui/feedback.h"
+#include "gui/layering.h"
 #include "gui/menu.h"
-#include "services.h"
 
 #include <Arduino.h>
 
@@ -69,12 +71,12 @@ bool captureSelectionForLiftedSquare(const Game& game, const MoveList& moves, in
 /// MenuView::waitForSelection. Duplicated lightly with BoardMenu::confirmAction
 /// so gameplay does not need to take a BoardMenu reference; the handful of
 /// lines is preferred over coupling.
-bool boardConfirmYesNo(BoardServices& services, bool flipped) {
+bool waitForYesNoPrompt(BoardController& board, BoardLayering& layering, bool flipped) {
   static constexpr MenuItem confirmItems[] = {
       {4, 3, LedColors::Green, 1},  // Yes -- d4
       {4, 4, LedColors::Red, 0},    // No  -- e4
   };
-  MenuView prompt(services.system(), services.layering());
+  MenuView prompt(board, layering);
   prompt.setItems(confirmItems, 2);
   prompt.setFlipped(flipped);
   return prompt.waitForSelection() == 1;
@@ -82,20 +84,20 @@ bool boardConfirmYesNo(BoardServices& services, bool flipped) {
 
 }  // namespace
 
-BoardGameplay::BoardGameplay(Board& board) : services_(board.services()), snapshot_() {}
+BoardGameplay::BoardGameplay(BoardController& board) : BoardWorkflow(board), snapshot_() {}
 
 void BoardGameplay::readSensors() {
-  services_.readSensors();
-  snapshot_.update([&](int row, int col) { return services_.occupied(row, col); });
+  board().readSensors();
+  snapshot_.update([&](int row, int col) { return board().occupied(row, col); });
 }
 
 void BoardGameplay::syncOccupancyBaseline() {
-  services_.readSensors();
-  snapshot_.sync([&](int row, int col) { return services_.occupied(row, col); });
+  board().readSensors();
+  snapshot_.sync([&](int row, int col) { return board().occupied(row, col); });
 }
 
 void BoardGameplay::waitForSetup(const Game& game, Log& logger) {
-  services_.assistance().waitForSetup(game, logger);
+  board().assistance().waitForSetup(game, logger);
   syncOccupancyBaseline();
 }
 
@@ -116,7 +118,7 @@ BoardGameplayResult BoardGameplay::tryPlayerMove(const Game& game, Color playerC
 
     if (Game::pieceColor(piece) != playerColor) {
       logger.infof("Wrong turn! It's %s's turn to move.", Game::colorName(playerColor));
-      services_.feedback().showIllegalMoveFeedback(row, col);
+      board().feedback().showIllegalMoveFeedback(row, col);
       continue;
     }
 
@@ -124,7 +126,7 @@ BoardGameplayResult BoardGameplay::tryPlayerMove(const Game& game, Color playerC
 
     MoveList moves;
     game.getPossibleMoves(row, col, moves);
-    services_.assistance().showLegalMoveHighlights(row, col, moves, game);
+    board().assistance().showLegalMoveHighlights(row, col, moves, game);
 
     int targetRow = -1;
     int targetCol = -1;
@@ -144,7 +146,7 @@ BoardGameplayResult BoardGameplay::tryPlayerMove(const Game& game, Color playerC
         resignTransitioned = true;
         resignFlagTimestamp = millis();
         logger.info("King held off square for 3s - resign gesture initiated");
-        services_.feedback().showResignProgress(row, col, 0);
+        board().feedback().showResignProgress(row, col, 0);
       }
 
       for (uint8_t placedIndex = 0; placedIndex < snapshot_.changedCount(); ++placedIndex) {
@@ -184,8 +186,8 @@ BoardGameplayResult BoardGameplay::tryPlayerMove(const Game& game, Color playerC
         targetCol = captureSelection.targetCol;
         piecePlaced = true;
         if (captureSelection.isEnPassant)
-          services_.feedback().clearSquare(captureSelection.capturedRow, captureSelection.capturedCol);
-        services_.assistance().showCapturePlacementPrompt(captureSelection.targetRow, captureSelection.targetCol);
+          board().feedback().clearSquare(captureSelection.capturedRow, captureSelection.capturedCol);
+        board().assistance().showCapturePlacementPrompt(captureSelection.targetRow, captureSelection.targetCol);
 
         while (!snapshot_.occupied(captureSelection.targetRow, captureSelection.targetCol)) {
           readSensors();
@@ -195,24 +197,24 @@ BoardGameplayResult BoardGameplay::tryPlayerMove(const Game& game, Color playerC
             targetCol = col;
             break;
           }
-          delay(services_.sensorReadDelayMs());
+          delay(board().sensorReadDelayMs());
         }
 
         break;
       }
 
-      delay(services_.sensorReadDelayMs());
+      delay(board().sensorReadDelayMs());
     }
 
     if (!(resignTransitioned && targetRow == row && targetCol == col))
-      services_.feedback().clearBoard();
+      board().feedback().clearBoard();
 
     if (targetRow == row && targetCol == col) {
       if (resignTransitioned) {
         if (millis() - resignFlagTimestamp > RESIGN_LIFT_WINDOW_MS) {
-          services_.feedback().clearBoard();
+          board().feedback().clearBoard();
         } else {
-          services_.feedback().showResignProgress(row, col, 1, true);
+          board().feedback().showResignProgress(row, col, 1, true);
           if (continueResignGesture(row, col, Game::pieceColor(piece), logger)) {
             selection.resignColor = Game::pieceColor(piece);
             return BoardGameplayResult::RESIGN_REQUESTED;
@@ -242,20 +244,20 @@ BoardGameplayResult BoardGameplay::tryPlayerMove(const Game& game, Color playerC
 void BoardGameplay::completeAppliedMove(const Game& game, const MoveResult& result, const CastlingInfo& castling,
                                         int fromRow, int fromCol, int toRow, int toCol, bool isRemoteMove, Log& logger) {
   if (isRemoteMove && !result.isCastling())
-    services_.assistance().guideRemoteMoveCompletion(
+    board().assistance().guideRemoteMoveCompletion(
         fromRow, fromCol, toRow, toCol, result.isCapture(), result.isEnPassant(),
         result.epCapturedSq == SQ_NONE ? -1 : squareToRow(result.epCapturedSq), logger);
 
   if (result.isCastling())
-    services_.assistance().guideCastling(fromRow, fromCol, toRow, toCol, castling, isRemoteMove, logger);
+    board().assistance().guideCastling(fromRow, fromCol, toRow, toCol, castling, isRemoteMove, logger);
 
-  services_.feedback().showMoveResultFeedback(result, toRow, toCol, game);
+  board().feedback().showMoveResultFeedback(result, toRow, toCol, game);
 }
 
 bool BoardGameplay::confirmResign(Color resignColor, bool flipped, Log& logger) {
   logger.infof("Resign confirmation for %s...", Game::colorName(resignColor));
 
-  if (!boardConfirmYesNo(services_, flipped)) {
+  if (!waitForYesNoPrompt(board(), board().layering(), flipped)) {
     logger.info("Resign cancelled");
     return false;
   }
@@ -264,27 +266,27 @@ bool BoardGameplay::confirmResign(Color resignColor, bool flipped, Log& logger) 
 }
 
 void BoardGameplay::showResignWinner(Color resignColor) {
-  services_.feedback().showWinner(~resignColor);
+  board().feedback().showWinner(~resignColor);
 }
 
 std::atomic<bool>* BoardGameplay::startThinkingStatus() {
-  return services_.feedback().startThinking();
+  return board().feedback().startThinking();
 }
 
 std::atomic<bool>* BoardGameplay::startWaitingStatus() {
-  return services_.feedback().startWaiting();
+  return board().feedback().startWaiting();
 }
 
 void BoardGameplay::stopStatusAnimation(std::atomic<bool>*& stopFlag) {
-  services_.feedback().stopAnimation(stopFlag);
+  board().feedback().stopAnimation(stopFlag);
 }
 
 void BoardGameplay::showRemoteGameEnd(char winnerColor) {
-  services_.feedback().showRemoteGameEnd(winnerColor);
+  board().feedback().showRemoteGameEnd(winnerColor);
 }
 
 void BoardGameplay::showErrorFeedback() {
-  services_.feedback().showError();
+  board().feedback().showError();
 }
 
 bool BoardGameplay::continueResignGesture(int row, int col, Color color, Log& logger) {
@@ -297,11 +299,11 @@ bool BoardGameplay::continueResignGesture(int row, int col, Color color, Log& lo
         lifted = true;
         break;
       }
-      delay(services_.sensorReadDelayMs());
+      delay(board().sensorReadDelayMs());
     }
 
     if (!lifted) {
-      services_.feedback().clearResignFeedback(row, col);
+      board().feedback().clearResignFeedback(row, col);
       return false;
     }
 
@@ -313,19 +315,19 @@ bool BoardGameplay::continueResignGesture(int row, int col, Color color, Log& lo
         returned = true;
         break;
       }
-      delay(services_.sensorReadDelayMs());
+      delay(board().sensorReadDelayMs());
     }
 
     if (!returned) {
-      services_.feedback().clearResignFeedback(row, col);
+      board().feedback().clearResignFeedback(row, col);
       return false;
     }
 
-    services_.feedback().showResignProgress(row, col, lift + 1);
+    board().feedback().showResignProgress(row, col, lift + 1);
   }
 
   logger.infof("Resign gesture completed by %s", Game::colorName(color));
   delay(500);
-  services_.feedback().clearResignFeedback(row, col);
+  board().feedback().clearResignFeedback(row, col);
   return true;
 }

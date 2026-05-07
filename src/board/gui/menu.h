@@ -3,11 +3,12 @@
 
 #include "board/board.h"
 #include "board/core/colors.h"
-#include "board/core/system.h"
 #include "drawable.h"
 #include "layering.h"
 
 #include <stdint.h>
+
+class BoardController;
 
 // ---------------------------
 // Board Menu View (drawable primitive)
@@ -34,7 +35,7 @@ class MenuView : public BoardDrawable {
   static constexpr int RESULT_BACK = BoardDrawable::RESULT_BACK;
   static constexpr int MAX_ITEMS = 16;
 
-  MenuView(BoardSystem& system, BoardLayering& layering);
+  MenuView(BoardController& board, BoardLayering& layering);
 
   MenuView(const MenuView&) = delete;
   MenuView& operator=(const MenuView&) = delete;
@@ -61,7 +62,7 @@ class MenuView : public BoardDrawable {
   /// Reset all debounce counters for a fresh selection cycle.
   void reset() override;
 
-  /// Non-blocking poll. Call after system.readSensors().
+  /// Non-blocking poll. Call after board.readSensors().
   /// Returns:
   ///   - MenuItem::id on confirmed selection (with blink feedback)
   ///   - RESULT_BACK if back button selected
@@ -89,7 +90,7 @@ class MenuView : public BoardDrawable {
     bool selectionLatched_;
   };
 
-  BoardSystem& system_;
+  BoardController& board_;
   BoardLayering& layering_;
   const MenuItem* items_;
   uint8_t itemCount_;

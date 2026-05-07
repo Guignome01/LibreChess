@@ -1,21 +1,20 @@
 #include "diagnostics.h"
 
-#include "board.h"
+#include "core/controller.h"
 #include "gui/animations.h"
 #include "gui/layering.h"
-#include "services.h"
 
 #include <Arduino.h>
 
-BoardDiagnostics::BoardDiagnostics(Board& board)
-    : services_(board.services()), visited_{}, complete_(false), visitedCount_(0) {}
+BoardDiagnostics::BoardDiagnostics(BoardController& board)
+    : BoardWorkflow(board), visited_{}, complete_(false), visitedCount_(0) {}
 
 void BoardDiagnostics::begin() {
   Serial.println("Sensor Test: Visit all squares with a piece to complete the test.");
   complete_ = false;
   clearVisited();
-  services_.waitForAnimationQueueDrain();
-  services_.readSensors();
+  board().waitForAnimationQueueDrain();
+  board().readSensors();
   recordCurrentOccupancy();
   showVisitedSquares();
 }
@@ -23,15 +22,15 @@ void BoardDiagnostics::begin() {
 void BoardDiagnostics::update() {
   if (complete_) return;
 
-  services_.readSensors();
+  board().readSensors();
   recordCurrentOccupancy();
   showVisitedSquares();
 
   if (visitedCount_ == LibreChess::board::BOARD_SQUARES) {
     complete_ = true;
     Serial.println("Sensor Test complete! All squares verified.");
-    services_.layering().clearAll(false);
-    services_.runAnimation(AnimationJob::firework());
+    board().layering().clearAll(false);
+    board().runAnimation(AnimationJob::firework());
   }
 }
 
@@ -45,7 +44,7 @@ void BoardDiagnostics::clearVisited() {
 void BoardDiagnostics::recordCurrentOccupancy() {
   for (int row = 0; row < LibreChess::board::BOARD_ROWS; ++row)
     for (int col = 0; col < LibreChess::board::BOARD_COLS; ++col)
-      if (services_.occupied(row, col)) recordVisitedSquare(row, col);
+      if (board().occupied(row, col)) recordVisitedSquare(row, col);
 }
 
 void BoardDiagnostics::recordVisitedSquare(int row, int col) {
@@ -55,7 +54,7 @@ void BoardDiagnostics::recordVisitedSquare(int row, int col) {
 }
 
 void BoardDiagnostics::showVisitedSquares() {
-  services_.layering().replaceBase([&](BoardLayering::LayerWriter& leds) {
+  board().layering().replaceBase([&](BoardLayering::LayerWriter& leds) {
     leds.clearAllLEDs(false);
     for (int row = 0; row < LibreChess::board::BOARD_ROWS; ++row)
       for (int col = 0; col < LibreChess::board::BOARD_COLS; ++col)

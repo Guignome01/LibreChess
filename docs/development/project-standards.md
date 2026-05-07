@@ -22,7 +22,7 @@ Formatting is enforced via `.clang-format` at the project root (Google style bas
 
 Each class owns a single responsibility and never crosses into another's domain:
 
-- `Board` is the shared physical-board base layer for capabilities that are true in every workflow: lifecycle, root/resume menus, display clearing/status primitives, LED settings, timing, and restricted access to `BoardSystem`/`BoardGui` for board-owned workflows. `BoardGameplay`, `BoardDiagnostics`, and `BoardCalibration` are purpose-specific workflows composed around that base and imported directly for their use case. `BoardGui` is the internal visual coordinator for feedback, assistance, menus, modal stack flow, and `BoardLayering`. `BoardLayering` owns persistent base + overlay visual composition. `BoardSystem` is the internal hardware/settings/scheduler service boundary consumed by board-local modules. `BoardDriver` handles low-level hardware interaction (LEDs, sensors, settings); `BoardScheduler` owns animation queue concurrency; `BoardGameplay` owns physical chess interaction transitions. No board module mutates chess state.
+- `Board` is the public physical-board package root for lifecycle, LED settings, timing, status helpers, and owned workflow access. It privately owns one `BoardController`, which composes `BoardDriver`, `BoardScheduler`, `BoardLayering`, `BoardFeedback`, `BoardAssistance`, and `BoardStack`. `BoardGameplay`, `BoardDiagnostics`, `BoardCalibration`, and `BoardMenu` inherit `BoardWorkflow` and share that controller; outside firmware reaches them through `Board` accessors instead of constructing them separately. `BoardLayering` owns persistent base + overlay visual composition. `BoardController` is the internal hardware/settings/scheduler/runtime boundary consumed by board-local modules. `BoardDriver` handles low-level hardware interaction (LEDs, sensors, settings); `BoardScheduler` owns animation queue concurrency; `BoardGameplay` owns physical chess interaction transitions. No board module mutates chess state.
 - `movegen`/`rules` namespaces implement chess rules and move generation. No hardware access, no network calls.
 - `WiFiManagerESP32` manages WiFi, the web server, and API endpoints. Doesn't touch the board hardware directly.
 - `History` + concrete storage backends such as `LittleFSStorage` own game persistence. Don't know about sensors or LEDs.
@@ -41,9 +41,9 @@ New features should build on existing infrastructure. For example, `LichessProvi
 
 ## LED Access Rules
 
-- Multi-step LED updates inside `src/board/` must use `BoardLayering` for persistent base/overlay visuals or `BoardSystem::batchLEDs()` for low-level LED batches rather than manual mutex handling. Code outside `src/board/` should call semantic `Board` methods instead of raw LED APIs.
-- Single animations are factory-built `AnimationJob` values submitted through `BoardSystem::runAnimation()` and acquire the mutex automatically — no guard needed.
-- Long-running animations start through `BoardSystem::startAnimation(AnimationType::THINKING/WAITING)` and return `std::atomic<bool>*` — cancel via `stopAndWaitForAnimation(flag)`.
+- Multi-step LED updates inside `src/board/` must use `BoardLayering` for persistent base/overlay visuals or `BoardController::batchLEDs()` for low-level LED batches rather than manual mutex handling. Code outside `src/board/` should call semantic `Board` methods instead of raw LED APIs.
+- Single animations are factory-built `AnimationJob` values submitted through `BoardController::runAnimation()` and acquire the mutex automatically — no guard needed.
+- Long-running animations start through `BoardController::startAnimation(AnimationType::THINKING/WAITING)` and return `std::atomic<bool>*` — cancel via `stopAndWaitForAnimation(flag)`.
 - Use `waitForAnimationQueueDrain()` inside board-local code as a barrier before writing LEDs directly.
 - Colors in `LedColors` have fixed semantic meanings (see [architecture.md](architecture.md#color-semantics)). Use consistently.
 

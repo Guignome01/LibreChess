@@ -26,18 +26,18 @@ Game (lib/game/):
    └─ uses IGameObserver (notification)
 
 Firmware (src/):
-  Board base (src/board/board.* — shared technical board capabilities)
-  Board workflows/config (src/board/gameplay.*, diagnostics.*, calibration.*, config.*)
-  Board core runtime (src/board/core/* — system, driver, colors, scheduler)
-  BoardGui (src/board/gui/gui.* — internal visual coordinator)
+  Board package root (src/board/board.* — public board lifecycle/settings/status + owned workflows)
+  Board workflows/config (src/board/workflow.*, gameplay.*, diagnostics.*, calibration.*, menu.*, config.*)
+  Board core runtime (src/board/core/* — controller, driver, colors, scheduler, snapshot)
   BoardLayering (src/board/gui/layering.* — persistent base + overlay composition)
   Board primitives (src/board/board.*, src/board/core/colors.h, src/board/gui/selection.h, src/board/gui/drawable.h)
-  BoardSystem (src/board/core/system.* — internal hardware/settings/scheduler service boundary)
+  BoardController (src/board/core/controller.* — internal shared board runtime and hardware/settings/scheduler boundary)
     BoardDriver (src/board/core/driver.* — low-level hardware)
     BoardScheduler (src/board/core/scheduler.* — animation queue/concurrency)
   BoardStack (src/board/gui/stack.* — modal visual stack)
   BoardAssistance (src/board/gui/assistance.* — physical chess guidance)
   BoardFeedback (src/board/gui/feedback.* — visual feedback/status)
+  BoardWorkflow (src/board/workflow.* — shared base for internal workflow controller access)
   BoardGameplay (src/board/gameplay.* — physical chess interaction + transition snapshots)
   BoardCalibration (src/board/calibration.* — external calibration mode + internal workflow)
   BoardAnimations (src/board/gui/animations.* — animation job factories + visual execution)
@@ -73,15 +73,12 @@ Components are wired through pointer injection at construction time. No global s
 
 ```cpp
 Board physicalBoard;
-BoardGameplay boardGameplay(physicalBoard);
-BoardDiagnostics boardDiagnostics(physicalBoard);
-BoardCalibration boardCalibration(physicalBoard);
 SerialLogger logger;
 LittleFSStorage storage(&logger);
-WiFiManagerESP32 wifiManager(&physicalBoard, &boardCalibration, &storage);
+WiFiManagerESP32 wifiManager(&physicalBoard, &storage);
 Game chess(&storage, &wifiManager, &logger);
 auto* provider = new StockfishProvider(stockfishSettings, playerColor);
-BotMode botGame(&boardGameplay, &wifiManager, &chess, provider);
+BotMode botGame(&physicalBoard.gameplay(), &wifiManager, &chess, provider);
 ```
 
 `Game` owns the `Position` internally — there is no shared chess state. All game mode classes interact with chess state through the `Game` orchestrator. `BotMode` takes ownership of the `EngineProvider*` (deletes it in its destructor). `History` handles both in-memory tracking and persistent recording — when constructed without an `IGameStorage*`, recording is silently skipped (used by Lichess games since they are recorded on the server).
@@ -96,45 +93,45 @@ The LED strip is wired in a serpentine (zigzag) pattern across the physical boar
 
 ### Board Primitives
 
-`src/board/core/colors.h` and `src/board/board.*` carry firmware-local physical-board primitives. Colors model semantic LED vocabulary; `board.*` carries logical display row/col geometry (`BOARD_ROWS`, `BOARD_COLS`, `BOARD_SQUARES`, `BoardSquare`, and `isValidSquare`) because geometry is shared by workflows and the board base. No separate `state.h` exists; physical transition state lives in `BoardGameplay`.
+`src/board/core/colors.h`, `src/board/core/snapshot.h`, and `src/board/board.*` carry firmware-local physical-board primitives. Colors model semantic LED vocabulary; `board.*` carries logical display row/col geometry (`BOARD_ROWS`, `BOARD_COLS`, `BOARD_SQUARES`, `BoardSquare`, and `isValidSquare`) because geometry is shared by workflows and the board base. No separate `state.h` exists; physical transition state is an explicit workflow-owned snapshot when a workflow needs edge detection.
 
-`BoardGameplay` owns physical occupancy transition state for chess gameplay. It stores current and previous 8x8 occupancy snapshots, consumes already-debounced current occupancy from `BoardSystem`, and derives transitions such as lifted, placed, changed count, and changed square. Raw debounce still belongs to `BoardDriver`; `BoardGameplay` only compares stable snapshots for game interactions.
+`BoardSnapshot<Rows, Cols>` in `src/board/core/snapshot.h` is a reusable boolean occupancy edge detector. `BoardGameplay` owns one instance specialized to the 8x8 physical board, feeds it already-debounced occupancy via Board's friend-only sensor access, and derives transitions such as lifted, placed, changed count, and changed square. Raw debounce still belongs to `BoardDriver`; snapshots only compare stable frames for workflow interactions.
 
-`src/board/core/colors.h` provides the semantic `LedRGB` vocabulary and chess-side color mapping used by board assistance, feedback, menus, and animations. `src/board/gui/selection.h` carries public-safe game-selection result types shared by `Board` and `BoardGui`. `src/board/gui/drawable.h` carries the minimal board-internal `BoardDrawable` contract consumed by `BoardStack`. `src/board/gui/layering.h` carries `BoardLayering` and its layer-writer adapter for persistent base + overlay composition. Menu orientation and empty-then-occupied selection debounce live inside `src/board/gui/menu.*` because they are only used by the board menu primitive.
+`src/board/core/colors.h` provides the semantic `LedRGB` vocabulary and chess-side color mapping used by board assistance, feedback, menus, and animations. `src/board/gui/selection.h` carries public-safe game-selection result types used by `BoardMenu`. `src/board/gui/drawable.h` carries the minimal board-internal `BoardDrawable` contract consumed by `BoardStack`. `src/board/gui/layering.h` carries `BoardLayering` and its layer-writer adapter for persistent base + overlay composition. Menu orientation and empty-then-occupied selection debounce live inside `src/board/gui/menu.*` because they are only used by the board menu primitive.
 
 ### Board Base And Workflows
 
-`src/board/board.*` is the shared physical-board base layer. It owns a private implementation that composes `BoardSystem` and `BoardGui`, exposes common board capabilities that are true across workflows (lifecycle, root/resume menus, display clearing/connecting animation, LED settings, timing), and grants restricted internals access to board-owned workflows. External firmware may consume `Board` and specific workflow objects (`BoardGameplay`, `BoardDiagnostics`, `BoardCalibration`); it must not consume `BoardDriver`, `BoardSystem`, `BoardGui`, `BoardLayering`, colors, menu IDs, or raw LED batches directly.
+`src/board/board.*` is the public physical-board package root. It owns a private implementation that composes one internal `BoardController` plus long-lived `BoardGameplay`, `BoardDiagnostics`, `BoardCalibration`, and `BoardMenu` workflow instances; exposes lifecycle, LED settings, timing, status helpers, and workflow accessors publicly; and keeps raw runtime modules behind the board boundary. External firmware may consume `Board` and call its workflow accessors; it must not consume `BoardController`, `BoardDriver`, `BoardLayering`, colors, menu IDs, or raw LED batches directly.
 
-`BoardSystem::readSensors()` polls the driver and exposes only current debounced occupancy. Gameplay transition queries live in `BoardGameplay`, not on `Board` or `BoardSystem`.
+`BoardController` in `src/board/core/controller.*` owns the shared runtime (`BoardDriver`, `BoardScheduler`, `BoardLayering`, `BoardFeedback`, `BoardAssistance`, and `BoardStack`) and exposes board-internal capabilities to workflows. It is the board-internal hardware/settings/scheduler/runtime boundary: current sensor polling/occupancy, LED batches, generic animation submission, LED settings, and startup calibration entry are all centralized there. `BoardWorkflow` in `src/board/workflow.*` stores the common `BoardController&` pointer used by long-lived workflows so they share one hardware/visual runtime without depending on public `Board` or recreating runtime state.
 
-`src/board/gui/gui.*` is the board-internal visual coordinator. It owns/wires `BoardFeedback`, `BoardAssistance`, board menus, `BoardStack`, `BoardLayering`, and selection/resume visual policy. It exposes semantic visual operations to board workflows and `Board::Impl`, but public firmware never receives `BoardGui`, `BoardLayering`, `BoardStack`, `BoardDrawable`, colors, menu IDs, or animation jobs.
+`BoardController::readSensors()` polls the driver and exposes only current debounced occupancy. Gameplay transition queries live in `BoardGameplay`, not on `Board` or `BoardController`.
 
-`src/board/diagnostics.*` owns the user-facing Sensor Test workflow. It is a long-lived board mode constructed around `Board&`; internally it uses restricted access to `BoardSystem` and `BoardLayering`, scans current debounced occupancy each update, marks newly visited squares in its own workflow state, and completes with the standard firework animation when all 64 squares have been detected.
+`src/board/diagnostics.*` owns the user-facing Sensor Test workflow. It is a long-lived board mode constructed by `Board` around the shared `BoardController&`; internally it uses `BoardController` and `BoardLayering`, scans current debounced occupancy each update, marks newly visited squares in its own workflow state, and completes with the standard firework animation when all 64 squares have been detected.
 
-`src/board/gui/assistance.*` owns physical chess guidance: setup prompts, legal-move assistance levels, castling prompts, remote-move completion instructions, and capture placement prompts. `src/board/gui/feedback.*` owns always-on visual outcomes and status: resign progress, move confirmation, check/game-end effects, thinking/waiting animations, remote game-end display, and error flashes. Both talk to `BoardSystem` directly and are coordinated by `BoardGui`; board modes such as `BoardGameplay` call them through restricted board-owned access. Both may read `Game` through public APIs for display decisions, but all chess mutation remains in `GameMode`/`Game`.
+`src/board/gui/assistance.*` owns physical chess guidance: setup prompts, legal-move assistance levels, castling prompts, remote-move completion instructions, and capture placement prompts. `src/board/gui/feedback.*` owns always-on visual outcomes and status: resign progress, move confirmation, check/game-end effects, thinking/waiting animations, remote game-end display, and error flashes. Both are owned by `BoardController`, take mandatory `BoardController&` + `BoardLayering&`, and are reached by workflows through `BoardWorkflow::board()`. Both may read `Game` through public APIs for display decisions, but all chess mutation remains in `GameMode`/`Game`.
 
-### BoardSystem
+### BoardController
 
-Board-internal service boundary in `src/board/core/system.*`. It owns the low-level `BoardDriver` and `BoardScheduler` instances, starts the hardware together, and exposes cohesive operations to board-local modules: current sensor polling/occupancy, LED batches, generic animation submission, LED settings, and calibration triggers. Gameplay-specific transition queries belong to `BoardGameplay`.
+Board-internal service boundary in `src/board/core/controller.*`. It owns the low-level `BoardDriver` and `BoardScheduler` instances, starts the hardware together, and exposes cohesive operations to board-local modules: current sensor polling/occupancy, LED batches, generic animation submission, LED settings, queue barriers, and startup calibration triggers. Gameplay-specific transition queries belong to `BoardGameplay`.
 
 `BoardLEDBatch` lives in the same module and is the only object exposed to direct LED batch callbacks. It forwards only LED-related operations (`clearAllLEDs`, `setSquareLED`, `showLEDs`, brightness, dim multiplier), so callbacks cannot reach arbitrary driver functionality while the scheduler holds the strip mutex.
 
 ### BoardLayering
 
-Board-internal composition layer in `src/board/gui/layering.*`. `BoardGui` owns one `BoardLayering` instance and passes it to visual modules that draw persistent board states. The base layer stores menus, setup prompts, legal-move highlights, remote-move guidance, and diagnostics. The overlay layer stores higher-priority temporary state such as resign progress. Rendering writes a complete composed 8x8 frame through one `BoardSystem::batchLEDs()` callback, so layer composition still respects the scheduler-owned LED mutex.
+Board-internal composition layer in `src/board/gui/layering.*`. `Board` owns one `BoardLayering` instance and passes it to visual modules that draw persistent board states. The base layer stores menus, setup prompts, legal-move highlights, remote-move guidance, and diagnostics. The overlay layer stores higher-priority temporary state such as resign progress. Rendering writes a complete composed 8x8 frame through one `BoardController::batchLEDs()` callback, so layer composition still respects the scheduler-owned LED mutex.
 
 `BoardLayerWriter` intentionally mirrors the LED-only surface shape (`clearAllLEDs`, `setSquareLED`, `showLEDs`) so existing board-local drawing helpers can target either a raw LED batch or a logical layer. Short time-based effects remain value-based `AnimationJob`s; `BoardLayering::runTemporaryAnimation()` drains queued work, runs a short animation, then restores the composed layer frame.
 
 ### BoardDriver
 
-Hardware abstraction layer in `src/board/core/driver.*`. Owns low-level hardware: sensor scanning/debounce, LED strip writes, settings, and saved calibration mapping. Animation job factories and visual animation bodies live in `src/board/gui/animations.*`; queue/task/mutex/stop-flag scheduling lives in `src/board/core/scheduler.*`; `BoardSystem` composes the driver and scheduler. Animation visuals draw through `BoardLEDBatch` while the scheduler owns queueing and LED mutexing.
+Hardware abstraction layer in `src/board/core/driver.*`. Owns low-level hardware: sensor scanning/debounce, LED strip writes, settings, and saved calibration mapping. Animation job factories and visual animation bodies live in `src/board/gui/animations.*`; queue/task/mutex/stop-flag scheduling lives in `src/board/core/scheduler.*`; `BoardController` composes the driver and scheduler. Animation visuals draw through `BoardLEDBatch` while the scheduler owns queueing and LED mutexing.
 
 Owns three subsystems:
 
 **LED strip** — a 64-LED WS2812B strip driven by `NeoPixelBrightnessBus<NeoGrbFeature, NeoEsp32I2s0800KbpsMethod>`. The I2S peripheral with DMA offloads timing-critical signal generation to hardware, avoiding conflicts with WiFi interrupts and keeping the main loop responsive. The strip is connected to GPIO 32 (`LED_PIN`). Global brightness is adjustable (0–255, default 255), and dark squares are automatically dimmed by a configurable multiplier (default 70%, stored in NVS as `dimMultiplier`). The `currentColors[8][8]` array tracks the current color of every square so dim multiplier changes can be applied retroactively.
 
-**Sensor grid** — 64 A3144 hall-effect sensors arranged in an 8×8 matrix, read through column-scanning multiplexing. A 74HC595 shift register activates one column at a time (via transistor switches), and 8 row GPIOs are read simultaneously. This uses only 11 GPIO pins (3 shift register control + 8 row inputs) to scan all 64 sensors. The driver owns raw/debounced current state (`sensorRaw[8][8]` → `sensorState[8][8]`); `BoardGameplay` owns previous/current physical snapshots and change detection for chess interactions. The `lastEnabledCol` field enables efficient sequential column shifting — instead of clocking through all 8 bits each time, the driver detects sequential column advances and shifts by one bit.
+**Sensor grid** — 64 A3144 hall-effect sensors arranged in an 8×8 matrix, read through column-scanning multiplexing. A 74HC595 shift register activates one column at a time (via transistor switches), and 8 row GPIOs are read simultaneously. This uses only 11 GPIO pins (3 shift register control + 8 row inputs) to scan all 64 sensors. The driver owns raw/debounced current state (`sensorRaw[8][8]` → `sensorState[8][8]`); workflows that need current/previous physical frames use `BoardSnapshot<...>` for stable change detection. The `lastEnabledCol` field enables efficient sequential column shifting — instead of clocking through all 8 bits each time, the driver detects sequential column advances and shifts by one bit.
 
 GPIO pin definitions are `#define`d at the top of `src/board/core/driver.h`:
 - Shift register: `SR_CLK_PIN` (14), `SR_LATCH_PIN` (26), `SR_SER_DATA_PIN` (33)
@@ -144,9 +141,9 @@ GPIO pin definitions are `#define`d at the top of `src/board/core/driver.h`:
 
 The physical order of pin connections **does not matter** — the calibration process maps physical pins to logical board coordinates.
 
-**Calibration** — `BoardCalibrationWorkflow` runs the interactive serial-guided process on first boot (or when triggered via the external `BoardCalibration` mode used by the web UI). `BoardSystem` wires the workflow after `BoardDriver` initializes low-level hardware; `BoardDriver` does not include calibration. The workflow maps physical sensor/LED positions to logical `[row][col]` coordinates by asking the user to place pieces in specific patterns. The resulting mapping tables (`toLogicalRow[]`, `toLogicalCol[]`, `ledIndexMap[8][8]`, `swapAxes`) are persisted in NVS namespace `"boardCal"`. The `swapAxes` flag handles boards where the shift register and row pins are wired to the opposite physical axis. Until calibration completes, the board repeats the calibration prompt on every boot (with a `skip` option that defers but doesn't persist). `BoardDriver` exposes explicit calibration primitives for raw sensor scans, raw pixel writes, and mapping table updates; `BoardCalibrationWorkflow` owns the workflow and persistence schema.
+**Calibration** — `BoardCalibration` runs the interactive serial-guided process on first boot and also exposes the external recalibration trigger used by the web UI. External callers may call only `trigger()`. `BoardController` is a friend and constructs `BoardCalibration` with `BoardDriver&` after low-level initialization to call private `load()`/`run()`/`save()`. The workflow maps physical sensor/LED positions to logical `[row][col]` coordinates by asking the user to place pieces in specific patterns. The resulting mapping tables (`toLogicalRow[]`, `toLogicalCol[]`, `ledIndexMap[8][8]`, `swapAxes`) are persisted in NVS namespace `"boardCal"`. The `swapAxes` flag handles boards where the shift register and row pins are wired to the opposite physical axis. Until calibration completes, the board repeats the calibration prompt on every boot (with a `skip` option that defers but doesn't persist). `BoardDriver` exposes explicit calibration primitives for raw sensor scans, raw pixel writes, and mapping table updates; `BoardCalibration` owns the workflow and persistence schema.
 
-**Sensor polling parameters**: `SENSOR_READ_DELAY_MS` = 40ms (polling interval), `DEBOUNCE_MS` = 125ms (state change debounce window). A piece must be present (or absent) for the full debounce duration before the change is registered, preventing false triggers from sliding pieces or magnetic interference. Game modes call `BoardGameplay::readSensors()` before reading gameplay transitions; board-local workflows use `BoardSystem::readSensors()` for current occupancy; external timing comes from `Board::sensorReadDelayMs()`.
+**Sensor polling parameters**: `SENSOR_READ_DELAY_MS` = 40ms (polling interval), `DEBOUNCE_MS` = 125ms (state change debounce window). A piece must be present (or absent) for the full debounce duration before the change is registered, preventing false triggers from sliding pieces or magnetic interference. Game modes call `BoardGameplay::readSensors()` before reading gameplay transitions; board-local workflows use `BoardController::readSensors()` for current occupancy; external timing comes from `Board::sensorReadDelayMs()`.
 
 ### movegen
 
@@ -308,7 +305,7 @@ Every iteration of `loop()`:
 1. `wifiManager.update()` — handle WiFi reconnection state machine
 2. Check for pending board edits from the web UI (`getPendingBoardEdit()`)
 3. Check for web-based game mode selection (`getSelectedGameMode()`)
-4. If in `AppMode::SELECTION`: poll the board-owned selection workflow via `Board::pollGameSelectionMenu()` and map any completed selection to an app mode
+4. If in `AppMode::SELECTION`: poll the board-owned selection workflow via `BoardMenu::poll()` and map any completed selection to an app mode
 5. If a mode is selected and not yet initialized: call `initializeSelectedMode()` (creates the game object or starts board diagnostics)
 6. If in a chess game mode: relay web resign flag, check `isGameOver()`, call `update()`
 7. If in Sensor Test: call `boardDiagnostics.update()` until `isComplete()` returns true
@@ -327,7 +324,7 @@ For game resume: `begin()` detects the `resumingGame` flag, skips piece setup, c
 
 ### Menu Navigation
 
-`BoardStack` manages a modal stack of `BoardDrawable` instances (max depth 4), with board menus as the first concrete drawable. It lives entirely behind `BoardGui` and `Board`. `main.cpp` starts the root menu through `Board::startGameSelectionMenu()`, polls it through `Board::pollGameSelectionMenu()`, and receives a semantic `BoardGameSelection` result instead of raw `MenuId` values.
+`BoardStack` manages a modal stack of `BoardDrawable` instances (max depth 4), with board menus as the first concrete drawable. It is owned directly by `Board` and reached by the `BoardMenu` workflow through Board's friend-only accessors. `main.cpp` starts and polls the root menu through `BoardMenu`, receiving a semantic `BoardGameSelection` result instead of raw `MenuId` values.
 
 The internal menu flow remains the same:
 
@@ -389,11 +386,11 @@ Animations run on a dedicated FreeRTOS task owned by `BoardScheduler` with its o
 
 `AnimationJob` is a value struct with static factory helpers such as `capture(...)`, `blink(...)`, `firework(...)`, and `connecting()`. It carries a `type` field (`AnimationType` enum: `CAPTURE`, `PROMOTION`, `BLINK`, `WAITING`, `THINKING`, `FIREWORK`, `FLASH`, `CONNECTING`, `SYNC`) and a `params` union containing type-specific data. The `SYNC` type is a no-op barrier: `waitForAnimationQueueDrain()` enqueues a SYNC job and blocks on the scheduler completion semaphore until the worker reaches it.
 
-**Short animations** (capture, promotion, blink, firework, flash) — fire-and-forget. Board-local callers build the request with `AnimationJob` factory helpers and submit it through `BoardSystem::runAnimation(job)`. The animation task dequeues and executes it.
+**Short animations** (capture, promotion, blink, firework, flash) — fire-and-forget. Board-local callers build the request with `AnimationJob` factory helpers and submit it through `BoardController::runAnimation(job)`. The animation task dequeues and executes it.
 
-**Direct one-shot animations** (connecting) — execute synchronously through `BoardSystem::runAnimationNow(AnimationJob::connecting())` while still using the scheduler-owned LED mutex.
+**Direct one-shot animations** (connecting) — execute synchronously through `BoardController::runAnimationNow(AnimationJob::connecting())` while still using the scheduler-owned LED mutex.
 
-**Long-running animations** (thinking, waiting) — start through `BoardSystem::startAnimation(AnimationType::THINKING/WAITING)` and return an `std::atomic<bool>*` stop flag (heap-allocated). The animation task checks the flag on each frame. The caller owns the flag and must use `stopAndWaitForAnimation(flag)` to:
+**Long-running animations** (thinking, waiting) — start through `BoardController::startAnimation(AnimationType::THINKING/WAITING)` and return an `std::atomic<bool>*` stop flag (heap-allocated). The animation task checks the flag on each frame. The caller owns the flag and must use `stopAndWaitForAnimation(flag)` to:
 1. Set the flag to `true`
 2. Block on the scheduler completion semaphore until the worker finishes the current frame and releases the LED mutex
 3. `delete` the flag and null the pointer
@@ -402,21 +399,21 @@ Never set the flag directly or `delete` it without waiting — the animation tas
 
 ### Batched Direct LED Updates
 
-The LED strip is a shared resource between the main loop and the animation task, guarded by `ledMutex` (FreeRTOS semaphore). Board-local multi-step writes go through `BoardSystem::batchLEDs()`, so the scheduler keeps mutex ownership internal while external firmware stays on semantic `Board` methods:
+The LED strip is a shared resource between the main loop and the animation task, guarded by `ledMutex` (FreeRTOS semaphore). Board-local multi-step writes go through `BoardController::batchLEDs()`, so the scheduler keeps mutex ownership internal while external firmware stays on semantic `Board` methods:
 
 ```cpp
-system->batchLEDs([&](BoardSystem::LEDWriter& leds) {
+board.batchLEDs([&](BoardController::LEDWriter& leds) {
   leds.clearAllLEDs(false);
   leds.setSquareLED(row, col, LedColors::Cyan);
   leds.showLEDs();
 });
 ```
 
-Factory-built animation jobs submitted through `BoardSystem::runAnimation()` are queued and acquire the mutex inside the animation task — no guard needed by the caller.
+Factory-built animation jobs submitted through `BoardController::runAnimation()` are queued and acquire the mutex inside the animation task — no guard needed by the caller.
 
-Single facade calls such as `clearAllLEDs()` and semantic helpers such as `showMoveResultFeedback()` lock internally through `BoardSystem`, but any multi-step direct update inside `src/board/` should still use `batchLEDs()` so the entire batch is atomic.
+Single facade calls such as `clearAllLEDs()` and semantic helpers such as `showMoveResultFeedback()` lock internally through `BoardController`, but any multi-step direct update inside `src/board/` should still use `batchLEDs()` so the entire batch is atomic.
 
-Persistent visual state should use `BoardLayering` instead of repeatedly clearing the physical LEDs. Menus, diagnostics, setup prompts, legal-move highlights, remote-move prompts, and resign overlays update logical layers; `BoardLayering` then renders the composed frame through `BoardSystem::batchLEDs()`.
+Persistent visual state should use `BoardLayering` instead of repeatedly clearing the physical LEDs. Menus, diagnostics, setup prompts, legal-move highlights, remote-move prompts, and resign overlays update logical layers; `BoardLayering` then renders the composed frame through `BoardController::batchLEDs()`.
 
 **Critical rule**: before writing LEDs directly from board-local main-loop code, call `waitForAnimationQueueDrain()` to ensure all queued animations have completed. Otherwise a stale queued animation can execute after your writes and overwrite them.
 
@@ -458,7 +455,7 @@ Colors in the `LedColors` namespace (`src/board/core/colors.h`) have fixed meani
 
 ### BoardMenu
 
-A reusable menu primitive for the 8×8 LED grid in `src/board/gui/menu.*`. It implements `BoardDrawable` so `BoardStack` can manage it without knowing menu internals. State is stack-allocated — no heap usage. Orientation and empty-then-occupied debounce are private menu helpers, while LED output goes through `BoardLayering` when available and sensor polling goes through `BoardSystem`.
+A reusable menu primitive for the 8×8 LED grid in `src/board/gui/menu.*`. It implements `BoardDrawable` so `BoardStack` can manage it without knowing menu internals. State is stack-allocated — no heap usage. Orientation and empty-then-occupied debounce are private menu helpers, while LED output goes through `BoardLayering` when available and sensor polling goes through `BoardController`.
 
 **Item definition** — `MenuItem` struct: `{row, col, color, id}`. Coordinates are authored in white-side orientation (row 7 = rank 1). Arrays are `constexpr` file-scoped statics in `src/board/config.h`, stored in flash with zero RAM cost. The menu does not copy the array — the pointer must outlive the menu.
 
@@ -473,7 +470,7 @@ After confirmed selection, the square blinks once in its own color through `Anim
 
 **Orientation** — `setFlipped(true)` mirrors row coordinates (`row' = 7 - row`) so menus face a player on the black side. Applied to bot games where the player chose black, and to the resign confirm dialog on black's turn.
 
-**`boardConfirm()`** — board-internal yes/no dialog (green at d4, red at e4). Blocking. Returns `bool`. Supports orientation flipping and is invoked by `BoardGui`, behind methods such as `BoardGameplay::confirmResign()` and `Board::confirmResume()`.
+**Confirmation prompts** — board-internal yes/no dialogs (green at d4, red at e4). Blocking. Return `bool`. Support orientation flipping and are rendered through transient `MenuView` instances by `BoardMenu::confirmAction()`/`confirmResume()` and `BoardGameplay::confirmResign()`.
 
 ### BoardStack
 
@@ -484,7 +481,7 @@ Modal visual stack with max depth 4 (`std::array<BoardDrawable*, MAX_DEPTH>`). P
 All menu layout data currently lives in the board-level `src/board/config.h/.cpp`:
 - `MenuId` namespace: distinct ID ranges per menu level (0–9 root, 10–19 difficulty, 20–29 color)
 - `constexpr MenuItem[]` arrays: `gameMenuItems`, `botDifficultyItems`, `botColorItems`
-- `configureMenus(...)`: board-internal helper that wires the `BoardGui`-owned menu instances with items and back buttons.
+- `configureMenus(...)`: board-internal helper that wires the `BoardMenu`-owned `MenuView` instances with items and back buttons.
 
 ## External API Integration
 

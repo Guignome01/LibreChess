@@ -1,6 +1,7 @@
 #include "menu.h"
 
 #include "animations.h"
+#include "board/core/controller.h"
 #include "layering.h"
 
 #include <Arduino.h>
@@ -12,8 +13,8 @@ static constexpr LedRGB BACK_BUTTON_COLOR = LedColors::White;
 // MenuView
 // ---------------------------
 
-MenuView::MenuView(BoardSystem& system, BoardLayering& layering)
-    : system_(system),
+MenuView::MenuView(BoardController& board, BoardLayering& layering)
+  : board_(board),
       layering_(layering),
       items_(nullptr),
       itemCount_(0),
@@ -107,13 +108,13 @@ LibreChess::board::BoardSquare MenuView::transformSquare(int8_t row, int8_t col)
 
 int MenuView::trySelect(SelectionDebouncer& state, int8_t row, int8_t col, LedRGB color, int id) {
   auto square = transformSquare(row, col);
-  bool squareOccupied = system_.occupied(square.row, square.col);
+  bool squareOccupied = board_.occupied(square.row, square.col);
   if (state.update(squareOccupied)) {
-    system_.runAnimation(AnimationJob::blink(square.row, square.col, color, 1));
-    system_.waitForAnimationQueueDrain();
+    board_.runAnimation(AnimationJob::blink(square.row, square.col, color, 1));
+    board_.waitForAnimationQueueDrain();
     // Wait for piece removal so the next menu starts with a clean square
-    while (system_.occupied(square.row, square.col)) {
-      system_.readSensors();
+    while (board_.occupied(square.row, square.col)) {
+      board_.readSensors();
       delay(SENSOR_READ_DELAY_MS);
     }
     return id;
@@ -139,7 +140,7 @@ int MenuView::waitForSelection() {
   reset();
   show();
   while (true) {
-    system_.readSensors();
+    board_.readSensors();
     int result = poll();
     if (result != RESULT_NONE) {
       hide();

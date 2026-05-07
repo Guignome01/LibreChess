@@ -1,10 +1,8 @@
 #include "calibration.h"
 
-#include "board.h"
+#include "core/controller.h"
 #include "core/driver.h"
-#include "core/system.h"
 #include "game.h"
-#include "services.h"
 #include "shared/utils.h"
 
 #include <Arduino.h>
@@ -24,15 +22,25 @@ static char shiftRegOutput(int col) {
 
 }  // namespace
 
-BoardCalibration::BoardCalibration(Board& board) : board_(board) {}
+BoardCalibration::BoardCalibration(BoardController& board)
+    : BoardWorkflow(board), driver_(board.driver_) {}
 
 void BoardCalibration::trigger() {
-  board_.services().makeCalibrationWorkflow().trigger();
+  if (!SystemUtils::ensureNvsInitialized()) {
+    Serial.println("NVS init failed - cannot trigger calibration");
+    return;
+  }
+  Preferences prefs;
+  prefs.begin("boardCal", false);
+  prefs.clear();
+  prefs.end();
+  Serial.println("Board calibration cleared - rebooting ...");
+  ESP.restart();
 }
 
-BoardCalibrationWorkflow::BoardCalibrationWorkflow(BoardDriver& driver) : driver_(driver) {}
+BoardCalibration::BoardCalibration(BoardDriver& driver) : BoardWorkflow(), driver_(driver) {}
 
-bool BoardCalibrationWorkflow::load() {
+bool BoardCalibration::load() {
   if (!SystemUtils::ensureNvsInitialized()) {
     Serial.println("NVS init failed - calibration not loaded");
     return false;
@@ -91,7 +99,7 @@ bool BoardCalibrationWorkflow::load() {
   return true;
 }
 
-void BoardCalibrationWorkflow::save() {
+void BoardCalibration::save() {
   if (!SystemUtils::ensureNvsInitialized()) {
     Serial.println("NVS init failed - calibration not saved");
     return;
@@ -124,7 +132,7 @@ void BoardCalibrationWorkflow::save() {
   Serial.println("Board calibration saved to NVS");
 }
 
-bool BoardCalibrationWorkflow::run() {
+bool BoardCalibration::run() {
   for (int i = 0; i < LED_COUNT; i++) {
     driver_.setRawCalibrationLED(i, LedColors::White);
     driver_.showLEDs();
@@ -218,24 +226,11 @@ bool BoardCalibrationWorkflow::run() {
   return false;
 }
 
-void BoardCalibrationWorkflow::trigger() {
-  if (!SystemUtils::ensureNvsInitialized()) {
-    Serial.println("NVS init failed - cannot trigger calibration");
-    return;
-  }
-  Preferences prefs;
-  prefs.begin("boardCal", false);
-  prefs.clear();
-  prefs.end();
-  Serial.println("Board calibration cleared - rebooting ...");
-  ESP.restart();
-}
-
-void BoardCalibrationWorkflow::readRawSensors(bool (&rawState)[8][8]) {
+void BoardCalibration::readRawSensors(bool (&rawState)[8][8]) {
   driver_.readRawCalibrationSensors(rawState);
 }
 
-bool BoardCalibrationWorkflow::waitForBoardEmpty(unsigned long stableMs) {
+bool BoardCalibration::waitForBoardEmpty(unsigned long stableMs) {
   bool rawState[NUM_ROWS][NUM_COLS];
   unsigned long lastWarningTime = millis();
   unsigned long stableStart = 0;
@@ -269,7 +264,7 @@ bool BoardCalibrationWorkflow::waitForBoardEmpty(unsigned long stableMs) {
   }
 }
 
-bool BoardCalibrationWorkflow::waitForSingleRawPress(int& rawRow, int& rawCol, unsigned long stableMs) {
+bool BoardCalibration::waitForSingleRawPress(int& rawRow, int& rawCol, unsigned long stableMs) {
   bool rawState[NUM_ROWS][NUM_COLS];
   int lastRow = -1;
   int lastCol = -1;
@@ -328,7 +323,7 @@ bool BoardCalibrationWorkflow::waitForSingleRawPress(int& rawRow, int& rawCol, u
   }
 }
 
-void BoardCalibrationWorkflow::showCalibrationError() {
+void BoardCalibration::showCalibrationError() {
   for (int i = 0; i < LED_COUNT; i++)
     driver_.setRawCalibrationLED(i, LedColors::Red);
   driver_.showLEDs();
@@ -337,7 +332,7 @@ void BoardCalibrationWorkflow::showCalibrationError() {
   driver_.clearRawCalibrationLEDs();
 }
 
-bool BoardCalibrationWorkflow::calibrateAxis(Axis axis, bool firstAxisSwapped) {
+bool BoardCalibration::calibrateAxis(Axis axis, bool firstAxisSwapped) {
   if (NUM_ROWS != NUM_COLS) {
     Serial.println("Non-square boards not supported for calibration");
     return false;
@@ -455,17 +450,17 @@ bool BoardCalibrationWorkflow::calibrateAxis(Axis axis, bool firstAxisSwapped) {
   return axis != detectedAxis;
 }
 
-uint8_t BoardCalibrationWorkflow::axisMapping(Axis axis, int rawIndex) const {
+uint8_t BoardCalibration::axisMapping(Axis axis, int rawIndex) const {
   return axis == Axis::ROWS ? driver_.logicalRowMapping(rawIndex) : driver_.logicalColMapping(rawIndex);
 }
 
-void BoardCalibrationWorkflow::setAxisMapping(Axis axis, int rawIndex, uint8_t logicalIndex) {
+void BoardCalibration::setAxisMapping(Axis axis, int rawIndex, uint8_t logicalIndex) {
   if (axis == Axis::ROWS)
     driver_.setLogicalRowMapping(rawIndex, logicalIndex);
   else
     driver_.setLogicalColMapping(rawIndex, logicalIndex);
 }
 
-const char* BoardCalibrationWorkflow::axisToChessRankFile(Axis axis) const {
+const char* BoardCalibration::axisToChessRankFile(Axis axis) const {
   return (axis == Axis::ROWS) ? "Rank" : ((axis == Axis::COLS) ? "File" : "Unknown");
 }

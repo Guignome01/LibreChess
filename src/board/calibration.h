@@ -4,31 +4,28 @@
 #include <stddef.h>
 #include <stdint.h>
 
-class BoardDriver;
-class Board;
+#include "workflow.h"
 
-// External board calibration mode used by application and WiFi flows.
-class BoardCalibration {
+class BoardDriver;
+class BoardController;
+
+// Board calibration workflow used by startup calibration and application/WiFi
+// trigger flows. External callers may only trigger recalibration; BoardController
+// is the sole owner of load/run/save startup calibration.
+class BoardCalibration : private BoardWorkflow {
  public:
-  explicit BoardCalibration(Board& board);
+  explicit BoardCalibration(BoardController& board);
 
   void trigger();
 
  private:
-  Board& board_;
-};
+  friend class BoardController;
 
-// Board-internal calibration workflow and NVS mapping persistence.
-class BoardCalibrationWorkflow {
- public:
-  explicit BoardCalibrationWorkflow(BoardDriver& driver);
-
+  explicit BoardCalibration(BoardDriver& driver);
   bool load();
   void save();
   bool run();
-  void trigger();
 
- private:
   enum class Axis : uint8_t {
     ROWS = 0,
     COLS = 1,

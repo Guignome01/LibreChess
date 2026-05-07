@@ -2,12 +2,12 @@
 #define BOARD_ASSISTANCE_H
 
 #include "board/core/colors.h"
-#include "board/core/system.h"
 #include "game.h"
 #include "logger.h"
 
 #include <stdint.h>
 
+class BoardController;
 class BoardLayering;
 
 /// Optional move hinting mode for board-owned chess assistance.
@@ -21,7 +21,7 @@ enum class BoardAssistanceLevel : uint8_t {
 /// route through BoardLayering so highlights, prompts, and overlays compose.
 class BoardAssistance {
  public:
-  BoardAssistance(BoardSystem& system, BoardLayering& layering,
+  BoardAssistance(BoardController& board, BoardLayering& layering,
                   BoardAssistanceLevel level = BoardAssistanceLevel::LEGAL_MOVES);
 
   void setLevel(BoardAssistanceLevel level) { level_ = level; }
@@ -39,7 +39,7 @@ class BoardAssistance {
                                  LibreChess::Log& logger);
 
  private:
-  BoardSystem& system_;
+  BoardController& board_;
   BoardLayering& layering_;
   BoardAssistanceLevel level_;
 };

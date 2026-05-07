@@ -9,11 +9,7 @@
 class BoardCalibration;
 class BoardDiagnostics;
 class BoardGameplay;
-class BoardGui;
 class BoardMenu;
-class BoardServices;
-class BoardStatus;
-class BoardSystem;
 
 namespace LibreChess {
 namespace board {
@@ -49,12 +45,8 @@ inline bool operator!=(BoardSquare lhs, BoardSquare rhs) {
 }  // namespace board
 }  // namespace LibreChess
 
-/// Public physical-board entry point. Owns the low-level board internals
-/// (BoardSystem, BoardGui) but exposes them only to a bounded friend list of
-/// board-internal workflow classes via the BoardServices facade. External
-/// firmware may construct, destroy, and configure LED settings on a Board,
-/// but never touches BoardSystem, BoardGui, BoardLayering, BoardServices,
-/// BoardFeedback, or BoardAssistance directly.
+/// Public physical-board package root. It owns one internal BoardController
+/// runtime plus the long-lived board workflows that external firmware consumes.
 class Board {
  public:
   Board();
@@ -79,19 +71,25 @@ class Board {
   /// firmware-side timing loops with the board's sensor cadence.
   uint16_t sensorReadDelayMs() const;
 
+  /// Gameplay workflow for physical chess interactions.
+  BoardGameplay& gameplay();
+
+  /// Game-selection and confirmation menu workflow.
+  BoardMenu& menu();
+
+  /// Sensor diagnostics workflow.
+  BoardDiagnostics& diagnostics();
+
+  /// Calibration trigger workflow.
+  BoardCalibration& calibration();
+
+  /// Clear all board LEDs through the layered render path.
+  void clearAllLEDs(bool show = true);
+
+  /// Run the synchronous WiFi-connecting animation.
+  void showConnectingAnimation();
+
  private:
-  // Bounded friend list: only board-internal workflow classes may reach the
-  // BoardServices facade. Anything outside this list must use the public API.
-  friend class BoardCalibration;
-  friend class BoardDiagnostics;
-  friend class BoardGameplay;
-  friend class BoardMenu;
-  friend class BoardStatus;
-
-  /// Internal facade shared by friend workflow classes. Only callers in the
-  /// friend list above may call this.
-  BoardServices& services();
-
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };
