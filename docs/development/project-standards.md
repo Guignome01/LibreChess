@@ -22,7 +22,7 @@ Formatting is enforced via `.clang-format` at the project root (Google style bas
 
 Each class owns a single responsibility and never crosses into another's domain:
 
-- `Board` is the public physical-board package root for lifecycle, LED settings, timing, status helpers, and owned workflow access. It privately owns one `BoardController`, which composes `BoardDriver`, `BoardScheduler`, `BoardLayering`, `BoardFeedback`, `BoardAssistance`, and `BoardStack`. `BoardGameplay`, `BoardDiagnostics`, `BoardCalibration`, and `BoardMenu` inherit `BoardWorkflow` and share that controller; outside firmware reaches them through `Board` accessors instead of constructing them separately. `BoardLayering` owns persistent base + overlay visual composition. `BoardController` is the internal hardware/settings/scheduler/runtime boundary consumed by board-local modules. `BoardDriver` handles low-level hardware interaction (LEDs, sensors, settings); `BoardScheduler` owns animation queue concurrency; `BoardGameplay` owns physical chess interaction transitions. No board module mutates chess state.
+- `Board` is the public physical-board package root for lifecycle (`begin()` returns `bool`), LED settings, timing, status helpers, `clearAllLayers()`, and owned workflow access. It privately owns one `BoardRuntime`, which composes `BoardDriver`, `BoardCanvas`, `BoardInput`, `BoardEffects`, and `BoardRenderer`. `BoardGameplay`, `BoardDiagnostics`, `BoardCalibration`, and `BoardMenu` are long-lived workflows under `src/board/workflows/` that take a `BoardRuntime&`; outside firmware reaches them through `Board` accessors instead of constructing them separately. `BoardCanvas` owns the 7-layer pixel buffer (BACKGROUND/GAME/ASSISTANCE/FEEDBACK/MENU/EFFECT/OVERRIDE); `BoardEffects` owns slot-based animations addressed by `BoardEffectHandle` and a retained scratch canvas for full-layer composition; `BoardRenderer` runs the FreeRTOS render task that flushes the resolved frame through `BoardDriver`; `BoardRuntime` runs the sensor poll task and synchronizes access to the pure `BoardInput` event ring through input helper methods. `BoardDriver` handles low-level hardware interaction (LEDs, sensors, settings). No board module mutates chess state.
 - `movegen`/`rules` namespaces implement chess rules and move generation. No hardware access, no network calls.
 - `WiFiManagerESP32` manages WiFi, the web server, and API endpoints. Doesn't touch the board hardware directly.
 - `History` + concrete storage backends such as `LittleFSStorage` own game persistence. Don't know about sensors or LEDs.
@@ -41,13 +41,12 @@ New features should build on existing infrastructure. For example, `LichessProvi
 
 ## LED Access Rules
 
-- Multi-step LED updates inside `src/board/` must use `BoardLayering` for persistent base/overlay visuals or `BoardController::batchLEDs()` for low-level LED batches rather than manual mutex handling. Code outside `src/board/` should call semantic `Board` methods instead of raw LED APIs.
-- Single animations are factory-built `AnimationJob` values submitted through `BoardController::runAnimation()` and acquire the mutex automatically — no guard needed.
-- Long-running animations start through `BoardController::startAnimation(AnimationType::THINKING/WAITING)` and return `std::atomic<bool>*` — cancel via `stopAndWaitForAnimation(flag)`.
-- Use `waitForAnimationQueueDrain()` inside board-local code as a barrier before writing LEDs directly.
+- All canvas mutation inside `src/board/` must go through `BoardRuntime::lockCanvas()`, which returns a `CanvasGuard` RAII handle (canvas + effects refs under the runtime mutex). Code outside `src/board/` calls semantic `Board` methods (e.g. `clearAllLayers()`, `startConnectingStatus()`); raw LED writes are not exposed.
+- One-shot animations (blink, flash, capture, promotion, firework) are launched via `BoardEffects::start*` helpers; they auto-clear when their step function reports completion.
+- Looping animations (thinking, waiting, connecting) return a `BoardEffectHandle{slot, generation}`; cancel by handing the handle back to the helper that owns it (e.g. `BoardGameplay::stopStatusAnimation(handle)`, `Board::stopConnectingStatus(handle)`). Generation counters guard against ABA on slot reuse — stale handles silently no-op.
 - Colors in `LedColors` have fixed semantic meanings (see [architecture.md](architecture.md#color-semantics)). Use consistently.
 
-- Outside `src/board/`, use `Board::sensorReadDelayMs()` instead of board-local macros such as `SENSOR_READ_DELAY_MS`.
+- Outside `src/board/`, use `Board::cadenceMs()` instead of board-local macros such as `SENSOR_READ_DELAY_MS`.
 
 ## ESP32 Patterns
 

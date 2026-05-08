@@ -1,6 +1,6 @@
 #include "board/board.h"
-#include "board/diagnostics.h"
-#include "board/menu.h"
+#include "board/workflows/diagnostics.h"
+#include "board/workflows/menu.h"
 #include "game_mode/player_mode.h"
 #include "game_mode/bot_mode.h"
 #include "engine/stockfish/stockfish_provider.h"
@@ -76,7 +76,12 @@ void setup() {
   else
     Serial.println("LittleFS mounted successfully");
   storage.initialize();
-  physicalBoard.begin();
+  if (!physicalBoard.begin()) {
+    Serial.println("ERROR: Board initialization failed; halting.");
+    while (true) {
+      delay(1000);
+    }
+  }
   wifiManager.setGameRef(&chess);
   wifiManager.begin();
   Serial.println();
@@ -205,7 +210,7 @@ void loop() {
       modeInitialized = false;
       physicalBoard.menu().clear();
       wifiManager.resetGameSelection();
-      physicalBoard.clearAllLEDs();
+      physicalBoard.clearAllLayers();
     }
   }
 
@@ -213,7 +218,7 @@ void loop() {
     BoardMenu::GameSelection selection = physicalBoard.menu().poll();
     if (selection.hasSelection())
       handleGameSelection(selection);
-    delay(physicalBoard.sensorReadDelayMs());
+    delay(physicalBoard.cadenceMs());
     return;
   }
   // Game mode selected
@@ -281,7 +286,7 @@ void loop() {
       break;
   }
 
-  delay(physicalBoard.sensorReadDelayMs());
+  delay(physicalBoard.cadenceMs());
 }
 
 void enterGameSelection() {

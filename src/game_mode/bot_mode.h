@@ -3,7 +3,7 @@
 
 #include "game_mode.h"
 #include "engine/engine_provider.h"
-#include <atomic>
+#include "board/core/effects.h"
 
 // State machine for the engine turn cycle.
 enum class BotState { PLAYER_TURN, ENGINE_THINKING };
@@ -26,7 +26,7 @@ class BotMode : public GameMode {
   char playerColor_ = 'w';
   BotState botState_ = BotState::PLAYER_TURN;
   int engineRetryCount_ = 0;
-  std::atomic<bool>* thinkingAnimation_ = nullptr;
+  BoardEffectHandle thinkingAnimation_;
   bool wasThinkingBeforeResign_ = false;
 
   /// Convert stored char playerColor to Color enum.

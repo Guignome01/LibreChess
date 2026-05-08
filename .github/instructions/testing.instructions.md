@@ -23,13 +23,14 @@ Two build environments: `[env:native]` for all tests except statistics, `[env:na
 | Run benchmarks + statistics | `pio test -e native -f test_benchmarks` then `pio test -e native_stats` |
 | Run core suite | `pio test -e native -f test_core` |
 | Run game suite | `pio test -e native -f test_game` |
+| Run board suite | `pio test -e native -f test_board` |
 | Run perft suite | `pio test -e native -f test_perft` |
 | Run benchmarks | `pio test -e native -f test_benchmarks` |
 | Run statistics | `pio test -e native_stats` |
 
 ## File Structure
 
-Tests are split into suites mirroring the library structure (`lib/core/`, `lib/game/`), plus independent position, benchmark, statistics, and perft suites. Each suite compiles into its own binary. Shared globals live in `test_shared.cpp` at the test root (compiled into every suite).
+Tests are split into suites mirroring the library structure (`lib/core/`, `lib/game/`), plus independent board primitive, position, benchmark, statistics, and perft suites. Each suite compiles into its own binary. Shared globals live in `test_shared.cpp` at the test root (compiled into every suite).
 
 ```
 test/
@@ -57,6 +58,11 @@ test/
 │   ├── test_game.cpp                    Game: lifecycle, draws, observer, history, undo/redo, getHistory
 │   ├── test_history.cpp                 History: move log with undo/redo, branch-on-undo, compact encode/decode
 │   └── test_history_persistence.cpp     Recording: persistence, header flush, replay, branch-truncation, encode/decode
+├── test_board/                          Arduino-free board primitive tests
+│   ├── test_all.cpp                    Main entry: includes pure board source units once and registers board tests
+│   ├── test_canvas.cpp                  BoardCanvas: layer composition, dirty flag, bounds, rect/fill/line/ring helpers
+│   ├── test_input.cpp                   BoardInput: baseline sync, edge events, queue consumption, overflow, bounds
+│   └── test_effects.cpp                 BoardEffects: slot lifecycle, stale handles, sibling composition, looping/finite effects
 ├── suites/                              Shared EPD test files (no .cpp — not compiled)
 │   ├── wac.epd                          Win At Chess — 300 positions (Reinfeld/Wilson, CPW verbatim)
 │   ├── bk.epd                           Bratko-Kopec — 24 positions (Bratko/Kopec, CPW verbatim)

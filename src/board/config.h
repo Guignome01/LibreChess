@@ -1,7 +1,8 @@
 #ifndef BOARD_CONFIG_H
 #define BOARD_CONFIG_H
 
-#include "gui/menu.h"
+#include "board/core/colors.h"
+#include "board/menus/view.h"
 
 // ---------------------------
 // Menu Item IDs

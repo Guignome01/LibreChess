@@ -1,5 +1,5 @@
 #include "game_mode.h"
-#include "board/gameplay.h"
+#include "board/workflows/gameplay.h"
 #include "game.h"
 #include "wifi_manager_esp32.h"
 
@@ -74,7 +74,6 @@ bool GameMode::processResign() {
   if (!resignPending_) return false;
   resignPending_ = false;
   completeResign(chess_->sideToMove());
-  gameplay_->syncOccupancyBaseline();
   return true;
 }
 

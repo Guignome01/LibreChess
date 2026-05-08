@@ -1,6 +1,6 @@
 #include "wifi_manager_esp32.h"
 #include "board/board.h"
-#include "board/calibration.h"
+#include "board/workflows/calibration.h"
 #include "game.h"
 #include "engine/lichess/lichess_config.h"
 #include "shared/utils.h"
@@ -353,11 +353,13 @@ bool WiFiManagerESP32::connectToNetwork(uint8_t index) {
   WiFi.begin(net.ssid.c_str(), net.password.c_str());
 
   int attempts = 0;
+  BoardEffectHandle connectingHandle = board_->startConnectingStatus();
   while (WiFi.status() != WL_CONNECTED && attempts < 10) {
-    board_->showConnectingAnimation();
+    delay(board_->cadenceMs() * 4);
     attempts++;
-    Serial.printf("  Attempt %d/10 — status: %d\n", attempts, WiFi.status());
+    Serial.printf("  Attempt %d/10 \u2014 status: %d\n", attempts, WiFi.status());
   }
+  board_->stopConnectingStatus(connectingHandle);
 
   if (WiFi.status() == WL_CONNECTED) {
     connectedNetworkIndex = index;

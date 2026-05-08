@@ -1,7 +1,7 @@
-#include "calibration.h"
+#include "board/workflows/calibration.h"
 
-#include "core/controller.h"
-#include "core/driver.h"
+#include "board/core/driver.h"
+#include "board/core/runtime.h"
 #include "game.h"
 #include "shared/utils.h"
 
@@ -10,7 +10,7 @@
 
 namespace {
 
-// 74HC595 shift register pin mapping: bits are sent MSB first, so bit 7 shifts to QH, bit 0 stays at QA.
+// 74HC595 shift register pin mapping: bits are sent MSB first.
 static int shiftRegPin(int col) {
   const int pins[] = {15, 1, 2, 3, 4, 5, 6, 7};
   return (col >= 0 && col < 8) ? pins[col] : -1;
@@ -20,10 +20,21 @@ static char shiftRegOutput(int col) {
   return (col >= 0 && col < 8) ? static_cast<char>('A' + col) : '?';
 }
 
+template <size_t N>
+bool isPermutation(const uint8_t (&values)[N]) {
+  bool seen[N] = {false};
+  for (size_t i = 0; i < N; ++i) {
+    if (values[i] >= N || seen[values[i]]) return false;
+    seen[values[i]] = true;
+  }
+  return true;
+}
+
 }  // namespace
 
-BoardCalibration::BoardCalibration(BoardController& board)
-    : BoardWorkflow(board), driver_(board.driver_) {}
+BoardCalibration::BoardCalibration(BoardRuntime& runtime) : driver_(runtime.driver()) {}
+
+BoardCalibration::BoardCalibration(BoardDriver& driver) : driver_(driver) {}
 
 void BoardCalibration::trigger() {
   if (!SystemUtils::ensureNvsInitialized()) {
@@ -38,8 +49,6 @@ void BoardCalibration::trigger() {
   ESP.restart();
 }
 
-BoardCalibration::BoardCalibration(BoardDriver& driver) : BoardWorkflow(), driver_(driver) {}
-
 bool BoardCalibration::load() {
   if (!SystemUtils::ensureNvsInitialized()) {
     Serial.println("NVS init failed - calibration not loaded");
@@ -47,53 +56,75 @@ bool BoardCalibration::load() {
   }
   Preferences prefs;
   prefs.begin("boardCal", false);
-  uint8_t ver = prefs.getUChar("ver", 0);
-  if (ver != 1) {
+  auto fail = [&]() {
     prefs.end();
     return false;
+  };
+  uint8_t ver = prefs.getUChar("ver", 0);
+  if (ver != 1) {
+    return fail();
   }
 
   size_t rowPinsLen = prefs.getBytesLength("rowPins");
   if (rowPinsLen != NUM_ROWS) {
-    prefs.end();
-    return false;
+    return fail();
   }
   uint8_t savedRowPins[NUM_ROWS];
-  prefs.getBytes("rowPins", savedRowPins, sizeof(savedRowPins));
+  if (prefs.getBytes("rowPins", savedRowPins, sizeof(savedRowPins)) != sizeof(savedRowPins)) {
+    return fail();
+  }
   for (int i = 0; i < NUM_ROWS; i++)
     if (savedRowPins[i] != static_cast<uint8_t>(rowPins[i])) {
-      prefs.end();
-      return false;
+      return fail();
     }
+
+  if (prefs.getBytesLength("srPins") != 3) {
+    return fail();
+  }
   uint8_t savedSRPins[3];
-  prefs.getBytes("srPins", savedSRPins, sizeof(savedSRPins));
-  if (savedSRPins[0] != static_cast<uint8_t>(SR_CLK_PIN) || savedSRPins[1] != static_cast<uint8_t>(SR_LATCH_PIN) || savedSRPins[2] != static_cast<uint8_t>(SR_SER_DATA_PIN)) {
-    prefs.end();
-    return false;
+  if (prefs.getBytes("srPins", savedSRPins, sizeof(savedSRPins)) != sizeof(savedSRPins)) {
+    return fail();
+  }
+  if (savedSRPins[0] != static_cast<uint8_t>(SR_CLK_PIN) || savedSRPins[1] != static_cast<uint8_t>(SR_LATCH_PIN) ||
+      savedSRPins[2] != static_cast<uint8_t>(SR_SER_DATA_PIN)) {
+    return fail();
   }
 
   size_t rowLen = prefs.getBytesLength("row");
   size_t colLen = prefs.getBytesLength("col");
   size_t ledLen = prefs.getBytesLength("led");
   if (rowLen != NUM_ROWS || colLen != NUM_COLS || ledLen != LED_COUNT) {
-    prefs.end();
-    return false;
+    return fail();
   }
-  driver_.setCalibrationSwapAxes(prefs.getUChar("swap", 0));
+  const uint8_t savedSwap = prefs.getUChar("swap", 0xFF);
+  if (savedSwap > 1) {
+    return fail();
+  }
+
   uint8_t rowMap[NUM_ROWS];
   uint8_t colMap[NUM_COLS];
-  prefs.getBytes("row", rowMap, NUM_ROWS);
-  prefs.getBytes("col", colMap, NUM_COLS);
-  for (int i = 0; i < NUM_ROWS; i++)
-    driver_.setLogicalRowMapping(i, rowMap[i]);
-  for (int i = 0; i < NUM_COLS; i++)
-    driver_.setLogicalColMapping(i, colMap[i]);
+  if (prefs.getBytes("row", rowMap, NUM_ROWS) != NUM_ROWS ||
+      prefs.getBytes("col", colMap, NUM_COLS) != NUM_COLS) {
+    return fail();
+  }
+  if (!isPermutation(rowMap) || !isPermutation(colMap)) {
+    return fail();
+  }
+
   uint8_t ledFlat[LED_COUNT];
-  prefs.getBytes("led", ledFlat, LED_COUNT);
+  if (prefs.getBytes("led", ledFlat, LED_COUNT) != LED_COUNT) {
+    return fail();
+  }
+  if (!isPermutation(ledFlat)) {
+    return fail();
+  }
+
+  driver_.setCalibrationSwapAxes(savedSwap);
+  for (int i = 0; i < NUM_ROWS; i++) driver_.setLogicalRowMapping(i, rowMap[i]);
+  for (int i = 0; i < NUM_COLS; i++) driver_.setLogicalColMapping(i, colMap[i]);
   int idx = 0;
   for (int row = 0; row < NUM_ROWS; row++)
-    for (int col = 0; col < NUM_COLS; col++)
-      driver_.setLedCalibrationIndex(row, col, ledFlat[idx++]);
+    for (int col = 0; col < NUM_COLS; col++) driver_.setLedCalibrationIndex(row, col, ledFlat[idx++]);
   prefs.end();
   Serial.println("Board calibration loaded from NVS");
   return true;
@@ -108,25 +139,22 @@ void BoardCalibration::save() {
   prefs.begin("boardCal", false);
   prefs.putUChar("ver", 1);
   uint8_t rowPinsU8[NUM_ROWS];
-  for (int i = 0; i < NUM_ROWS; i++)
-    rowPinsU8[i] = static_cast<uint8_t>(rowPins[i]);
+  for (int i = 0; i < NUM_ROWS; i++) rowPinsU8[i] = static_cast<uint8_t>(rowPins[i]);
   prefs.putBytes("rowPins", rowPinsU8, sizeof(rowPinsU8));
-  uint8_t srPins[3] = {static_cast<uint8_t>(SR_CLK_PIN), static_cast<uint8_t>(SR_LATCH_PIN), static_cast<uint8_t>(SR_SER_DATA_PIN)};
+  uint8_t srPins[3] = {static_cast<uint8_t>(SR_CLK_PIN), static_cast<uint8_t>(SR_LATCH_PIN),
+                       static_cast<uint8_t>(SR_SER_DATA_PIN)};
   prefs.putBytes("srPins", srPins, sizeof(srPins));
   prefs.putUChar("swap", driver_.calibrationSwapAxes());
   uint8_t rowMap[NUM_ROWS];
   uint8_t colMap[NUM_COLS];
-  for (int i = 0; i < NUM_ROWS; i++)
-    rowMap[i] = driver_.logicalRowMapping(i);
-  for (int i = 0; i < NUM_COLS; i++)
-    colMap[i] = driver_.logicalColMapping(i);
+  for (int i = 0; i < NUM_ROWS; i++) rowMap[i] = driver_.logicalRowMapping(i);
+  for (int i = 0; i < NUM_COLS; i++) colMap[i] = driver_.logicalColMapping(i);
   prefs.putBytes("row", rowMap, NUM_ROWS);
   prefs.putBytes("col", colMap, NUM_COLS);
   uint8_t ledFlat[LED_COUNT];
   int idx = 0;
   for (int row = 0; row < NUM_ROWS; row++)
-    for (int col = 0; col < NUM_COLS; col++)
-      ledFlat[idx++] = driver_.ledCalibrationIndex(row, col);
+    for (int col = 0; col < NUM_COLS; col++) ledFlat[idx++] = driver_.ledCalibrationIndex(row, col);
   prefs.putBytes("led", ledFlat, LED_COUNT);
   prefs.end();
   Serial.println("Board calibration saved to NVS");
@@ -172,12 +200,14 @@ bool BoardCalibration::run() {
   Serial.println("================================================================================");
   waitForBoardEmpty();
 
-  bool swapAxes1 = calibrateAxis(Axis::ROWS, false);
-  bool swapAxes2 = calibrateAxis(Axis::COLS, swapAxes1);
-  if (swapAxes1 != swapAxes2) {
-    Serial.println("Inconsistent axis orientation detected during calibration. Restarting calibration.");
+  bool swapAxes1 = false;
+  bool swapAxes2 = false;
+  while (true) {
+    swapAxes1 = calibrateAxis(Axis::ROWS, false);
+    swapAxes2 = calibrateAxis(Axis::COLS, swapAxes1);
+    if (swapAxes1 == swapAxes2) break;
+    Serial.println("Inconsistent axis orientation detected during calibration. Restarting axis calibration.");
     showCalibrationError();
-    return run();
   }
   driver_.setCalibrationSwapAxes(swapAxes1 ? 1 : 0);
 
@@ -206,14 +236,17 @@ bool BoardCalibration::run() {
     uint8_t logicalRow = driver_.logicalRowMapping(driver_.calibrationSwapAxes() ? col : row);
     uint8_t logicalCol = driver_.logicalColMapping(driver_.calibrationSwapAxes() ? row : col);
     if (logicalUsed[logicalRow][logicalCol]) {
-      Serial.printf("Duplicate square %c%c detected. Retry LED %d.\n", static_cast<char>('a' + logicalCol), static_cast<char>('8' - logicalRow), pixelIndex);
+      Serial.printf("Duplicate square %c%c detected. Retry LED %d.\n",
+                    static_cast<char>('a' + logicalCol),
+                    static_cast<char>('8' - logicalRow), pixelIndex);
       showCalibrationError();
       pixelIndex--;
       continue;
     }
     logicalUsed[logicalRow][logicalCol] = true;
     driver_.setLedCalibrationIndex(logicalRow, logicalCol, pixelIndex);
-    Serial.printf("  LED %d -> %c%c\n", pixelIndex, static_cast<char>('a' + logicalCol), static_cast<char>('8' - logicalRow));
+    Serial.printf("  LED %d -> %c%c\n", pixelIndex, static_cast<char>('a' + logicalCol),
+                  static_cast<char>('8' - logicalRow));
 
     displayCalibrationLEDs(pixelIndex + 1);
 
@@ -240,14 +273,11 @@ bool BoardCalibration::waitForBoardEmpty(unsigned long stableMs) {
     int pressedCount = 0;
     for (int row = 0; row < NUM_ROWS; row++)
       for (int col = 0; col < NUM_COLS; col++)
-        if (rawState[row][col])
-          pressedCount++;
+        if (rawState[row][col]) pressedCount++;
 
     if (pressedCount == 0) {
-      if (stableStart == 0)
-        stableStart = millis();
-      if (millis() - stableStart >= stableMs)
-        return true;
+      if (stableStart == 0) stableStart = millis();
+      if (millis() - stableStart >= stableMs) return true;
     } else {
       stableStart = 0;
       unsigned long now = millis();
@@ -257,7 +287,8 @@ bool BoardCalibration::waitForBoardEmpty(unsigned long stableMs) {
         for (int row = 0; row < NUM_ROWS; row++)
           for (int col = 0; col < NUM_COLS; col++)
             if (rawState[row][col])
-              Serial.printf("  GPIO %d + 74HC595 Q%c (pin %d)\n", rowPins[row], shiftRegOutput(col), shiftRegPin(col));
+              Serial.printf("  GPIO %d + 74HC595 Q%c (pin %d)\n", rowPins[row],
+                            shiftRegOutput(col), shiftRegPin(col));
       }
     }
     delay(SENSOR_READ_DELAY_MS);
@@ -287,7 +318,8 @@ bool BoardCalibration::waitForSingleRawPress(int& rawRow, int& rawCol, unsigned 
       if (foundRow == lastRow && foundCol == lastCol) {
         if (stableStart == 0) {
           stableStart = millis();
-          Serial.printf("  Detect start: GPIO %d + 74HC595 Q%c (pin %d)\n", rowPins[foundRow], shiftRegOutput(foundCol), shiftRegPin(foundCol));
+          Serial.printf("  Detect start: GPIO %d + 74HC595 Q%c (pin %d)\n", rowPins[foundRow],
+                        shiftRegOutput(foundCol), shiftRegPin(foundCol));
         }
         if (millis() - stableStart >= stableMs) {
           rawRow = foundRow;
@@ -297,7 +329,9 @@ bool BoardCalibration::waitForSingleRawPress(int& rawRow, int& rawCol, unsigned 
       } else {
         if (lastRow >= 0 && lastCol >= 0) {
           Serial.println("Sensor reading unstable - detected square changed. Hold piece steady on one square.");
-          Serial.printf("  Previous: GPIO %d + 74HC595 Q%c (pin %d), Current: GPIO %d + 74HC595 Q%c (pin %d)\n", rowPins[lastRow], shiftRegOutput(lastCol), shiftRegPin(lastCol), rowPins[foundRow], shiftRegOutput(foundCol), shiftRegPin(foundCol));
+          Serial.printf("  Previous: GPIO %d + 74HC595 Q%c (pin %d), Current: GPIO %d + 74HC595 Q%c (pin %d)\n",
+                        rowPins[lastRow], shiftRegOutput(lastCol), shiftRegPin(lastCol), rowPins[foundRow],
+                        shiftRegOutput(foundCol), shiftRegPin(foundCol));
         }
         lastRow = foundRow;
         lastCol = foundCol;
@@ -314,7 +348,8 @@ bool BoardCalibration::waitForSingleRawPress(int& rawRow, int& rawCol, unsigned 
           for (int row = 0; row < NUM_ROWS; row++)
             for (int col = 0; col < NUM_COLS; col++)
               if (rawState[row][col])
-                Serial.printf("  GPIO %d + 74HC595 Q%c (pin %d)\n", rowPins[row], shiftRegOutput(col), shiftRegPin(col));
+                Serial.printf("  GPIO %d + 74HC595 Q%c (pin %d)\n", rowPins[row],
+                              shiftRegOutput(col), shiftRegPin(col));
         }
       }
       stableStart = 0;
@@ -324,8 +359,7 @@ bool BoardCalibration::waitForSingleRawPress(int& rawRow, int& rawCol, unsigned 
 }
 
 void BoardCalibration::showCalibrationError() {
-  for (int i = 0; i < LED_COUNT; i++)
-    driver_.setRawCalibrationLED(i, LedColors::Red);
+  for (int i = 0; i < LED_COUNT; i++) driver_.setRawCalibrationLED(i, LedColors::Red);
   driver_.showLEDs();
   delay(500);
   waitForBoardEmpty();
@@ -342,8 +376,7 @@ bool BoardCalibration::calibrateAxis(Axis axis, bool firstAxisSwapped) {
   int firstRow = -1;
   int firstCol = -1;
   uint8_t counts[NUM_ROWS] = {0};
-  for (size_t i = 0; i < NUM_ROWS; i++)
-    setAxisMapping(axis, i, 0xFF);
+  for (size_t i = 0; i < NUM_ROWS; i++) setAxisMapping(axis, i, 0xFF);
 
   int expectedRawPin = -1;
   bool useRow = true;
@@ -370,15 +403,19 @@ bool BoardCalibration::calibrateAxis(Axis axis, bool firstAxisSwapped) {
     int row = 0;
     int col = 0;
     waitForSingleRawPress(row, col);
-    Serial.printf("  Detected: row=%d (GPIO %d), col=%d (74HC595 Q%c, pin %d)\n", row, rowPins[row], col, shiftRegOutput(col), shiftRegPin(col));
+    Serial.printf("  Detected: row=%d (GPIO %d), col=%d (74HC595 Q%c, pin %d)\n", row,
+                  rowPins[row], col, shiftRegOutput(col), shiftRegPin(col));
 
     if (axis == Axis::COLS && expectedRawPin != -1) {
       int actualPin = useRow ? row : col;
       if (actualPin != expectedRawPin) {
         if (useRow)
-          Serial.printf("[ERROR] Expected piece on rank 1 = row %d (GPIO %d) but detected on row %d (GPIO %d) which is not rank 1. Place piece on %s.\n", expectedRawPin, rowPins[expectedRawPin], actualPin, rowPins[actualPin], square);
+          Serial.printf("[ERROR] Expected piece on rank 1 = row %d (GPIO %d) but detected on row %d (GPIO %d) which is not rank 1. Place piece on %s.\n",
+                        expectedRawPin, rowPins[expectedRawPin], actualPin, rowPins[actualPin], square);
         else
-          Serial.printf("[ERROR] Expected piece on rank 1 = col %d (74HC595 Q%c, pin %d) but detected on col %d (74HC595 Q%c, pin %d) which is not rank 1. Place piece on %s.\n", expectedRawPin, shiftRegOutput(expectedRawPin), shiftRegPin(expectedRawPin), actualPin, shiftRegOutput(actualPin), shiftRegPin(actualPin), square);
+          Serial.printf("[ERROR] Expected piece on rank 1 = col %d (74HC595 Q%c, pin %d) but detected on col %d (74HC595 Q%c, pin %d) which is not rank 1. Place piece on %s.\n",
+                        expectedRawPin, shiftRegOutput(expectedRawPin), shiftRegPin(expectedRawPin),
+                        actualPin, shiftRegOutput(actualPin), shiftRegPin(actualPin), square);
         showCalibrationError();
         i--;
         continue;
@@ -398,17 +435,24 @@ bool BoardCalibration::calibrateAxis(Axis axis, bool firstAxisSwapped) {
         detectedAxis = Axis::COLS;
         setAxisMapping(axis, firstCol, static_cast<uint8_t>(i - 1));
         counts[firstCol]++;
-        Serial.printf("%s calibration using cols %s\n", axisToChessRankFile(axis), axis != detectedAxis ? "(axis swap)" : "(no axis swap)");
+        Serial.printf("%s calibration using cols %s\n", axisToChessRankFile(axis),
+                      axis != detectedAxis ? "(axis swap)" : "(no axis swap)");
       } else if (col == firstCol && row != firstRow) {
         detectedAxis = Axis::ROWS;
         setAxisMapping(axis, firstRow, static_cast<uint8_t>(i - 1));
         counts[firstRow]++;
-        Serial.printf("%s calibration using rows %s\n", axisToChessRankFile(axis), axis != detectedAxis ? "(axis swap)" : "(no axis swap)");
+        Serial.printf("%s calibration using rows %s\n", axisToChessRankFile(axis),
+                      axis != detectedAxis ? "(axis swap)" : "(no axis swap)");
       } else {
-        Serial.printf("\n============== AMBIGUOUS %s CALIBRATION ==============\n", axisToChessRankFile(axis));
-        Serial.printf("First press:  row=%d (GPIO %d), col=%d (74HC595 Q%c, pin %d)\n", firstRow, rowPins[firstRow], firstCol, shiftRegOutput(firstCol), shiftRegPin(firstCol));
-        Serial.printf("Second press: row=%d (GPIO %d), col=%d (74HC595 Q%c, pin %d)\n", row, rowPins[row], col, shiftRegOutput(col), shiftRegPin(col));
-        Serial.printf("PROBLEM: %s\n", (row == firstRow && col == firstCol) ? "Both presses detected by the SAME sensor" : "Both row AND column changed between presses");
+        Serial.printf("\n============== AMBIGUOUS %s CALIBRATION ==============\n",
+                      axisToChessRankFile(axis));
+        Serial.printf("First press:  row=%d (GPIO %d), col=%d (74HC595 Q%c, pin %d)\n", firstRow,
+                      rowPins[firstRow], firstCol, shiftRegOutput(firstCol), shiftRegPin(firstCol));
+        Serial.printf("Second press: row=%d (GPIO %d), col=%d (74HC595 Q%c, pin %d)\n", row,
+                      rowPins[row], col, shiftRegOutput(col), shiftRegPin(col));
+        Serial.printf("PROBLEM: %s\n",
+                      (row == firstRow && col == firstCol) ? "Both presses detected by the SAME sensor"
+                                                           : "Both row AND column changed between presses");
         Serial.println("==========================================================\n");
         showCalibrationError();
         i = static_cast<size_t>(-1);
@@ -417,7 +461,8 @@ bool BoardCalibration::calibrateAxis(Axis axis, bool firstAxisSwapped) {
     }
 
     if (detectedAxis == Axis::UNKNOWN) {
-      Serial.printf("Ambiguous %s calibration (no orientation detected). Retry.\n", axisToChessRankFile(axis));
+      Serial.printf("Ambiguous %s calibration (no orientation detected). Retry.\n",
+                    axisToChessRankFile(axis));
       showCalibrationError();
       i = static_cast<size_t>(-1);
       continue;
@@ -428,13 +473,17 @@ bool BoardCalibration::calibrateAxis(Axis axis, bool firstAxisSwapped) {
       int assignedIndex = axisMapping(axis, pin);
       char assignedRankFile[8];
       if (axis == Axis::ROWS)
-        snprintf(assignedRankFile, sizeof(assignedRankFile), "rank %c", LibreChess::Game::rankChar(assignedIndex));
+        snprintf(assignedRankFile, sizeof(assignedRankFile), "rank %c",
+                 LibreChess::Game::rankChar(assignedIndex));
       else
-        snprintf(assignedRankFile, sizeof(assignedRankFile), "file %c", LibreChess::Game::fileChar(assignedIndex));
+        snprintf(assignedRankFile, sizeof(assignedRankFile), "file %c",
+                 LibreChess::Game::fileChar(assignedIndex));
       if (detectedAxis == Axis::ROWS)
-        Serial.printf("[ERROR] Row %d (GPIO %d) already has %s assigned. Retry %s.\n", pin, rowPins[pin], assignedRankFile, square);
+        Serial.printf("[ERROR] Row %d (GPIO %d) already has %s assigned. Retry %s.\n", pin,
+                      rowPins[pin], assignedRankFile, square);
       else
-        Serial.printf("[ERROR] Col %d (74HC595 Q%c, pin %d) already has %s assigned. Retry %s.\n", pin, shiftRegOutput(pin), shiftRegPin(pin), assignedRankFile, square);
+        Serial.printf("[ERROR] Col %d (74HC595 Q%c, pin %d) already has %s assigned. Retry %s.\n",
+                      pin, shiftRegOutput(pin), shiftRegPin(pin), assignedRankFile, square);
       showCalibrationError();
       i--;
       continue;

@@ -1,82 +1,66 @@
-#include "board.h"
+#include "board/board.h"
 
-#include "calibration.h"
-#include "core/controller.h"
-#include "diagnostics.h"
-#include "gameplay.h"
-#include "menu.h"
+#include "board/core/runtime.h"
+#include "board/gui/layers.h"
+#include "board/workflows/calibration.h"
+#include "board/workflows/diagnostics.h"
+#include "board/workflows/gameplay.h"
+#include "board/workflows/menu.h"
 
 #include <Arduino.h>
 
 struct Board::Impl {
-  BoardController controller;
+  BoardRuntime runtime;
   BoardGameplay gameplay;
   BoardDiagnostics diagnostics;
   BoardCalibration calibration;
   BoardMenu menu;
 
   Impl()
-    : controller(),
-      gameplay(controller),
-      diagnostics(controller),
-      calibration(controller),
-      menu(controller) {}
+      : runtime(),
+        gameplay(runtime),
+        diagnostics(runtime),
+        calibration(runtime),
+        menu(runtime) {}
 };
 
 Board::Board() : impl_(std::make_unique<Impl>()) {}
+Board::~Board() {
+  if (impl_) impl_->runtime.shutdown();
+}
 
-Board::~Board() = default;
-
-void Board::begin() {
-  if (!impl_->controller.begin()) {
-    Serial.println("Board scheduler initialization failed");
+bool Board::begin() {
+  const bool ok = impl_->runtime.begin();
+  if (!ok) {
+    Serial.println("Board runtime initialization failed");
   }
+  return ok;
 }
 
-uint8_t Board::getBrightness() const {
-  return impl_->controller.getBrightness();
+uint8_t Board::getBrightness() const { return impl_->runtime.getBrightness(); }
+uint8_t Board::getDimMultiplier() const { return impl_->runtime.getDimMultiplier(); }
+void Board::setBrightness(uint8_t value) { impl_->runtime.setBrightness(value); }
+void Board::setDimMultiplier(uint8_t value) { impl_->runtime.setDimMultiplier(value); }
+void Board::saveLedSettings() { impl_->runtime.saveLedSettings(); }
+uint16_t Board::cadenceMs() const { return impl_->runtime.cadenceMs(); }
+
+BoardGameplay& Board::gameplay() { return impl_->gameplay; }
+BoardMenu& Board::menu() { return impl_->menu; }
+BoardDiagnostics& Board::diagnostics() { return impl_->diagnostics; }
+BoardCalibration& Board::calibration() { return impl_->calibration; }
+
+void Board::clearAllLayers() {
+  auto g = impl_->runtime.lockCanvas();
+  g.canvas.clearAll();
+  g.effects.clearAll(g.canvas);
 }
 
-uint8_t Board::getDimMultiplier() const {
-  return impl_->controller.getDimMultiplier();
+BoardEffectHandle Board::startConnectingStatus() {
+  auto g = impl_->runtime.lockCanvas();
+  return g.effects.startConnecting(millis());
 }
 
-void Board::setBrightness(uint8_t value) {
-  impl_->controller.setBrightness(value);
-}
-
-void Board::setDimMultiplier(uint8_t value) {
-  impl_->controller.setDimMultiplier(value);
-}
-
-void Board::saveLedSettings() {
-  impl_->controller.saveLedSettings();
-}
-
-uint16_t Board::sensorReadDelayMs() const {
-  return impl_->controller.sensorReadDelayMs();
-}
-
-BoardGameplay& Board::gameplay() {
-  return impl_->gameplay;
-}
-
-BoardMenu& Board::menu() {
-  return impl_->menu;
-}
-
-BoardDiagnostics& Board::diagnostics() {
-  return impl_->diagnostics;
-}
-
-BoardCalibration& Board::calibration() {
-  return impl_->calibration;
-}
-
-void Board::clearAllLEDs(bool show) {
-  impl_->controller.clearAllLEDs(show);
-}
-
-void Board::showConnectingAnimation() {
-  impl_->controller.showConnectingAnimation();
+void Board::stopConnectingStatus(BoardEffectHandle& handle) {
+  auto g = impl_->runtime.lockCanvas();
+  g.effects.cancel(handle);
 }

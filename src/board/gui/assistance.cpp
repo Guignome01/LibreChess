@@ -1,193 +1,203 @@
-#include "assistance.h"
+#include "board/gui/assistance.h"
 
-#include "animations.h"
-#include "board/core/controller.h"
-#include "layering.h"
+#include "board/core/runtime.h"
+#include "board/gui/layers.h"
 
 #include <Arduino.h>
 
+// ---------------------------------------------------------------------------
+// BoardAssistance implementation
+// ---------------------------------------------------------------------------
+// Painting flows acquire the canvas guard for a single mutation, then
+// release. Wait loops use BoardRuntime's synchronized input helpers for
+// occupancy queries. The renderer keeps the painted highlights visible at
+// ~30 Hz without our involvement.
+// ---------------------------------------------------------------------------
+
 namespace {
 
-void waitForSquareEmpty(BoardController& board, int row, int col) {
-  while (board.occupied(row, col)) {
-    board.readSensors();
-    delay(SENSOR_READ_DELAY_MS);
-  }
+void waitSquareEmpty(BoardRuntime& runtime, int row, int col, uint16_t cadenceMs) {
+  while (runtime.inputOccupied(row, col)) delay(cadenceMs);
 }
 
-void waitForSquareOccupied(BoardController& board, int row, int col) {
-  while (!board.occupied(row, col)) {
-    board.readSensors();
-    delay(SENSOR_READ_DELAY_MS);
-  }
-}
-
-template <typename LEDWriter>
-void showMovePrompt(LEDWriter& leds, int fromRow, int fromCol, int toRow, int toCol,
-                    LedRGB destinationColor) {
-  leds.clearAllLEDs(false);
-  leds.setSquareLED(fromRow, fromCol, LedColors::Cyan);
-  leds.setSquareLED(toRow, toCol, destinationColor);
-  leds.showLEDs();
-}
-
-template <typename LEDWriter>
-void showDestinationPrompt(LEDWriter& leds, int row, int col, LedRGB color) {
-  leds.clearAllLEDs(false);
-  leds.setSquareLED(row, col, color);
-  leds.showLEDs();
+void waitSquareOccupied(BoardRuntime& runtime, int row, int col, uint16_t cadenceMs) {
+  while (!runtime.inputOccupied(row, col)) delay(cadenceMs);
 }
 
 }  // namespace
 
-BoardAssistance::BoardAssistance(BoardController& board, BoardLayering& layering, BoardAssistanceLevel level)
-  : board_(board), layering_(layering), level_(level) {}
+BoardAssistance::BoardAssistance(BoardRuntime& runtime, BoardAssistanceLevel level)
+    : runtime_(runtime), level_(level) {}
+
+void BoardAssistance::paintMovePrompt(int fromRow, int fromCol, int toRow, int toCol,
+                                      LedRGB destColor, int extraRow, int extraCol,
+                                      LedRGB extraColor) {
+  auto g = runtime_.lockCanvas();
+  g.canvas.clearLayer(BoardLayer::ASSISTANCE);
+  g.canvas.setPixel(BoardLayer::ASSISTANCE, fromRow, fromCol, LedColors::Cyan);
+  g.canvas.setPixel(BoardLayer::ASSISTANCE, toRow, toCol, destColor);
+  if (extraRow >= 0 && extraCol >= 0) {
+    g.canvas.setPixel(BoardLayer::ASSISTANCE, extraRow, extraCol, extraColor);
+  }
+}
+
+void BoardAssistance::paintDestinationOnly(int row, int col, LedRGB color) {
+  auto g = runtime_.lockCanvas();
+  g.canvas.clearLayer(BoardLayer::ASSISTANCE);
+  g.canvas.setPixel(BoardLayer::ASSISTANCE, row, col, color);
+}
 
 void BoardAssistance::waitForSetup(const LibreChess::Game& game, LibreChess::Log& logger) {
   logger.info("Set up the board in the required position...");
 
+  const uint16_t cadence = runtime_.cadenceMs();
   bool allCorrect = false;
   while (!allCorrect) {
-    board_.readSensors();
-
-    layering_.replaceBase([&](BoardLayering::LayerWriter& leds) {
+    bool occupied[8][8];
+    runtime_.copyInputOccupancy(occupied);
+    {
+      auto g = runtime_.lockCanvas();
+      g.canvas.clearLayer(BoardLayer::ASSISTANCE);
       allCorrect = true;
       game.forEachSquare([&](int row, int col, LibreChess::Piece piece) {
-        bool shouldHavePiece = !LibreChess::Game::isEmptySquare(piece);
-        bool hasPiece = board_.occupied(row, col);
+        const bool shouldHavePiece = !LibreChess::Game::isEmptySquare(piece);
+        const bool hasPiece = occupied[row][col];
         if (shouldHavePiece != hasPiece) allCorrect = false;
-        if (shouldHavePiece && !hasPiece)
-          leds.setSquareLED(row, col, LedColors::forPieceColor(LibreChess::Game::pieceColor(piece)));
-        else if (!shouldHavePiece && hasPiece)
-          leds.setSquareLED(row, col, LedColors::Red);
-        else
-          leds.setSquareLED(row, col, LedColors::Off);
+        if (shouldHavePiece && !hasPiece) {
+          g.canvas.setPixel(BoardLayer::ASSISTANCE, row, col,
+                            LedColors::forPieceColor(LibreChess::Game::pieceColor(piece)));
+        } else if (!shouldHavePiece && hasPiece) {
+          g.canvas.setPixel(BoardLayer::ASSISTANCE, row, col, LedColors::Red);
+        }
       });
-      leds.showLEDs();
-    });
-
-    delay(SENSOR_READ_DELAY_MS);
+    }
+    if (!allCorrect) delay(cadence);
   }
 
   logger.info("Board setup complete! Game starting...");
-  layering_.clearBase(false);
-  board_.runAnimation(AnimationJob::firework());
-  board_.readSensors();
+  {
+    auto g = runtime_.lockCanvas();
+    g.canvas.clearLayer(BoardLayer::ASSISTANCE);
+    g.effects.startFirework(LedColors::Yellow, millis());
+  }
+  runtime_.clearInputEvents();
 }
 
-void BoardAssistance::showLegalMoveHighlights(int fromRow, int fromCol, const LibreChess::MoveList& moves,
+void BoardAssistance::showLegalMoveHighlights(int fromRow, int fromCol,
+                                              const LibreChess::MoveList& moves,
                                               const LibreChess::Game& game) {
-  board_.waitForAnimationQueueDrain();
+  auto g = runtime_.lockCanvas();
+  g.canvas.clearLayer(BoardLayer::ASSISTANCE);
+  if (level_ != BoardAssistanceLevel::LEGAL_MOVES) return;
 
-  if (level_ != BoardAssistanceLevel::LEGAL_MOVES) {
-    layering_.clearBase();
-    return;
-  }
-
-  layering_.replaceBase([&](BoardLayering::LayerWriter& leds) {
-    leds.setSquareLED(fromRow, fromCol, LedColors::Cyan);
-    for (int i = 0; i < moves.count; i++) {
-      int row = LibreChess::squareToRow(moves.moves[i].to);
-      int col = LibreChess::squareToCol(moves.moves[i].to);
-      auto enPassant = game.checkEnPassant(fromRow, fromCol, row, col);
-      if (LibreChess::Game::isEmptySquare(game.getSquare(row, col)) && !enPassant.isCapture) {
-        leds.setSquareLED(row, col, LedColors::White);
-      } else {
-        leds.setSquareLED(row, col, LedColors::Red);
-        if (enPassant.isCapture)
-          leds.setSquareLED(LibreChess::squareToRow(enPassant.capturedPawnSq), col, LedColors::Purple);
+  g.canvas.setPixel(BoardLayer::ASSISTANCE, fromRow, fromCol, LedColors::Cyan);
+  for (int i = 0; i < moves.count; i++) {
+    const int row = LibreChess::squareToRow(moves.moves[i].to);
+    const int col = LibreChess::squareToCol(moves.moves[i].to);
+    auto enPassant = game.checkEnPassant(fromRow, fromCol, row, col);
+    if (LibreChess::Game::isEmptySquare(game.getSquare(row, col)) && !enPassant.isCapture) {
+      g.canvas.setPixel(BoardLayer::ASSISTANCE, row, col, LedColors::White);
+    } else {
+      g.canvas.setPixel(BoardLayer::ASSISTANCE, row, col, LedColors::Red);
+      if (enPassant.isCapture) {
+        g.canvas.setPixel(BoardLayer::ASSISTANCE,
+                          LibreChess::squareToRow(enPassant.capturedPawnSq), col,
+                          LedColors::Purple);
       }
     }
-    leds.showLEDs();
-  });
+  }
 }
 
 void BoardAssistance::showCapturePlacementPrompt(int row, int col) {
-  board_.runAnimation(AnimationJob::blink(row, col, LedColors::Red, 1, false));
+  auto g = runtime_.lockCanvas();
+  g.effects.startBlink(row, col, LedColors::Red, 1, millis(), BoardLayer::ASSISTANCE);
 }
 
-void BoardAssistance::guideCastling(int kingFromRow, int kingFromCol, int kingToRow, int kingToCol,
-                                    const LibreChess::CastlingInfo& castling, bool waitForKingCompletion,
-                                    LibreChess::Log& logger) {
+void BoardAssistance::guideCastling(int kingFromRow, int kingFromCol, int kingToRow,
+                                    int kingToCol,
+                                    const LibreChess::CastlingInfo& castling,
+                                    bool waitForKingCompletion, LibreChess::Log& logger) {
   if (!castling.isCastling) return;
+  const uint16_t cadence = runtime_.cadenceMs();
 
   if (waitForKingCompletion) {
     logger.infof("Castling: please move king from %s to %s",
                  LibreChess::Game::squareName(kingFromRow, kingFromCol).c_str(),
                  LibreChess::Game::squareName(kingToRow, kingToCol).c_str());
 
-    layering_.replaceBase([&](BoardLayering::LayerWriter& leds) {
-      showMovePrompt(leds, kingFromRow, kingFromCol, kingToRow, kingToCol, LedColors::White);
-    });
-    waitForSquareEmpty(board_, kingFromRow, kingFromCol);
-    layering_.replaceBase([&](BoardLayering::LayerWriter& leds) {
-      showDestinationPrompt(leds, kingToRow, kingToCol, LedColors::White);
-    });
-    waitForSquareOccupied(board_, kingToRow, kingToCol);
-    layering_.clearBase();
+    paintMovePrompt(kingFromRow, kingFromCol, kingToRow, kingToCol, LedColors::White);
+    waitSquareEmpty(runtime_, kingFromRow, kingFromCol, cadence);
+    paintDestinationOnly(kingToRow, kingToCol, LedColors::White);
+    waitSquareOccupied(runtime_, kingToRow, kingToCol, cadence);
+    {
+      auto g = runtime_.lockCanvas();
+      g.canvas.clearLayer(BoardLayer::ASSISTANCE);
+    }
   }
 
-  int rookFromRow = LibreChess::squareToRow(castling.rookFromSq);
-  int rookFromCol = LibreChess::squareToCol(castling.rookFromSq);
-  int rookToRow = LibreChess::squareToRow(castling.rookToSq);
-  int rookToCol = LibreChess::squareToCol(castling.rookToSq);
+  const int rookFromRow = LibreChess::squareToRow(castling.rookFromSq);
+  const int rookFromCol = LibreChess::squareToCol(castling.rookFromSq);
+  const int rookToRow = LibreChess::squareToRow(castling.rookToSq);
+  const int rookToCol = LibreChess::squareToCol(castling.rookToSq);
 
   logger.infof("Castling: please move rook from %s to %s",
                LibreChess::Game::squareName(rookFromRow, rookFromCol).c_str(),
                LibreChess::Game::squareName(rookToRow, rookToCol).c_str());
 
-  layering_.replaceBase([&](BoardLayering::LayerWriter& leds) {
-    showMovePrompt(leds, rookFromRow, rookFromCol, rookToRow, rookToCol, LedColors::White);
-  });
-  waitForSquareEmpty(board_, rookFromRow, rookFromCol);
-  layering_.replaceBase([&](BoardLayering::LayerWriter& leds) {
-    showDestinationPrompt(leds, rookToRow, rookToCol, LedColors::White);
-  });
-  waitForSquareOccupied(board_, rookToRow, rookToCol);
-  layering_.clearBase();
+  paintMovePrompt(rookFromRow, rookFromCol, rookToRow, rookToCol, LedColors::White);
+  waitSquareEmpty(runtime_, rookFromRow, rookFromCol, cadence);
+  paintDestinationOnly(rookToRow, rookToCol, LedColors::White);
+  waitSquareOccupied(runtime_, rookToRow, rookToCol, cadence);
+  {
+    auto g = runtime_.lockCanvas();
+    g.canvas.clearLayer(BoardLayer::ASSISTANCE);
+  }
+  runtime_.clearInputEvents();
 }
 
 void BoardAssistance::guideRemoteMoveCompletion(int fromRow, int fromCol, int toRow, int toCol,
                                                 bool isCapture, bool isEnPassant,
-                                                int enPassantCapturedPawnRow, LibreChess::Log& logger) {
-  layering_.replaceBase([&](BoardLayering::LayerWriter& leds) {
-    showMovePrompt(leds, fromRow, fromCol, toRow, toCol, isCapture ? LedColors::Red : LedColors::White);
-    if (isEnPassant)
-      leds.setSquareLED(enPassantCapturedPawnRow, toCol, LedColors::Purple);
-    leds.showLEDs();
-  });
+                                                int enPassantCapturedPawnRow,
+                                                LibreChess::Log& logger) {
+  paintMovePrompt(fromRow, fromCol, toRow, toCol,
+                  isCapture ? LedColors::Red : LedColors::White,
+                  isEnPassant ? enPassantCapturedPawnRow : -1,
+                  isEnPassant ? toCol : -1,
+                  LedColors::Purple);
 
   bool piecePickedUp = false;
   bool capturedPieceRemoved = false;
   bool moveCompleted = false;
 
   logger.info("Waiting for you to complete the remote move...");
+  const uint16_t cadence = runtime_.cadenceMs();
 
   while (!moveCompleted) {
-    board_.readSensors();
-
     if (isCapture && !capturedPieceRemoved) {
-      int captureCheckRow = isEnPassant ? enPassantCapturedPawnRow : toRow;
-      if (!board_.occupied(captureCheckRow, toCol)) {
+      const int captureCheckRow = isEnPassant ? enPassantCapturedPawnRow : toRow;
+      if (!runtime_.inputOccupied(captureCheckRow, toCol)) {
         capturedPieceRemoved = true;
         logger.info(isEnPassant ? "En passant captured pawn removed, now complete the move..."
                                 : "Captured piece removed, now complete the move...");
       }
     }
 
-    if (!piecePickedUp && !board_.occupied(fromRow, fromCol)) {
+    if (!piecePickedUp && !runtime_.inputOccupied(fromRow, fromCol)) {
       piecePickedUp = true;
       logger.info("Piece picked up, now place it on the destination...");
     }
 
-    if (piecePickedUp && board_.occupied(toRow, toCol))
+    if (piecePickedUp && runtime_.inputOccupied(toRow, toCol)) {
       if (!isCapture || capturedPieceRemoved) {
         moveCompleted = true;
         logger.info("Move completed on physical board!");
       }
+    }
 
-    delay(SENSOR_READ_DELAY_MS);
+    delay(cadence);
   }
 
-  layering_.clearBase();
+  auto g = runtime_.lockCanvas();
+  g.canvas.clearLayer(BoardLayer::ASSISTANCE);
+  runtime_.clearInputEvents();
 }

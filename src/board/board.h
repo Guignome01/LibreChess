@@ -1,7 +1,8 @@
 #ifndef BOARD_H
 #define BOARD_H
 
-#include "gui/selection.h"
+#include "board/core/effects.h"
+#include "board/gui/selection.h"
 
 #include <cstdint>
 #include <memory>
@@ -18,35 +19,32 @@ static constexpr int BOARD_ROWS = 8;
 static constexpr int BOARD_COLS = 8;
 static constexpr int BOARD_SQUARES = BOARD_ROWS * BOARD_COLS;
 
-/// Return whether a row/column pair is inside the physical board.
 inline constexpr bool isValidSquare(int row, int col) {
   return row >= 0 && row < BOARD_ROWS && col >= 0 && col < BOARD_COLS;
 }
 
-/// Display-coordinate square on the physical board.
 struct BoardSquare {
   int8_t row;
   int8_t col;
-
-  /// Return whether this square is within the 8x8 board.
   bool valid() const { return isValidSquare(row, col); }
 };
 
-/// Compare two physical board squares.
 inline bool operator==(BoardSquare lhs, BoardSquare rhs) {
   return lhs.row == rhs.row && lhs.col == rhs.col;
 }
-
-/// Compare two physical board squares.
-inline bool operator!=(BoardSquare lhs, BoardSquare rhs) {
-  return !(lhs == rhs);
-}
+inline bool operator!=(BoardSquare lhs, BoardSquare rhs) { return !(lhs == rhs); }
 
 }  // namespace board
 }  // namespace LibreChess
 
-/// Public physical-board package root. It owns one internal BoardController
-/// runtime plus the long-lived board workflows that external firmware consumes.
+// ---------------------------------------------------------------------------
+// Board — public physical-board package root
+// ---------------------------------------------------------------------------
+// Owns one internal BoardRuntime plus the long-lived workflows (gameplay,
+// menu, diagnostics, calibration). External firmware accesses the board
+// only through this class.
+// ---------------------------------------------------------------------------
+
 class Board {
  public:
   Board();
@@ -58,36 +56,34 @@ class Board {
   Board& operator=(Board&&) = delete;
 
   /// Initialize hardware. Must be called once before any other method.
-  void begin();
+  /// Returns false when a required runtime resource could not start.
+  bool begin();
 
-  // --- LED settings (publicly exposed so WiFi/web UI can persist them) ---
+  // --- LED settings ---
   uint8_t getBrightness() const;
   uint8_t getDimMultiplier() const;
   void setBrightness(uint8_t value);
   void setDimMultiplier(uint8_t value);
   void saveLedSettings();
 
-  /// Polling delay used by debounced sensor scans, exposed to coordinate
-  /// firmware-side timing loops with the board's sensor cadence.
-  uint16_t sensorReadDelayMs() const;
+  /// Sensor poll cadence (ms). Main loop should `delay(cadenceMs())`.
+  uint16_t cadenceMs() const;
 
-  /// Gameplay workflow for physical chess interactions.
+  // --- Workflows ---
   BoardGameplay& gameplay();
-
-  /// Game-selection and confirmation menu workflow.
   BoardMenu& menu();
-
-  /// Sensor diagnostics workflow.
   BoardDiagnostics& diagnostics();
-
-  /// Calibration trigger workflow.
   BoardCalibration& calibration();
 
-  /// Clear all board LEDs through the layered render path.
-  void clearAllLEDs(bool show = true);
+  /// Clear every layer of the canvas. The renderer flushes on next tick.
+  void clearAllLayers();
 
-  /// Run the synchronous WiFi-connecting animation.
-  void showConnectingAnimation();
+  /// Start the looping WiFi-connecting effect. Returns a handle the caller
+  /// passes back to `stopConnectingStatus`.
+  BoardEffectHandle startConnectingStatus();
+
+  /// Cancel a connecting effect previously started.
+  void stopConnectingStatus(BoardEffectHandle& handle);
 
  private:
   struct Impl;

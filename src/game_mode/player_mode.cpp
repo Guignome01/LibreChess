@@ -1,5 +1,5 @@
 #include "player_mode.h"
-#include "board/gameplay.h"
+#include "board/workflows/gameplay.h"
 #include "game.h"
 #include <Arduino.h>
 
@@ -15,13 +15,9 @@ void PlayerMode::begin() {
 }
 
 void PlayerMode::update() {
-  gameplay_->readSensors();
-
   if (processResign()) return;
 
   int fromRow, fromCol, toRow, toCol;
   if (tryPlayerMove(chess_->sideToMove(), fromRow, fromCol, toRow, toCol))
     applyMove(fromRow, fromCol, toRow, toCol);
-
-  gameplay_->syncOccupancyBaseline();
 }

@@ -1,97 +1,112 @@
-#include "feedback.h"
+#include "board/gui/feedback.h"
 
-#include "animations.h"
-#include "board/core/controller.h"
-#include "layering.h"
+#include "board/core/runtime.h"
+#include "board/gui/layers.h"
+
+#include <Arduino.h>
+
+// ---------------------------------------------------------------------------
+// BoardFeedback implementation
+// ---------------------------------------------------------------------------
+// All operations acquire the canvas guard for the duration of the change
+// (microseconds), then release. Effects are started via the canvas guard's
+// effects reference; the renderer task picks up the change on the next
+// tick.
+// ---------------------------------------------------------------------------
 
 namespace {
 
-static constexpr float RESIGN_BRIGHTNESS_LEVELS[] = {0.25f, 0.50f, 0.75f, 1.0f};
+constexpr float RESIGN_BRIGHTNESS_LEVELS[] = {0.25f, 0.50f, 0.75f, 1.0f};
 
 }  // namespace
 
-BoardFeedback::BoardFeedback(BoardController& board, BoardLayering& layering)
-  : board_(board), layering_(layering) {}
+BoardFeedback::BoardFeedback(BoardRuntime& runtime) : runtime_(runtime) {}
 
-void BoardFeedback::clearBoard(bool show) {
-  layering_.clearAll(show);
+void BoardFeedback::clearBoard() {
+  auto g = runtime_.lockCanvas();
+  g.canvas.clearLayer(BoardLayer::FEEDBACK);
 }
 
 void BoardFeedback::clearSquare(int row, int col) {
-  layering_.clearBaseSquare(row, col);
+  auto g = runtime_.lockCanvas();
+  g.canvas.clearLayerSquare(BoardLayer::FEEDBACK, row, col);
 }
 
 void BoardFeedback::showMoveResultFeedback(const LibreChess::MoveResult& result, int toRow, int toCol,
                                            const LibreChess::Game& game) {
-  layering_.clearAll(false);
+  auto g = runtime_.lockCanvas();
+  g.canvas.clearLayer(BoardLayer::FEEDBACK);
 
-  if (result.isCapture())
-    board_.runAnimation(AnimationJob::capture(toRow, toCol));
-  else
-    confirmSquareCompletion(toRow, toCol);
+  const uint32_t now = millis();
+  if (result.isCapture()) {
+    g.effects.startCapture(toRow, toCol, now);
+  } else {
+    g.effects.startBlink(toRow, toCol, LedColors::Green, 1, now, BoardLayer::FEEDBACK);
+  }
 
-  if (result.isPromotion())
-    board_.runAnimation(AnimationJob::promotion(toCol));
+  if (result.isPromotion()) {
+    g.effects.startPromotion(toCol, now);
+  }
 
   if (result.gameResult == LibreChess::GameResult::CHECKMATE) {
-    board_.runAnimation(AnimationJob::firework(LedColors::forWinner(result.winnerColor)));
+    g.effects.startFirework(LedColors::forWinner(result.winnerColor), now);
   } else if (result.gameResult != LibreChess::GameResult::IN_PROGRESS) {
-    board_.runAnimation(AnimationJob::firework(LedColors::Cyan));
+    g.effects.startFirework(LedColors::Cyan, now);
   } else if (result.isCheck()) {
     LibreChess::Color turn = game.sideToMove();
-    board_.runAnimation(
-        AnimationJob::blink(game.kingRow(turn), game.kingCol(turn), LedColors::Yellow, 3, true, true));
+    g.effects.startBlink(game.kingRow(turn), game.kingCol(turn), LedColors::Yellow, 3, now,
+                         BoardLayer::FEEDBACK);
   }
 }
 
 void BoardFeedback::showIllegalMoveFeedback(int row, int col) {
-  layering_.runTemporaryAnimation(AnimationJob::blink(row, col, LedColors::Red, 2));
+  auto g = runtime_.lockCanvas();
+  g.effects.startBlink(row, col, LedColors::Red, 2, millis(), BoardLayer::FEEDBACK);
 }
 
 void BoardFeedback::showResignProgress(int row, int col, int level, bool clearFirst) {
+  if (level < 0 || level >= 4) return;
+  auto g = runtime_.lockCanvas();
   if (clearFirst) {
-    layering_.clearBase(false);
-    layering_.clearOverlay(false);
+    g.canvas.clearLayer(BoardLayer::FEEDBACK);
   }
-  layering_.updateOverlay([&](BoardLayering::LayerWriter& leds) {
-    leds.setSquareLED(row, col, LedColors::scaleColor(LedColors::Orange, RESIGN_BRIGHTNESS_LEVELS[level]));
-    leds.showLEDs();
-  });
+  const LedRGB color = LedColors::scaleColor(LedColors::Orange, RESIGN_BRIGHTNESS_LEVELS[level]);
+  g.canvas.setPixel(BoardLayer::FEEDBACK, row, col, color);
 }
 
 void BoardFeedback::clearResignFeedback(int row, int col) {
-  layering_.clearOverlaySquare(row, col);
+  auto g = runtime_.lockCanvas();
+  g.canvas.clearLayerSquare(BoardLayer::FEEDBACK, row, col);
 }
 
 void BoardFeedback::showWinner(LibreChess::Color winnerColor) {
-  layering_.clearAll(false);
-  board_.runAnimation(AnimationJob::firework(LedColors::forPieceColor(winnerColor)));
+  auto g = runtime_.lockCanvas();
+  g.canvas.clearLayer(BoardLayer::FEEDBACK);
+  g.effects.startFirework(LedColors::forPieceColor(winnerColor), millis());
 }
 
 void BoardFeedback::showRemoteGameEnd(char winnerColor) {
-  layering_.clearAll(false);
-  board_.runAnimation(AnimationJob::firework(LedColors::forWinner(winnerColor)));
+  auto g = runtime_.lockCanvas();
+  g.canvas.clearLayer(BoardLayer::FEEDBACK);
+  g.effects.startFirework(LedColors::forWinner(winnerColor), millis());
 }
 
 void BoardFeedback::showError() {
-  layering_.runTemporaryAnimation(AnimationJob::flash(LedColors::Red));
+  auto g = runtime_.lockCanvas();
+  g.effects.startFlash(LedColors::Red, 3, millis());
 }
 
-std::atomic<bool>* BoardFeedback::startThinking() {
-  board_.waitForAnimationQueueDrain();
-  return board_.startAnimation(AnimationType::THINKING);
+BoardEffectHandle BoardFeedback::startThinking() {
+  auto g = runtime_.lockCanvas();
+  return g.effects.startThinking(millis());
 }
 
-std::atomic<bool>* BoardFeedback::startWaiting() {
-  board_.waitForAnimationQueueDrain();
-  return board_.startAnimation(AnimationType::WAITING);
+BoardEffectHandle BoardFeedback::startWaiting() {
+  auto g = runtime_.lockCanvas();
+  return g.effects.startWaiting(millis());
 }
 
-void BoardFeedback::stopAnimation(std::atomic<bool>*& stopFlag) {
-  board_.stopAndWaitForAnimation(stopFlag);
-  layering_.render();
-}
-
-void BoardFeedback::confirmSquareCompletion(int row, int col) {
-  board_.runAnimation(AnimationJob::blink(row, col, LedColors::Green, 1));
+void BoardFeedback::stopAnimation(BoardEffectHandle& handle) {
+  auto g = runtime_.lockCanvas();
+  g.effects.cancel(handle);
 }

@@ -1,5 +1,5 @@
 #include "bot_mode.h"
-#include "board/gameplay.h"
+#include "board/workflows/gameplay.h"
 #include "game.h"
 
 #include "wifi_manager_esp32.h"
@@ -26,7 +26,7 @@ void BotMode::begin() {
   }
 
   // Provider may block (e.g., Lichess game discovery). Show waiting animation.
-  std::atomic<bool>* waitAnim = gameplay_->startWaitingStatus();
+  BoardEffectHandle waitAnim = gameplay_->startWaitingStatus();
 
   EngineInitResult initResult;
   bool ok = provider_->initialize(initResult);
@@ -77,8 +77,6 @@ bool BotMode::isNavigationAllowed() const {
 void BotMode::update() {
   if (chess_->isGameOver()) return;
 
-  gameplay_->readSensors();
-
   if (processResign()) return;
 
   if (botState_ == BotState::PLAYER_TURN) {
@@ -128,8 +126,6 @@ void BotMode::update() {
       botState_ = BotState::PLAYER_TURN;
     }
   }
-
-  gameplay_->syncOccupancyBaseline();
 }
 
 // ---------------------------------------------------------------
@@ -175,7 +171,7 @@ void BotMode::abortWithError(const char* message) {
 // ---------------------------------------------------------------
 
 void BotMode::onBeforeResignConfirm() {
-  wasThinkingBeforeResign_ = (thinkingAnimation_ != nullptr);
+  wasThinkingBeforeResign_ = thinkingAnimation_.valid();
   if (wasThinkingBeforeResign_) {
     provider_->cancelRequest();
     stopThinking();
@@ -203,7 +199,7 @@ void BotMode::startThinking() {
 }
 
 void BotMode::stopThinking() {
-  if (thinkingAnimation_) {
+  if (thinkingAnimation_.valid()) {
     gameplay_->stopStatusAnimation(thinkingAnimation_);
   }
 }
