@@ -1,7 +1,6 @@
 #include "board/board.h"
 
 #include "board/core/runtime.h"
-#include "board/gui/layers.h"
 #include "board/workflows/calibration.h"
 #include "board/workflows/diagnostics.h"
 #include "board/workflows/gameplay.h"
@@ -49,18 +48,18 @@ BoardMenu& Board::menu() { return impl_->menu; }
 BoardDiagnostics& Board::diagnostics() { return impl_->diagnostics; }
 BoardCalibration& Board::calibration() { return impl_->calibration; }
 
-void Board::clearAllLayers() {
+void Board::clearAllSurfaces() {
   auto g = impl_->runtime.lockCanvas();
   g.canvas.clearAll();
-  g.effects.clearAll(g.canvas);
+  g.animations.clearAll(g.canvas);
 }
 
-BoardEffectHandle Board::startConnectingStatus() {
+BoardAnimationHandle Board::startConnectingStatus() {
   auto g = impl_->runtime.lockCanvas();
-  return g.effects.startConnecting(millis());
+  return g.animations.startConnecting(millis());
 }
 
-void Board::stopConnectingStatus(BoardEffectHandle& handle) {
+void Board::stopConnectingStatus(BoardAnimationHandle& handle) {
   auto g = impl_->runtime.lockCanvas();
-  g.effects.cancel(handle);
+  g.animations.cancel(handle);
 }

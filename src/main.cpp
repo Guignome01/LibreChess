@@ -210,7 +210,7 @@ void loop() {
       modeInitialized = false;
       physicalBoard.menu().clear();
       wifiManager.resetGameSelection();
-      physicalBoard.clearAllLayers();
+      physicalBoard.clearAllSurfaces();
     }
   }
 

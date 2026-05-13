@@ -26,7 +26,7 @@ void BotMode::begin() {
   }
 
   // Provider may block (e.g., Lichess game discovery). Show waiting animation.
-  BoardEffectHandle waitAnim = gameplay_->startWaitingStatus();
+  BoardAnimationHandle waitAnim = gameplay_->startWaitingStatus();
 
   EngineInitResult initResult;
   bool ok = provider_->initialize(initResult);

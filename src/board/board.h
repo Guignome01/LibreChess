@@ -1,8 +1,8 @@
 #ifndef BOARD_H
 #define BOARD_H
 
-#include "board/core/effects.h"
-#include "board/gui/selection.h"
+#include "board/gui/animations.h"
+#include "board/menus/selection.h"
 
 #include <cstdint>
 #include <memory>
@@ -75,15 +75,15 @@ class Board {
   BoardDiagnostics& diagnostics();
   BoardCalibration& calibration();
 
-  /// Clear every layer of the canvas. The renderer flushes on next tick.
-  void clearAllLayers();
+  /// Clear every canvas surface. The renderer flushes when it next wakes.
+  void clearAllSurfaces();
 
-  /// Start the looping WiFi-connecting effect. Returns a handle the caller
+  /// Start the looping WiFi-connecting animation. Returns a handle the caller
   /// passes back to `stopConnectingStatus`.
-  BoardEffectHandle startConnectingStatus();
+  BoardAnimationHandle startConnectingStatus();
 
-  /// Cancel a connecting effect previously started.
-  void stopConnectingStatus(BoardEffectHandle& handle);
+  /// Cancel a connecting animation previously started.
+  void stopConnectingStatus(BoardAnimationHandle& handle);
 
  private:
   struct Impl;

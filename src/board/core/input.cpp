@@ -6,7 +6,12 @@
 // BoardInput implementation
 // ---------------------------------------------------------------------------
 
-BoardInput::BoardInput() : head_(0), count_(0), overflowed_(false) {
+BoardInput::BoardInput()
+    : head_(0),
+      count_(0),
+      overflowed_(false),
+      droppedEventCount_(0),
+      maxQueueDepth_(0) {
   memset(current_, 0, sizeof(current_));
   memset(previous_, 0, sizeof(previous_));
   memset(events_, 0, sizeof(events_));
@@ -19,11 +24,13 @@ BoardInput::BoardInput() : head_(0), count_(0), overflowed_(false) {
 void BoardInput::pushEvent(EventKind kind, int row, int col, uint32_t nowMs) {
   if (count_ >= EVENT_QUEUE_SIZE) {
     overflowed_ = true;
+    ++droppedEventCount_;
     return;  // Drop new events on full queue (caller can detect overflow).
   }
   uint8_t writeIdx = (head_ + count_) % EVENT_QUEUE_SIZE;
   events_[writeIdx] = Event{kind, static_cast<int8_t>(row), static_cast<int8_t>(col), nowMs};
   ++count_;
+  if (count_ > maxQueueDepth_) maxQueueDepth_ = count_;
 }
 
 // ---------------------------------------------------------------------------
@@ -36,7 +43,7 @@ void BoardInput::syncBaseline(const bool sensors[ROWS][COLS], uint32_t nowMs) {
   // Clear any prior events; the baseline is the new ground truth.
   head_ = 0;
   count_ = 0;
-  overflowed_ = false;
+  clearOverflow();
   pushEvent(EventKind::BASELINE_SYNCED, 0, 0, nowMs);
 }
 
@@ -91,4 +98,10 @@ void BoardInput::consume(uint8_t n) {
 void BoardInput::clearEvents() {
   head_ = 0;
   count_ = 0;
+}
+
+void BoardInput::clearOverflow() {
+  overflowed_ = false;
+  droppedEventCount_ = 0;
+  maxQueueDepth_ = count_;
 }

@@ -2,7 +2,7 @@
 #define BOARD_FEEDBACK_H
 
 #include "board/core/colors.h"
-#include "board/core/effects.h"
+#include "board/gui/animations.h"
 #include "game.h"
 
 class BoardRuntime;
@@ -10,10 +10,10 @@ class BoardRuntime;
 // ---------------------------------------------------------------------------
 // BoardFeedback — mandatory visual feedback for move outcomes & status.
 // ---------------------------------------------------------------------------
-// Paints onto BoardLayer::FEEDBACK and starts retained effects through
-// BoardEffects. All canvas mutation goes through BoardRuntime::lockCanvas().
+// Owns a canvas surface and starts retained animations through
+// BoardAnimations. All canvas mutation goes through BoardRuntime::lockCanvas().
 //
-// Status animations (THINKING / WAITING) return a `BoardEffectHandle`
+// Status animations (THINKING / WAITING) return a `BoardAnimationHandle`
 // instead of a heap-allocated atomic flag. The caller cancels them via
 // `stopAnimation(handle)`.
 // ---------------------------------------------------------------------------
@@ -22,10 +22,10 @@ class BoardFeedback {
  public:
   explicit BoardFeedback(BoardRuntime& runtime);
 
-  /// Clear the FEEDBACK layer entirely.
+  /// Clear this helper's surface entirely.
   void clearBoard();
 
-  /// Clear a single square on the FEEDBACK layer.
+  /// Clear a single square on this helper's surface.
   void clearSquare(int row, int col);
 
   /// Show capture / promotion / quiet / check / game-end visuals for the
@@ -37,7 +37,7 @@ class BoardFeedback {
   void showIllegalMoveFeedback(int row, int col);
 
   /// Paint scaled-orange resign progress at (row, col). Levels 0..3.
-  /// `clearFirst`=true clears the FEEDBACK layer before painting.
+  /// `clearFirst`=true clears the owned surface before painting.
   void showResignProgress(int row, int col, int level, bool clearFirst = false);
 
   /// Clear a single resign-progress pixel.
@@ -52,17 +52,20 @@ class BoardFeedback {
   /// Three red flashes for unrecoverable error.
   void showError();
 
-  /// Start the looping THINKING effect. Caller must cancel via stopAnimation.
-  BoardEffectHandle startThinking();
+  /// Start the looping THINKING animation. Caller must cancel via stopAnimation.
+  BoardAnimationHandle startThinking();
 
-  /// Start the looping WAITING effect. Caller must cancel via stopAnimation.
-  BoardEffectHandle startWaiting();
+  /// Start the looping WAITING animation. Caller must cancel via stopAnimation.
+  BoardAnimationHandle startWaiting();
 
   /// Cancel a status animation and invalidate the handle.
-  void stopAnimation(BoardEffectHandle& handle);
+  void stopAnimation(BoardAnimationHandle& handle);
 
  private:
   BoardRuntime& runtime_;
+  BoardCanvasHandle surface_;
+
+  BoardCanvasHandle writableSurface(BoardCanvas& canvas);
 };
 
 #endif  // BOARD_FEEDBACK_H

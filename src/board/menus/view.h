@@ -1,6 +1,7 @@
 #ifndef BOARD_MENUS_VIEW_H
 #define BOARD_MENUS_VIEW_H
 
+#include "board/core/canvas.h"
 #include "board/core/colors.h"
 
 #include <stdint.h>
@@ -18,7 +19,7 @@ constexpr int MENU_RESULT_BACK = -2;
 // (empty → occupied) for reliable piece-placement detection. Supports
 // orientation flipping so menus face the active player.
 //
-// MenuView paints onto BoardLayer::MENU under the canvas guard. It does
+// MenuView owns a canvas surface under the canvas guard. It does
 // NOT inherit from anything — it is just a small object owned by a
 // workflow and driven by its owning state machine.
 // ---------------------------------------------------------------------------
@@ -40,6 +41,7 @@ class MenuView {
   static constexpr uint8_t MAX_ITEMS = 16;
 
   explicit MenuView(BoardRuntime& runtime);
+  ~MenuView();
 
   MenuView(const MenuView&) = delete;
   MenuView& operator=(const MenuView&) = delete;
@@ -68,10 +70,10 @@ class MenuView {
   // Drawing
   // -------------------------------------------------------------------------
 
-  /// Paint items + back button onto BoardLayer::MENU. Idempotent.
+  /// Paint items + back button onto this view's surface. Idempotent.
   void draw();
 
-  /// Clear the MENU layer for this view.
+  /// Clear this view's surface.
   void erase();
 
   /// Reset all debounce counters for a fresh selection cycle.
@@ -111,6 +113,7 @@ class MenuView {
   };
 
   BoardRuntime& runtime_;
+  BoardCanvasHandle surface_;
   const MenuItem* items_;
   uint8_t itemCount_;
   bool flipped_;
@@ -122,6 +125,7 @@ class MenuView {
   SelectionDebouncer states_[MAX_ITEMS + 1];
 
   Square transformSquare(int8_t row, int8_t col) const;
+  BoardCanvasHandle writableSurface(BoardCanvas& canvas);
   int trySelect(SelectionDebouncer& state, const bool (&occupied)[8][8], int8_t row,
                 int8_t col, LedRGB color, int id);
 };

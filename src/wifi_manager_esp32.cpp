@@ -353,7 +353,7 @@ bool WiFiManagerESP32::connectToNetwork(uint8_t index) {
   WiFi.begin(net.ssid.c_str(), net.password.c_str());
 
   int attempts = 0;
-  BoardEffectHandle connectingHandle = board_->startConnectingStatus();
+  BoardAnimationHandle connectingHandle = board_->startConnectingStatus();
   while (WiFi.status() != WL_CONNECTED && attempts < 10) {
     delay(board_->cadenceMs() * 4);
     attempts++;

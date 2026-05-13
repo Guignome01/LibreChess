@@ -1,7 +1,6 @@
 #include "board/gui/assistance.h"
 
 #include "board/core/runtime.h"
-#include "board/gui/layers.h"
 
 #include <Arduino.h>
 
@@ -27,24 +26,34 @@ void waitSquareOccupied(BoardRuntime& runtime, int row, int col, uint16_t cadenc
 }  // namespace
 
 BoardAssistance::BoardAssistance(BoardRuntime& runtime, BoardAssistanceLevel level)
-    : runtime_(runtime), level_(level) {}
+    : runtime_(runtime), level_(level), surface_() {}
+
+BoardCanvasHandle BoardAssistance::writableSurface(BoardCanvas& canvas) {
+  if (!canvas.active(surface_)) {
+    surface_ = canvas.acquireSurface();
+  }
+  canvas.bringToFront(surface_);
+  return surface_;
+}
 
 void BoardAssistance::paintMovePrompt(int fromRow, int fromCol, int toRow, int toCol,
                                       LedRGB destColor, int extraRow, int extraCol,
                                       LedRGB extraColor) {
   auto g = runtime_.lockCanvas();
-  g.canvas.clearLayer(BoardLayer::ASSISTANCE);
-  g.canvas.setPixel(BoardLayer::ASSISTANCE, fromRow, fromCol, LedColors::Cyan);
-  g.canvas.setPixel(BoardLayer::ASSISTANCE, toRow, toCol, destColor);
+  BoardCanvasHandle surface = writableSurface(g.canvas);
+  g.canvas.clearSurface(surface);
+  g.canvas.setPixel(surface, fromRow, fromCol, LedColors::Cyan);
+  g.canvas.setPixel(surface, toRow, toCol, destColor);
   if (extraRow >= 0 && extraCol >= 0) {
-    g.canvas.setPixel(BoardLayer::ASSISTANCE, extraRow, extraCol, extraColor);
+    g.canvas.setPixel(surface, extraRow, extraCol, extraColor);
   }
 }
 
 void BoardAssistance::paintDestinationOnly(int row, int col, LedRGB color) {
   auto g = runtime_.lockCanvas();
-  g.canvas.clearLayer(BoardLayer::ASSISTANCE);
-  g.canvas.setPixel(BoardLayer::ASSISTANCE, row, col, color);
+  BoardCanvasHandle surface = writableSurface(g.canvas);
+  g.canvas.clearSurface(surface);
+  g.canvas.setPixel(surface, row, col, color);
 }
 
 void BoardAssistance::waitForSetup(const LibreChess::Game& game, LibreChess::Log& logger) {
@@ -57,17 +66,18 @@ void BoardAssistance::waitForSetup(const LibreChess::Game& game, LibreChess::Log
     runtime_.copyInputOccupancy(occupied);
     {
       auto g = runtime_.lockCanvas();
-      g.canvas.clearLayer(BoardLayer::ASSISTANCE);
+      BoardCanvasHandle surface = writableSurface(g.canvas);
+      g.canvas.clearSurface(surface);
       allCorrect = true;
       game.forEachSquare([&](int row, int col, LibreChess::Piece piece) {
         const bool shouldHavePiece = !LibreChess::Game::isEmptySquare(piece);
         const bool hasPiece = occupied[row][col];
         if (shouldHavePiece != hasPiece) allCorrect = false;
         if (shouldHavePiece && !hasPiece) {
-          g.canvas.setPixel(BoardLayer::ASSISTANCE, row, col,
+          g.canvas.setPixel(surface, row, col,
                             LedColors::forPieceColor(LibreChess::Game::pieceColor(piece)));
         } else if (!shouldHavePiece && hasPiece) {
-          g.canvas.setPixel(BoardLayer::ASSISTANCE, row, col, LedColors::Red);
+          g.canvas.setPixel(surface, row, col, LedColors::Red);
         }
       });
     }
@@ -77,8 +87,8 @@ void BoardAssistance::waitForSetup(const LibreChess::Game& game, LibreChess::Log
   logger.info("Board setup complete! Game starting...");
   {
     auto g = runtime_.lockCanvas();
-    g.canvas.clearLayer(BoardLayer::ASSISTANCE);
-    g.effects.startFirework(LedColors::Yellow, millis());
+    if (g.canvas.active(surface_)) g.canvas.clearSurface(surface_);
+    g.animations.startFirework(LedColors::Yellow, millis());
   }
   runtime_.clearInputEvents();
 }
@@ -87,21 +97,21 @@ void BoardAssistance::showLegalMoveHighlights(int fromRow, int fromCol,
                                               const LibreChess::MoveList& moves,
                                               const LibreChess::Game& game) {
   auto g = runtime_.lockCanvas();
-  g.canvas.clearLayer(BoardLayer::ASSISTANCE);
+  BoardCanvasHandle surface = writableSurface(g.canvas);
+  g.canvas.clearSurface(surface);
   if (level_ != BoardAssistanceLevel::LEGAL_MOVES) return;
 
-  g.canvas.setPixel(BoardLayer::ASSISTANCE, fromRow, fromCol, LedColors::Cyan);
+  g.canvas.setPixel(surface, fromRow, fromCol, LedColors::Cyan);
   for (int i = 0; i < moves.count; i++) {
     const int row = LibreChess::squareToRow(moves.moves[i].to);
     const int col = LibreChess::squareToCol(moves.moves[i].to);
     auto enPassant = game.checkEnPassant(fromRow, fromCol, row, col);
     if (LibreChess::Game::isEmptySquare(game.getSquare(row, col)) && !enPassant.isCapture) {
-      g.canvas.setPixel(BoardLayer::ASSISTANCE, row, col, LedColors::White);
+      g.canvas.setPixel(surface, row, col, LedColors::White);
     } else {
-      g.canvas.setPixel(BoardLayer::ASSISTANCE, row, col, LedColors::Red);
+      g.canvas.setPixel(surface, row, col, LedColors::Red);
       if (enPassant.isCapture) {
-        g.canvas.setPixel(BoardLayer::ASSISTANCE,
-                          LibreChess::squareToRow(enPassant.capturedPawnSq), col,
+        g.canvas.setPixel(surface, LibreChess::squareToRow(enPassant.capturedPawnSq), col,
                           LedColors::Purple);
       }
     }
@@ -110,7 +120,7 @@ void BoardAssistance::showLegalMoveHighlights(int fromRow, int fromCol,
 
 void BoardAssistance::showCapturePlacementPrompt(int row, int col) {
   auto g = runtime_.lockCanvas();
-  g.effects.startBlink(row, col, LedColors::Red, 1, millis(), BoardLayer::ASSISTANCE);
+  g.animations.startBlink(row, col, LedColors::Red, 1, millis());
 }
 
 void BoardAssistance::guideCastling(int kingFromRow, int kingFromCol, int kingToRow,
@@ -131,7 +141,7 @@ void BoardAssistance::guideCastling(int kingFromRow, int kingFromCol, int kingTo
     waitSquareOccupied(runtime_, kingToRow, kingToCol, cadence);
     {
       auto g = runtime_.lockCanvas();
-      g.canvas.clearLayer(BoardLayer::ASSISTANCE);
+      if (g.canvas.active(surface_)) g.canvas.clearSurface(surface_);
     }
   }
 
@@ -150,7 +160,7 @@ void BoardAssistance::guideCastling(int kingFromRow, int kingFromCol, int kingTo
   waitSquareOccupied(runtime_, rookToRow, rookToCol, cadence);
   {
     auto g = runtime_.lockCanvas();
-    g.canvas.clearLayer(BoardLayer::ASSISTANCE);
+    if (g.canvas.active(surface_)) g.canvas.clearSurface(surface_);
   }
   runtime_.clearInputEvents();
 }
@@ -198,6 +208,6 @@ void BoardAssistance::guideRemoteMoveCompletion(int fromRow, int fromCol, int to
   }
 
   auto g = runtime_.lockCanvas();
-  g.canvas.clearLayer(BoardLayer::ASSISTANCE);
+  if (g.canvas.active(surface_)) g.canvas.clearSurface(surface_);
   runtime_.clearInputEvents();
 }

@@ -1,8 +1,8 @@
 #ifndef BOARD_WORKFLOWS_GAMEPLAY_H
 #define BOARD_WORKFLOWS_GAMEPLAY_H
 
-#include "board/core/effects.h"
 #include "board/gui/assistance.h"
+#include "board/gui/animations.h"
 #include "board/gui/feedback.h"
 #include "game.h"
 #include "logger.h"
@@ -63,18 +63,18 @@ class BoardGameplay {
   void showResignWinner(LibreChess::Color resignColor);
 
   // -------------------------------------------------------------------------
-  // Status animation handles (BoardEffectHandle replaces the old
+  // Status animation handles (BoardAnimationHandle replaces the old
   // std::atomic<bool>* signal).
   // -------------------------------------------------------------------------
 
-  /// Start the looping THINKING effect.
-  BoardEffectHandle startThinkingStatus();
+  /// Start the looping THINKING animation.
+  BoardAnimationHandle startThinkingStatus();
 
-  /// Start the looping WAITING effect.
-  BoardEffectHandle startWaitingStatus();
+  /// Start the looping WAITING animation.
+  BoardAnimationHandle startWaitingStatus();
 
   /// Cancel a status animation. Invalidates `handle`.
-  void stopStatusAnimation(BoardEffectHandle& handle);
+  void stopStatusAnimation(BoardAnimationHandle& handle);
 
   /// Show a remote game-end (winner) firework on the board.
   void showRemoteGameEnd(char winnerColor);

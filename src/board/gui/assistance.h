@@ -1,6 +1,7 @@
 #ifndef BOARD_ASSISTANCE_H
 #define BOARD_ASSISTANCE_H
 
+#include "board/core/canvas.h"
 #include "board/core/colors.h"
 #include "game.h"
 #include "logger.h"
@@ -19,7 +20,7 @@ enum class BoardAssistanceLevel : uint8_t {
 // ---------------------------------------------------------------------------
 // BoardAssistance — optional physical guidance visuals.
 // ---------------------------------------------------------------------------
-// Paints onto BoardLayer::ASSISTANCE. Loops that wait for the user (e.g.
+// Owns a canvas surface. Loops that wait for the user (e.g.
 // `waitForSetup`, `guideCastling`) query occupancy through BoardRuntime's
 // synchronized input helpers and `delay(runtime.cadenceMs())` between checks.
 // The renderer task keeps
@@ -35,12 +36,12 @@ class BoardAssistance {
   BoardAssistanceLevel level() const { return level_; }
 
   /// Block until the physical board matches the in-memory game position,
-  /// painting mismatch hints onto ASSISTANCE every cadence tick.
+  /// painting mismatch hints every sensor cadence interval.
   void waitForSetup(const LibreChess::Game& game, LibreChess::Log& logger);
 
   /// Highlight legal destination squares for the piece on (fromRow, fromCol).
   /// Cyan = source, white = quiet move, red = capture, purple = en-passant
-  /// captured pawn. Cleared when the workflow paints over ASSISTANCE again.
+  /// captured pawn. Cleared when the workflow repaints its surface.
   void showLegalMoveHighlights(int fromRow, int fromCol, const LibreChess::MoveList& moves,
                                const LibreChess::Game& game);
 
@@ -64,12 +65,14 @@ class BoardAssistance {
  private:
   BoardRuntime& runtime_;
   BoardAssistanceLevel level_;
+  BoardCanvasHandle surface_;
 
-  // Helpers that paint a movement prompt onto ASSISTANCE under the canvas
+  // Helpers that paint a movement prompt under the canvas
   // guard. Pulled out of the .cpp to keep flow readable.
   void paintMovePrompt(int fromRow, int fromCol, int toRow, int toCol, LedRGB destColor,
                        int extraRow = -1, int extraCol = -1, LedRGB extraColor = LedColors::Off);
   void paintDestinationOnly(int row, int col, LedRGB color);
+  BoardCanvasHandle writableSurface(BoardCanvas& canvas);
 };
 
 #endif  // BOARD_ASSISTANCE_H

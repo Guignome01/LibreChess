@@ -62,7 +62,10 @@ bool captureSelectionForLiftedSquare(const Game& game, const MoveList& moves, in
 
 bool inputOverflowed(const BoardInputEventBatch& batch, BoardFeedback& feedback, Log& logger) {
   if (!batch.overflowed) return false;
-  logger.info("Physical board input queue overflowed; ignoring partial gesture and resyncing.");
+  logger.infof(
+      "Physical board input queue overflowed; dropped %lu event(s), max depth %u; "
+      "ignoring partial gesture and resyncing.",
+      static_cast<unsigned long>(batch.droppedEventCount), batch.maxQueueDepth);
   feedback.showError();
   return true;
 }
@@ -246,11 +249,11 @@ void BoardGameplay::showResignWinner(Color resignColor) {
   feedback_.showWinner(~resignColor);
 }
 
-BoardEffectHandle BoardGameplay::startThinkingStatus() { return feedback_.startThinking(); }
+BoardAnimationHandle BoardGameplay::startThinkingStatus() { return feedback_.startThinking(); }
 
-BoardEffectHandle BoardGameplay::startWaitingStatus() { return feedback_.startWaiting(); }
+BoardAnimationHandle BoardGameplay::startWaitingStatus() { return feedback_.startWaiting(); }
 
-void BoardGameplay::stopStatusAnimation(BoardEffectHandle& handle) {
+void BoardGameplay::stopStatusAnimation(BoardAnimationHandle& handle) {
   feedback_.stopAnimation(handle);
 }
 

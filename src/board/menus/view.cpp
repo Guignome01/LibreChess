@@ -1,7 +1,6 @@
 #include "board/menus/view.h"
 
 #include "board/core/runtime.h"
-#include "board/gui/layers.h"
 
 #include <Arduino.h>
 
@@ -63,12 +62,26 @@ bool MenuView::SelectionDebouncer::update(bool occupied) {
 
 MenuView::MenuView(BoardRuntime& runtime)
     : runtime_(runtime),
+      surface_(),
       items_(nullptr),
       itemCount_(0),
       flipped_(false),
       hasBack_(false),
       backRow_(0),
       backCol_(0) {}
+
+MenuView::~MenuView() {
+  auto g = runtime_.lockCanvas();
+  g.canvas.releaseSurface(surface_);
+}
+
+BoardCanvasHandle MenuView::writableSurface(BoardCanvas& canvas) {
+  if (!canvas.active(surface_)) {
+    surface_ = canvas.acquireSurface();
+  }
+  canvas.bringToFront(surface_);
+  return surface_;
+}
 
 void MenuView::setItems(const MenuItem* items, uint8_t count) {
   items_ = items;
@@ -87,20 +100,21 @@ void MenuView::setFlipped(bool flipped) {
 
 void MenuView::draw() {
   auto g = runtime_.lockCanvas();
-  g.canvas.clearLayer(BoardLayer::MENU);
+  BoardCanvasHandle surface = writableSurface(g.canvas);
+  g.canvas.clearSurface(surface);
   for (uint8_t i = 0; i < itemCount_; ++i) {
     Square sq = transformSquare(items_[i].row, items_[i].col);
-    g.canvas.setPixel(BoardLayer::MENU, sq.row, sq.col, items_[i].color);
+    g.canvas.setPixel(surface, sq.row, sq.col, items_[i].color);
   }
   if (hasBack_) {
     Square sq = transformSquare(backRow_, backCol_);
-    g.canvas.setPixel(BoardLayer::MENU, sq.row, sq.col, BACK_BUTTON_COLOR);
+    g.canvas.setPixel(surface, sq.row, sq.col, BACK_BUTTON_COLOR);
   }
 }
 
 void MenuView::erase() {
   auto g = runtime_.lockCanvas();
-  g.canvas.clearLayer(BoardLayer::MENU);
+  if (g.canvas.active(surface_)) g.canvas.clearSurface(surface_);
 }
 
 void MenuView::reset() {
@@ -118,7 +132,7 @@ int MenuView::trySelect(SelectionDebouncer& state, const bool (&occupied)[8][8],
   const bool squareOccupied = inBounds(sq.row, sq.col) && occupied[sq.row][sq.col];
   if (state.update(squareOccupied)) {
     auto g = runtime_.lockCanvas();
-    g.effects.startBlink(sq.row, sq.col, color, 1, millis(), BoardLayer::MENU);
+    g.animations.startBlink(sq.row, sq.col, color, 1, millis());
     return id;
   }
   return RESULT_NONE;

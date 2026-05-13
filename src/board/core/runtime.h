@@ -3,10 +3,12 @@
 
 #include "board/core/canvas.h"
 #include "board/core/driver.h"
-#include "board/core/effects.h"
 #include "board/core/input.h"
 #include "board/core/renderer.h"
+#include "board/core/scheduler.h"
+#include "board/gui/animations.h"
 
+#include <atomic>
 #include <stdint.h>
 
 class BoardCalibration;
@@ -14,15 +16,16 @@ class BoardCalibration;
 // ---------------------------------------------------------------------------
 // BoardRuntime — board-internal runtime owner shared by all board workflows.
 // ---------------------------------------------------------------------------
-// Owns: BoardDriver (LEDs + sensors), BoardCanvas (multi-layer surface),
-// BoardInput (debounced occupancy + event queue), BoardEffects (retained
-// tick-stepped animations), BoardRenderer (~30 Hz FreeRTOS flush task).
+// Owns: BoardDriver (LEDs + sensors), BoardCanvas (ordered surfaces),
+// BoardInput (debounced occupancy + event queue), BoardScheduler (timed
+// painters), BoardAnimations (GUI animation API), BoardRenderer (~30 Hz
+// FreeRTOS flush task).
 //
 // External firmware consumes `Board` (the public package root); workflows
 // take `BoardRuntime&` directly via constructor.
 //
 // Synchronization: the renderer owns a single FreeRTOS mutex. Workflows
-// must mutate the canvas / start effects only while holding the
+// must mutate the canvas / start animations only while holding the
 // `CanvasGuard` returned by `lockCanvas()`. The guard releases on
 // destruction. The renderer holds the same mutex for the duration of one
 // frame (microseconds).
@@ -42,15 +45,17 @@ struct BoardInputEventBatch {
   BoardInput::Event events[BoardInput::EVENT_QUEUE_SIZE];
   uint8_t count = 0;
   bool overflowed = false;
+  uint32_t droppedEventCount = 0;
+  uint8_t maxQueueDepth = 0;
 };
 
-/// RAII canvas + effects accessor. Acquires the renderer mutex on
+/// RAII canvas + animation accessor. Acquires the renderer mutex on
 /// construction, releases on destruction. Workflows mutate the canvas and
-/// start/cancel effects through the public references; changes become
-/// visible to the renderer on its next tick.
+/// start/cancel animations through the public references; changes become
+/// visible when the renderer task next wakes.
 class CanvasGuard {
  public:
-  CanvasGuard(BoardRuntime& runtime, BoardCanvas& canvas, BoardEffects& effects);
+  CanvasGuard(BoardRuntime& runtime, BoardCanvas& canvas, BoardAnimations& animations);
   ~CanvasGuard();
 
   CanvasGuard(const CanvasGuard&) = delete;
@@ -59,7 +64,7 @@ class CanvasGuard {
   CanvasGuard& operator=(CanvasGuard&&) = delete;
 
   BoardCanvas& canvas;
-  BoardEffects& effects;
+  BoardAnimations& animations;
 
  private:
   BoardRuntime& runtime_;
@@ -79,11 +84,17 @@ class BoardRuntime {
   /// Stop the renderer task and the input polling timer.
   void shutdown();
 
+  /// Return whether the input poll task is believed to be active.
+  bool inputPollRunning() const { return inputTaskHandle_ != nullptr; }
+
+  /// Return whether the render task is believed to be active.
+  bool rendererRunning() const { return renderer_.running(); }
+
   // -------------------------------------------------------------------------
   // Workflow accessors
   // -------------------------------------------------------------------------
 
-  /// Acquire the renderer mutex for canvas + effect mutation. Hold for
+  /// Acquire the renderer mutex for canvas + animation mutation. Hold for
   /// microseconds only — the renderer also blocks on the same mutex.
   CanvasGuard lockCanvas();
 
@@ -136,26 +147,28 @@ class BoardRuntime {
   BoardDriver driver_;
   BoardCanvas canvas_;
   BoardInput input_;
-  BoardEffects effects_;
+  BoardScheduler scheduler_;
+  BoardAnimations animations_;
   BoardRenderer renderer_;
 
   // Input state is produced by the input poll task and consumed by workflows.
-  // It has its own mutex so long canvas/effect operations never delay sensor
+  // It has its own mutex so long canvas/animation operations never delay sensor
   // ingestion, and input reads never wait for LED rendering.
   void* inputMutex_;
 
   // Input poll task handle (FreeRTOS) — opaque to keep this header
   // platform-agnostic.
   void* inputTaskHandle_;
+  void* inputExitSemaphore_;
+  std::atomic<bool> inputStopRequested_;
   bool startInputPollTask();
-  void stopInputPollTask();
+  bool stopInputPollTask();
   void releaseInputMutex();
   void takeInputMutex();
   void giveInputMutex();
 
   /// Body of the input polling task. Reads driver sensors at sensor
-  /// cadence and feeds them into BoardInput. Never returns; exits via
-  /// vTaskDelete from `stopInputPollTask`.
+  /// cadence and feeds them into BoardInput until shutdown is requested.
   void inputPollLoop();
   static void inputPollTrampoline(void* self);
 };

@@ -2,12 +2,19 @@
 
 #include "board/core/colors.h"
 #include "board/core/runtime.h"
-#include "board/gui/layers.h"
 
 #include <Arduino.h>
 
 BoardDiagnostics::BoardDiagnostics(BoardRuntime& runtime)
-    : runtime_(runtime), visited_{}, complete_(false), visitedCount_(0) {}
+    : runtime_(runtime), surface_(), visited_{}, complete_(false), visitedCount_(0) {}
+
+BoardCanvasHandle BoardDiagnostics::writableSurface(BoardCanvas& canvas) {
+  if (!canvas.active(surface_)) {
+    surface_ = canvas.acquireSurface();
+  }
+  canvas.bringToFront(surface_);
+  return surface_;
+}
 
 void BoardDiagnostics::begin() {
   Serial.println("Sensor Test: Visit all squares with a piece to complete the test.");
@@ -27,8 +34,8 @@ void BoardDiagnostics::update() {
     complete_ = true;
     Serial.println("Sensor Test complete! All squares verified.");
     auto g = runtime_.lockCanvas();
-    g.canvas.clearLayer(BoardLayer::GAME);
-    g.effects.startFirework(LedColors::Cyan, millis());
+    if (g.canvas.active(surface_)) g.canvas.clearSurface(surface_);
+    g.animations.startFirework(LedColors::Cyan, millis());
   }
 }
 
@@ -54,8 +61,9 @@ void BoardDiagnostics::recordVisitedSquare(int row, int col) {
 
 void BoardDiagnostics::paintVisited() {
   auto g = runtime_.lockCanvas();
-  g.canvas.clearLayer(BoardLayer::GAME);
+  BoardCanvasHandle surface = writableSurface(g.canvas);
+  g.canvas.clearSurface(surface);
   for (int row = 0; row < ROWS; ++row)
     for (int col = 0; col < COLS; ++col)
-      if (visited_[row][col]) g.canvas.setPixel(BoardLayer::GAME, row, col, LedColors::White);
+      if (visited_[row][col]) g.canvas.setPixel(surface, row, col, LedColors::White);
 }

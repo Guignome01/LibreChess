@@ -15,7 +15,7 @@ class BoardRuntime;
 //
 // Calibration runs against `BoardDriver` directly because (a) the renderer
 // task hasn't been started yet at startup, and (b) calibration needs raw
-// (uncalibrated) sensor reads + raw LED writes that bypass canvas/effects.
+// (uncalibrated) sensor reads + raw LED writes that bypass canvas/animations.
 // ---------------------------------------------------------------------------
 
 class BoardCalibration {

@@ -1,5 +1,5 @@
-#ifndef BOARD_SELECTION_H
-#define BOARD_SELECTION_H
+#ifndef BOARD_MENUS_SELECTION_H
+#define BOARD_MENUS_SELECTION_H
 
 #include <cstdint>
 
@@ -21,4 +21,4 @@ struct BoardGameSelection {
   bool hasSelection() const { return mode != BoardGameSelectionMode::NONE; }
 };
 
-#endif  // BOARD_SELECTION_H
+#endif  // BOARD_MENUS_SELECTION_H

@@ -8,7 +8,7 @@
 #include "board/workflows/calibration.h"
 
 // ---------------------------------------------------------------------------
-// BoardRuntime — wires driver + canvas + input + effects + renderer.
+// BoardRuntime — wires driver + canvas + input + scheduler + animations + renderer.
 // ---------------------------------------------------------------------------
 // `begin()` ordering matters:
 //   1. driver_.begin() — initializes hardware.
@@ -26,6 +26,7 @@ namespace {
 constexpr UBaseType_t INPUT_TASK_PRIORITY = 1;
 constexpr uint32_t INPUT_TASK_STACK_BYTES = 2048;
 constexpr BaseType_t INPUT_TASK_CORE = 1;
+constexpr TickType_t INPUT_TASK_STOP_TIMEOUT_TICKS = pdMS_TO_TICKS(250);
 
 }  // namespace
 
@@ -35,6 +36,7 @@ void BoardRuntime::inputPollTrampoline(void* self) {
 
 void BoardRuntime::inputPollLoop() {
   for (;;) {
+    if (inputStopRequested_.load()) break;
     driver_.readSensors();
     bool sensors[8][8];
     for (int r = 0; r < 8; ++r) {
@@ -43,18 +45,26 @@ void BoardRuntime::inputPollLoop() {
       }
     }
     takeInputMutex();
-    input_.poll(sensors, millis());
+    if (!inputStopRequested_.load()) {
+      input_.poll(sensors, millis());
+    }
     giveInputMutex();
-    vTaskDelay(pdMS_TO_TICKS(SENSOR_READ_DELAY_MS));
+    if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(SENSOR_READ_DELAY_MS)) > 0) break;
   }
+
+  auto* exited = static_cast<SemaphoreHandle_t>(inputExitSemaphore_);
+  if (exited != nullptr) {
+    xSemaphoreGive(exited);
+  }
+  vTaskDelete(nullptr);
 }
 
 // ---------------------------------------------------------------------------
 // CanvasGuard
 // ---------------------------------------------------------------------------
 
-CanvasGuard::CanvasGuard(BoardRuntime& runtime, BoardCanvas& canvas, BoardEffects& effects)
-    : canvas(canvas), effects(effects), runtime_(runtime) {
+CanvasGuard::CanvasGuard(BoardRuntime& runtime, BoardCanvas& canvas, BoardAnimations& animations)
+    : canvas(canvas), animations(animations), runtime_(runtime) {
   auto* mtx = static_cast<SemaphoreHandle_t>(runtime.mutexHandle());
   if (mtx != nullptr) {
     xSemaphoreTake(mtx, portMAX_DELAY);
@@ -76,12 +86,18 @@ BoardRuntime::BoardRuntime()
     : driver_(),
       canvas_(),
       input_(),
-      effects_(),
+      scheduler_(),
+      animations_(scheduler_, canvas_),
       renderer_(),
       inputMutex_(nullptr),
-      inputTaskHandle_(nullptr) {}
+      inputTaskHandle_(nullptr),
+      inputExitSemaphore_(nullptr),
+      inputStopRequested_(false) {}
 
 bool BoardRuntime::begin() {
+  if (renderer_.running() && inputTaskHandle_ != nullptr) return true;
+  if (renderer_.running() || inputTaskHandle_ != nullptr || inputMutex_ != nullptr) return false;
+
   driver_.begin();
 
   // Startup calibration: load saved mapping or run a fresh calibration.
@@ -121,23 +137,29 @@ bool BoardRuntime::begin() {
     return false;
   }
 
-  if (!renderer_.begin(driver_, canvas_, effects_)) {
+  if (!renderer_.begin(driver_, canvas_, scheduler_)) {
     Serial.println("BoardRuntime: renderer startup failed");
-    stopInputPollTask();
-    releaseInputMutex();
+    const bool inputStopped = stopInputPollTask();
+    if (inputStopped || inputTaskHandle_ == nullptr) {
+      releaseInputMutex();
+    }
     return false;
   }
   return true;
 }
 
 void BoardRuntime::shutdown() {
+  if (!renderer_.running() && inputMutex_ == nullptr && inputTaskHandle_ == nullptr) return;
+
   renderer_.stop();
-  stopInputPollTask();
-  releaseInputMutex();
+  const bool inputStopped = stopInputPollTask();
+  if (inputStopped || inputTaskHandle_ == nullptr) {
+    releaseInputMutex();
+  }
 }
 
 CanvasGuard BoardRuntime::lockCanvas() {
-  return CanvasGuard(*this, canvas_, effects_);
+  return CanvasGuard(*this, canvas_, animations_);
 }
 
 void* BoardRuntime::mutexHandle() {
@@ -179,6 +201,8 @@ BoardInputEventBatch BoardRuntime::drainInputEvents() {
   BoardInputEventBatch batch;
   takeInputMutex();
   batch.overflowed = input_.overflowed();
+  batch.droppedEventCount = input_.droppedEventCount();
+  batch.maxQueueDepth = input_.maxQueueDepth();
   batch.count = input_.eventCount();
   for (uint8_t i = 0; i < batch.count; ++i) {
     batch.events[i] = input_.peek(i);
@@ -198,6 +222,10 @@ void BoardRuntime::clearInputEvents() {
 
 bool BoardRuntime::startInputPollTask() {
   if (inputTaskHandle_ != nullptr) return true;
+  inputStopRequested_.store(false);
+  inputExitSemaphore_ = xSemaphoreCreateBinary();
+  if (inputExitSemaphore_ == nullptr) return false;
+
   TaskHandle_t handle = nullptr;
   const BaseType_t ok = xTaskCreatePinnedToCore(
       &BoardRuntime::inputPollTrampoline,
@@ -207,15 +235,34 @@ bool BoardRuntime::startInputPollTask() {
       INPUT_TASK_PRIORITY,
       &handle,
       INPUT_TASK_CORE);
-  if (ok != pdPASS || handle == nullptr) return false;
+  if (ok != pdPASS || handle == nullptr) {
+    vSemaphoreDelete(static_cast<SemaphoreHandle_t>(inputExitSemaphore_));
+    inputExitSemaphore_ = nullptr;
+    return false;
+  }
   inputTaskHandle_ = handle;
   return true;
 }
 
-void BoardRuntime::stopInputPollTask() {
-  if (inputTaskHandle_ == nullptr) return;
-  vTaskDelete(static_cast<TaskHandle_t>(inputTaskHandle_));
+bool BoardRuntime::stopInputPollTask() {
+  if (inputTaskHandle_ == nullptr) return true;
+  auto* exited = static_cast<SemaphoreHandle_t>(inputExitSemaphore_);
+  if (exited == nullptr) {
+    Serial.println("BoardRuntime: missing input exit semaphore during stop");
+    return false;
+  }
+  inputStopRequested_.store(true);
+  xTaskNotifyGive(static_cast<TaskHandle_t>(inputTaskHandle_));
+  const bool stoppedGracefully = xSemaphoreTake(exited, INPUT_TASK_STOP_TIMEOUT_TICKS) == pdTRUE;
+  if (!stoppedGracefully) {
+    Serial.println("BoardRuntime: input poll task stop timed out; forcing task deletion");
+    vTaskDelete(static_cast<TaskHandle_t>(inputTaskHandle_));
+  }
+  vSemaphoreDelete(exited);
+  inputExitSemaphore_ = nullptr;
   inputTaskHandle_ = nullptr;
+  inputStopRequested_.store(false);
+  return stoppedGracefully;
 }
 
 void BoardRuntime::releaseInputMutex() {

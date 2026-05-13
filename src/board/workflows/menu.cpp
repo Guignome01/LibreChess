@@ -3,7 +3,6 @@
 #include "board/config.h"
 #include "board/core/colors.h"
 #include "board/core/runtime.h"
-#include "board/gui/layers.h"
 
 #include <Arduino.h>
 
@@ -162,7 +161,7 @@ bool BoardMenu::confirmAction(bool flipped) {
 bool BoardMenu::confirmResume(GameSelectionMode mode, bool flipped) {
   {
     auto g = runtime_.lockCanvas();
-    g.effects.startBlink(3, 3, resumeIndicatorColor(mode), 2, millis(), BoardLayer::MENU);
+    g.animations.startBlink(3, 3, resumeIndicatorColor(mode), 2, millis());
   }
   // Let the blink play out before the prompt appears.
   delay(900);

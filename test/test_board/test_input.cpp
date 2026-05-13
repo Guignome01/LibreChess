@@ -192,8 +192,31 @@ void test_queue_overflow_drops_new_and_sets_flag() {
   }
   TEST_ASSERT_EQUAL_UINT8(BoardInput::EVENT_QUEUE_SIZE, input.eventCount());
   TEST_ASSERT_TRUE(input.overflowed());
+  TEST_ASSERT_TRUE(input.droppedEventCount() > 0);
+  TEST_ASSERT_EQUAL_UINT8(BoardInput::EVENT_QUEUE_SIZE, input.maxQueueDepth());
   input.clearOverflow();
   TEST_ASSERT_FALSE(input.overflowed());
+  TEST_ASSERT_EQUAL_UINT32(0, input.droppedEventCount());
+}
+
+void test_syncBaseline_resets_overflow_metrics() {
+  BoardInput input;
+  bool s[8][8];
+  clear(s);
+  input.syncBaseline(s, 0);
+  for (int i = 0; i < 20; ++i) {
+    const int r = i % 8;
+    const int c = (i / 8) % 8;
+    s[r][c] = !s[r][c];
+    input.poll(s, static_cast<uint32_t>(i + 1));
+  }
+  TEST_ASSERT_TRUE(input.overflowed());
+
+  clear(s);
+  input.syncBaseline(s, 200);
+  TEST_ASSERT_FALSE(input.overflowed());
+  TEST_ASSERT_EQUAL_UINT32(0, input.droppedEventCount());
+  TEST_ASSERT_EQUAL_UINT8(1, input.maxQueueDepth());
 }
 
 // ---------------------------------------------------------------------------
@@ -260,6 +283,7 @@ void register_input_tests() {
   RUN_TEST(test_consume_advances_head);
   RUN_TEST(test_consume_clamps_to_count);
   RUN_TEST(test_queue_overflow_drops_new_and_sets_flag);
+  RUN_TEST(test_syncBaseline_resets_overflow_metrics);
   RUN_TEST(test_ring_wraps_correctly);
   RUN_TEST(test_oob_queries_return_false);
 }

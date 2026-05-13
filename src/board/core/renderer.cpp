@@ -16,7 +16,7 @@
 // asynchronously. If a previous transmission is still in flight when we
 // call `Show()` again, the library blocks until it completes — but at
 // 30 Hz with an 8x8 strip the DMA finishes in ~256 µs, far below our 33 ms
-// tick period, so we never wait in practice.
+// cadence period, so we never wait in practice.
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -24,23 +24,24 @@ namespace {
 constexpr UBaseType_t RENDER_TASK_PRIORITY = 1;
 constexpr uint32_t RENDER_TASK_STACK_BYTES = 4096;
 constexpr BaseType_t RENDER_TASK_CORE = 1;
-constexpr TickType_t RENDER_TICK_DELAY_MS = 33;  // ~30 Hz
+constexpr TickType_t RENDER_FRAME_DELAY_MS = 33;  // ~30 Hz
+constexpr TickType_t RENDER_STOP_TIMEOUT_TICKS = pdMS_TO_TICKS(250);
 
 }  // namespace
 
 BoardRenderer::BoardRenderer()
     : driver_(nullptr),
       canvas_(nullptr),
-      effects_(nullptr),
+      scheduler_(nullptr),
       mutex_(nullptr),
       taskHandle_(nullptr),
       exitSemaphore_(nullptr) {}
 
-bool BoardRenderer::begin(BoardDriver& driver, BoardCanvas& canvas, BoardEffects& effects) {
+bool BoardRenderer::begin(BoardDriver& driver, BoardCanvas& canvas, BoardScheduler& scheduler) {
   if (taskHandle_ != nullptr) return true;  // already running.
   driver_ = &driver;
   canvas_ = &canvas;
-  effects_ = &effects;
+  scheduler_ = &scheduler;
 
   mutex_ = xSemaphoreCreateMutex();
   if (mutex_ == nullptr) return false;
@@ -72,21 +73,31 @@ bool BoardRenderer::begin(BoardDriver& driver, BoardCanvas& canvas, BoardEffects
   return true;
 }
 
-void BoardRenderer::stop() {
-  if (taskHandle_ == nullptr) return;
+bool BoardRenderer::stop() {
+  if (taskHandle_ == nullptr) return true;
   TaskHandle_t handle = static_cast<TaskHandle_t>(taskHandle_);
   auto* exited = static_cast<SemaphoreHandle_t>(exitSemaphore_);
-  xTaskNotifyGive(handle);
-  if (exited != nullptr) {
-    xSemaphoreTake(exited, portMAX_DELAY);
-    vSemaphoreDelete(exited);
-    exitSemaphore_ = nullptr;
+  if (exited == nullptr) {
+    Serial.println("BoardRenderer: missing exit semaphore during stop");
+    return false;
   }
+  xTaskNotifyGive(handle);
+  const bool stoppedGracefully = xSemaphoreTake(exited, RENDER_STOP_TIMEOUT_TICKS) == pdTRUE;
+  if (!stoppedGracefully) {
+    Serial.println("BoardRenderer: stop timed out; forcing task deletion");
+    vTaskDelete(handle);
+  }
+  vSemaphoreDelete(exited);
+  exitSemaphore_ = nullptr;
   taskHandle_ = nullptr;
   if (mutex_ != nullptr) {
     vSemaphoreDelete(static_cast<SemaphoreHandle_t>(mutex_));
     mutex_ = nullptr;
   }
+  driver_ = nullptr;
+  canvas_ = nullptr;
+  scheduler_ = nullptr;
+  return stoppedGracefully;
 }
 
 void BoardRenderer::taskTrampoline(void* self) {
@@ -98,7 +109,7 @@ void BoardRenderer::taskBody() {
   for (;;) {
     const uint32_t now = millis();
     if (xSemaphoreTake(mtx, portMAX_DELAY) == pdTRUE) {
-      effects_->step(now, *canvas_);
+      scheduler_->run(now, *canvas_);
       if (canvas_->dirty()) {
         LedRGB out[BoardCanvas::ROWS][BoardCanvas::COLS];
         canvas_->compose(out);
@@ -111,7 +122,7 @@ void BoardRenderer::taskBody() {
       }
       xSemaphoreGive(mtx);
     }
-    if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(RENDER_TICK_DELAY_MS)) > 0) break;
+    if (ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(RENDER_FRAME_DELAY_MS)) > 0) break;
   }
 
   auto* exited = static_cast<SemaphoreHandle_t>(exitSemaphore_);

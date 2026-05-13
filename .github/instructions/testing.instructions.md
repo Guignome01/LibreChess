@@ -60,9 +60,9 @@ test/
 │   └── test_history_persistence.cpp     Recording: persistence, header flush, replay, branch-truncation, encode/decode
 ├── test_board/                          Arduino-free board primitive tests
 │   ├── test_all.cpp                    Main entry: includes pure board source units once and registers board tests
-│   ├── test_canvas.cpp                  BoardCanvas: layer composition, dirty flag, bounds, rect/fill/line/ring helpers
-│   ├── test_input.cpp                   BoardInput: baseline sync, edge events, queue consumption, overflow, bounds
-│   └── test_effects.cpp                 BoardEffects: slot lifecycle, stale handles, sibling composition, looping/finite effects
+│   ├── test_canvas.cpp                  BoardCanvas: ordered-surface composition, dirty flag, bounds, rect/fill/line/ring helpers
+│   ├── test_input.cpp                   BoardInput: baseline sync, edge events, queue consumption, overflow metrics, bounds
+│   └── test_effects.cpp                 BoardScheduler + BoardAnimations: slot lifecycle, stale handles, sibling composition, looping/finite animations
 ├── suites/                              Shared EPD test files (no .cpp — not compiled)
 │   ├── wac.epd                          Win At Chess — 300 positions (Reinfeld/Wilson, CPW verbatim)
 │   ├── bk.epd                           Bratko-Kopec — 24 positions (Bratko/Kopec, CPW verbatim)

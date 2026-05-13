@@ -84,8 +84,14 @@ class BoardInput {
   /// `clearOverflow()` because the queue was full.
   bool overflowed() const { return overflowed_; }
 
-  /// Clear the overflow flag.
-  void clearOverflow() { overflowed_ = false; }
+  /// Number of events dropped since the last overflow clear.
+  uint32_t droppedEventCount() const { return droppedEventCount_; }
+
+  /// Highest queue depth observed since the last overflow clear/baseline.
+  uint8_t maxQueueDepth() const { return maxQueueDepth_; }
+
+  /// Clear the overflow flag and all overflow diagnostic counters.
+  void clearOverflow();
 
   /// Read the event at logical offset `i` from the head (0 = oldest).
   /// `i` must be < `eventCount()`. Out-of-range returns a zero-initialized event.
@@ -110,6 +116,8 @@ class BoardInput {
   uint8_t head_;     ///< Index of the next event to peek (0 in linear order).
   uint8_t count_;    ///< Number of valid events in the ring.
   bool overflowed_;
+  uint32_t droppedEventCount_;
+  uint8_t maxQueueDepth_;
 };
 
 #endif  // BOARD_INPUT_H

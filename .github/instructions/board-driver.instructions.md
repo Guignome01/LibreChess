@@ -1,5 +1,5 @@
 ---
-description: "Use when modifying anything under src/board/** — public Board API, BoardRuntime, BoardDriver, BoardCanvas, BoardEffects, BoardInput, BoardRenderer, GUI helpers, menus, or workflows. Covers the runtime/canvas/effects model, layer semantics, status-handle contract, sensor cadence, and NVS persistence."
+description: "Use when modifying anything under src/board/** — public Board API, BoardRuntime, BoardDriver, BoardCanvas, BoardScheduler, BoardAnimations, BoardInput, BoardRenderer, GUI helpers, menus, or workflows. Covers the runtime/canvas/scheduler model, ordered surface semantics, status-handle contract, sensor cadence, and NVS persistence."
 applyTo: "src/board/**, src/shared/utils.*"
 ---
 
@@ -16,16 +16,16 @@ deliberately narrow API consumed by firmware outside the board folder:
 - Sensor cadence: `cadenceMs()` — every poll loop outside the board
   subsystem must `delay(board.cadenceMs())` rather than referencing
   `SENSOR_READ_DELAY_MS`.
-- Canvas reset: `clearAllLayers()`.
-- Status effects exposed as handles: `BoardEffectHandle startConnectingStatus()`
-  and `void stopConnectingStatus(BoardEffectHandle&)`.
+- Canvas reset: `clearAllSurfaces()`.
+- Status animations exposed as handles: `BoardAnimationHandle startConnectingStatus()`
+  and `void stopConnectingStatus(BoardAnimationHandle&)`.
 - Workflow accessors: `gameplay()`, `menu()`, `diagnostics()`, `calibration()`.
 
 External firmware must not include `BoardDriver`, `BoardRuntime`,
-`BoardCanvas`, `BoardEffects`, `BoardInput`, `BoardRenderer`, `BoardFeedback`,
-or `BoardAssistance` directly. The only board-internal types it may name are
-`BoardEffectHandle` (`board/core/effects.h`) and the selection types from
-`board/gui/selection.h`.
+`BoardCanvas`, `BoardScheduler`, `BoardAnimations`, `BoardInput`,
+`BoardRenderer`, `BoardFeedback`, or `BoardAssistance` directly. The only
+board-internal types it may name are `BoardAnimationHandle`
+(`board/gui/animations.h`) and the selection types from `board/menus/selection.h`.
 
 ## Internal layout
 
@@ -34,21 +34,21 @@ src/board/
 ├── board.{h,cpp}              public package root
 ├── config.{h,cpp}             menu config helpers
 ├── core/                      runtime primitives
-│   ├── runtime.{h,cpp}        composes driver + canvas + effects + input + renderer
+│   ├── runtime.{h,cpp}        composes driver + canvas + scheduler + animations + input + renderer
 │   ├── driver.{h,cpp}         hall sensors, shift register, WS2812 strip, NVS
-│   ├── canvas.{h,cpp}         7-layer pixel buffer + dirty flag
-│   ├── effects.{h,cpp}        slot-based looping/transient animations
+│   ├── canvas.{h,cpp}         ordered fixed-size surface stack + dirty flag
+│   ├── painter.h              logical-frame painter contract
+│   ├── scheduler.{h,cpp}      generic fixed-slot timed painter runner
 │   ├── input.{h,cpp}          pure occupancy snapshot + event queue
 │   ├── renderer.{h,cpp}       FreeRTOS render task (~30 Hz)
 │   └── colors.h               semantic LED palette
 ├── gui/                       visual helpers (take BoardRuntime&)
 │   ├── feedback.{h,cpp}       always-on outcomes, status handles
 │   ├── assistance.{h,cpp}     optional move/setup/capture guidance
-│   ├── effect_animations.{h,cpp}  pure step functions used by BoardEffects
-│   ├── layers.h               BoardLayer enum
-│   └── selection.h            game-selection types (public)
+│   ├── animations.{h,cpp}     animation API + frame painters
 ├── menus/                     menu primitives
-│   └── view.{h,cpp}           MenuView drawable + selection debouncer
+│   ├── view.{h,cpp}           MenuView drawable + selection debouncer
+│   └── selection.h            game-selection types (public)
 └── workflows/                 long-lived workflows (take BoardRuntime&)
     ├── gameplay.{h,cpp}       physical chess interactions, holds feedback+assistance
     ├── diagnostics.{h,cpp}    sensor test
@@ -56,33 +56,38 @@ src/board/
     └── menu.{h,cpp}           game-selection state machine + confirm prompts
 ```
 
-## BoardRuntime — the canvas/effects/IO boundary
+## BoardRuntime — the canvas/scheduler/IO boundary
 
 `BoardRuntime` owns one `BoardDriver`, one `BoardCanvas`, one `BoardInput`,
-one `BoardEffects`, and one `BoardRenderer`. It is constructed by `Board::Impl`
-and shared with every workflow and visual helper through a `BoardRuntime&`
-reference.
+one `BoardScheduler`, one `BoardAnimations`, and one `BoardRenderer`. It is
+constructed by `Board::Impl` and shared with every workflow and visual helper
+through a `BoardRuntime&` reference.
 
 Key contracts:
 
 - **All canvas mutation flows through `runtime.lockCanvas()`**, which returns a
-  `CanvasGuard` RAII handle holding `canvas` and `effects` references under
+  `CanvasGuard` RAII handle holding `canvas` and `animations` references under
   the runtime mutex. Hold the guard for the minimum scope needed; never store
-  references to the underlying canvas/effects.
+  references to the underlying canvas/animations.
   ```cpp
   auto g = runtime.lockCanvas();
-  g.canvas.setPixel(BoardLayer::FEEDBACK, row, col, LedColors::Cyan);
-  g.effects.startBlink(row, col, LedColors::Green, 1, millis(),
-                       BoardLayer::FEEDBACK);
+  BoardCanvasHandle surface = g.canvas.acquireSurface();
+  g.canvas.setPixel(surface, row, col, LedColors::Cyan);
+  g.animations.startBlink(row, col, LedColors::Green, 1, millis());
   ```
-- **Render task runs on Core 1, priority 1, ~30 Hz** (33 ms tick, 4 KiB stack).
-  It picks up the dirty flag from the canvas and flushes through `BoardDriver`.
-  Workflows never call `show()` directly.
+- **Render task runs on Core 1, priority 1, ~30 Hz** (33 ms cadence, 4 KiB stack).
+  It asks `BoardScheduler` to run scheduled painters, picks up the dirty flag
+  from the canvas, and flushes through `BoardDriver`.
+  `BoardRenderer::stop()` uses a bounded graceful wait and reports whether the
+  task acknowledged shutdown before any last-resort deletion. Workflows never
+  call `show()` directly.
 - **Input task runs on Core 1, priority 1**, polling sensors at `cadenceMs()`
   (`SENSOR_READ_DELAY_MS` = 40 ms, 2 KiB stack). It produces
   `LIFTED`/`PLACED`/`BASELINE_SYNCED` events into a 16-slot queue. `BoardInput`
-  is pure and not internally synchronized; `BoardRuntime` owns a dedicated
-  input mutex and exposes short synchronized transactions:
+  is pure and not internally synchronized; it also tracks overflow diagnostics
+  (`droppedEventCount` and max queue depth) until the runtime drains/clears the
+  overflow state. `BoardRuntime` owns a
+  dedicated input mutex and exposes short synchronized transactions:
   ```cpp
   BoardInputEventBatch batch = runtime.drainInputEvents();
   bool occupied = runtime.inputOccupied(row, col);
@@ -90,56 +95,56 @@ Key contracts:
   runtime.copyInputOccupancy(board);
   ```
   Do not cache `BoardInput&` in workflows. Process drained batches outside the
-  mutex. If `batch.overflowed` is true, discard the partial gesture and resync
-  from current occupancy.
+  mutex. If `batch.overflowed` is true, log/use the diagnostic fields, discard
+  the partial gesture, and resync from current occupancy.
+- **Shutdown is idempotent and bounded**: the renderer is stopped with a bounded
+  wait, the input poll task is asked to exit cooperatively through task
+  notification, and only then are runtime-owned mutexes/semaphores released.
+  Timeout fallbacks log the failure before last-resort task deletion.
 
-## BoardCanvas — 7-layer pixel buffer
+## BoardCanvas — ordered surface stack
 
-```
-enum class BoardLayer : uint8_t {
-  BACKGROUND = 0, GAME, ASSISTANCE, FEEDBACK, MENU, EFFECT, OVERRIDE
-};
-```
+`BoardCanvas` owns a fixed pool of ordered 8x8 surfaces. Each active surface
+stores one `LedRGB[8][8]`, a `uint64_t` presence mask, a generation counter,
+and an insertion/activation order. `BoardCanvas::resolve(r, c)` returns the
+newest active surface that has presence at that square. No heap allocation is
+used.
 
-Each layer stores an 8x8 `LedRGB` array plus one `uint64_t` presence mask
-(row-major, one bit per square). `BoardCanvas::resolve(r, c)` returns the
-topmost present layer's colour. `drawLine()` and `drawRing()` are available for
-common assistance/feedback/effect geometry. Layer ownership:
+All visual owners use explicit `BoardCanvasHandle` values. Persistent helpers
+store their handle as a member, repaint that surface under the canvas guard,
+and release it when the owning object is destroyed. `drawLine()` and
+`drawRing()` are available for common geometry on a chosen surface. `clearAll()`
+blanks every active surface and is used by `Board::clearAllSurfaces()` before
+scheduled animations are also cancelled.
 
-| Layer       | Owner / use                                           |
-|-------------|-------------------------------------------------------|
-| BACKGROUND  | Long-lived ambient (currently unused)                 |
-| GAME        | Diagnostics paint, future game-state hints            |
-| ASSISTANCE  | Legal-move highlights, setup/remote/capture prompts   |
-| FEEDBACK    | Resign progress, post-move blinks, illegal flashes    |
-| MENU        | `MenuView` drawables, confirm prompts                 |
-| EFFECT      | Transient/looping animations from `BoardEffects`      |
-| OVERRIDE    | Reserved for hard overrides (calibration prompts)     |
+## BoardScheduler, BoardPainter, and BoardAnimations
 
-Use `g.canvas.clearLayer(BoardLayer::X)` to wipe one layer; `clearAll()`
-resets every layer (used by `Board::clearAllLayers()`).
+`BoardPainter` (`core/painter.h`) is the generic logical-frame paint contract:
+a callback plus fixed-size copied context and paint mode. It does not know
+about hardware, timing, cancellation, or animation semantics.
 
-## BoardEffects — slot-based animations
+`BoardScheduler` (`core/scheduler.*`) owns six generic timed painter slots
+(`SLOT_COUNT = 6`). Scheduled painters are addressed by
+`BoardScheduledHandle{slot, generation}`; the 16-bit generation counter prevents
+stale handles from cancelling a re-used slot. The scheduler has no animation
+vocabulary. It owns slot allocation, start time, duration/looping,
+cancellation, and one canvas surface per scheduled painter. Full-surface painters
+clear only their own surface before painting each frame, so sibling animations
+do not erase each other.
 
-Six animation slots (`SLOT_COUNT = 6`). Effects are addressed by
-`BoardEffectHandle{slot, generation}` — the 16-bit generation counter prevents
-stale handles from cancelling a re-used slot. Helpers on `BoardEffects`:
+`BoardAnimations` (`gui/animations.*`) is the GUI-owned animation API and frame
+painting implementation. It converts animation requests into scheduled painters
+and exposes `BoardAnimationHandle` (an alias of `BoardScheduledHandle`) for
+callers. Helpers:
 
 - One-shot: `startBlink`, `startFlash`, `startCapture`, `startPromotion`,
   `startFirework`.
 - Looping: `startThinking`, `startWaiting`, `startConnecting`.
 
-All return a `BoardEffectHandle`. To stop a looping effect, hand the handle
-back to the helper that owns it (e.g. `feedback_.stopAnimation(handle)`,
+All return a `BoardAnimationHandle`. To stop a looping animation, hand the
+handle back to the helper that owns it (e.g. `feedback_.stopAnimation(handle)`,
 `Board::stopConnectingStatus(handle)`). After cancellation the handle is
-invalidated. **Status animations no longer use `std::atomic<bool>*` flags.**
-
-The renderer drives effect frames each tick via the pure step functions in
-`gui/effect_animations.cpp` (`BoardEffectSteps` namespace). Full-layer effects
-reuse a retained scratch canvas and then compose into their target layer, so
-one active slot's empty squares do not erase sibling slots on the same layer
-without allocating a full canvas on the render-task stack each frame. Effects
-write to `BoardLayer::EFFECT` unless a helper specifies otherwise.
+invalidated. **Status animations do not use `std::atomic<bool>*` flags.**
 
 ## Color Semantics
 
@@ -200,14 +205,14 @@ use. Key namespaces:
 
 ## Design Decisions
 
-- **The canvas is the single source of truth** — every persistent visual is a
-  layer write. The renderer never reads from workflows; workflows never write
-  raw pixels. This makes layer ordering deterministic and lets multiple
-  visuals coexist (e.g. legal-move highlight + thinking animation).
-- **Effects are slot-based with handles** — looping animations need a stable
-  identifier so a slow caller can cancel them safely. The generation counter
-  in `BoardEffectHandle` prevents the "ABA" hazard of cancelling a slot that
-  has already been recycled. `std::atomic<bool>*` flags are gone.
+- **The canvas is the single source of truth** — every persistent visual writes
+  to an explicit `BoardCanvasHandle` surface. The renderer never reads from
+  workflows; workflows never write raw pixels. Insertion-order composition keeps
+  multiple visuals deterministic without enum-based priority or roles.
+- **Scheduled visuals are slot-based with handles** — looping animations need a
+  stable identifier so a slow caller can cancel them safely. The generation
+  counter in `BoardScheduledHandle`/`BoardAnimationHandle` prevents the "ABA"
+  hazard of cancelling a slot that has already been recycled.
 - **Input is event-driven** — moving edge detection into a single FreeRTOS
   task removes the manual `readSensors()` / `syncOccupancyBaseline()` calls
   that previously had to be sprinkled through every game-mode update loop.
@@ -221,8 +226,8 @@ use. Key namespaces:
   `BoardFeedback` and a `BoardAssistance` directly (constructed with the
   shared `BoardRuntime&`). Visual helpers no longer live on a controller
   facade; they are just objects scoped to their consumer.
-- **Status effects are exposed as handles** — `BoardGameplay::startThinking`
-  and friends return `BoardEffectHandle`. The caller stores the handle and
+- **Status animations are exposed as handles** — `BoardGameplay::startThinking`
+  and friends return `BoardAnimationHandle`. The caller stores the handle and
   passes it back to `stopStatusAnimation`. There is no "and-wait" semantics:
   the renderer is decoupled from the workflow so cancellation is immediate.
 - **Colors have fixed semantics** — the table in `core/colors.h` is a

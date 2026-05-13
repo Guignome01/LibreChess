@@ -1,6 +1,8 @@
 #ifndef BOARD_WORKFLOWS_DIAGNOSTICS_H
 #define BOARD_WORKFLOWS_DIAGNOSTICS_H
 
+#include "board/core/canvas.h"
+
 #include <stdint.h>
 
 class BoardRuntime;
@@ -8,9 +10,9 @@ class BoardRuntime;
 // ---------------------------------------------------------------------------
 // BoardDiagnostics — physical sensor coverage workflow.
 // ---------------------------------------------------------------------------
-// Lights every square on BoardLayer::GAME as the user places pieces. When
-// all 64 squares have been visited, the GAME layer is cleared and a
-// firework effect plays.
+// Lights every square on an owned surface as the user places pieces.
+// When all 64 squares have been visited, the surface is cleared and a
+// firework animation plays.
 // ---------------------------------------------------------------------------
 
 class BoardDiagnostics {
@@ -27,6 +29,7 @@ class BoardDiagnostics {
 
  private:
   BoardRuntime& runtime_;
+  BoardCanvasHandle surface_;
   bool visited_[ROWS][COLS];
   bool complete_;
   uint8_t visitedCount_;
@@ -35,6 +38,7 @@ class BoardDiagnostics {
   void recordCurrentOccupancy();
   void recordVisitedSquare(int row, int col);
   void paintVisited();
+  BoardCanvasHandle writableSurface(BoardCanvas& canvas);
 };
 
 #endif  // BOARD_WORKFLOWS_DIAGNOSTICS_H

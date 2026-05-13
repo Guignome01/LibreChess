@@ -1,7 +1,7 @@
-// Tests for BoardCanvas (multi-layer 8x8 pixel surface).
+// Tests for BoardCanvas (ordered 8x8 pixel surfaces).
 //
 // The canvas is pure logic: no Arduino, no driver, no threading. We verify
-// layer composition, presence semantics, dirty tracking, and bounds safety.
+// insertion-order composition, presence semantics, dirty tracking, and bounds safety.
 //
 // The .cpp is included directly so the native test environment doesn't need
 // to compile src/ as a project source set.
@@ -17,6 +17,12 @@ bool sameColor(LedRGB a, LedRGB b) {
 }
 
 LedRGB rgb(uint8_t r, uint8_t g, uint8_t b) { return LedRGB{r, g, b}; }
+
+BoardCanvasHandle acquireTestSurface(BoardCanvas& canvas) {
+  BoardCanvasHandle surface = canvas.acquireSurface();
+  TEST_ASSERT_TRUE(surface.valid());
+  return surface;
+}
 
 // ---------------------------------------------------------------------------
 // Construction + initial state
@@ -39,58 +45,87 @@ void test_fresh_canvas_is_dirty() {
 }
 
 // ---------------------------------------------------------------------------
-// Single-layer writes
+// Single-surface writes
 // ---------------------------------------------------------------------------
 
-void test_setPixel_makes_layer_present() {
+void test_setPixel_makes_surface_present() {
   BoardCanvas canvas;
-  canvas.setPixel(BoardLayer::GAME, 2, 3, rgb(10, 20, 30));
-  TEST_ASSERT_TRUE(canvas.layerHas(BoardLayer::GAME, 2, 3));
-  TEST_ASSERT_FALSE(canvas.layerHas(BoardLayer::FEEDBACK, 2, 3));
+  BoardCanvasHandle surface = acquireTestSurface(canvas);
+  canvas.setPixel(surface, 2, 3, rgb(10, 20, 30));
+  TEST_ASSERT_TRUE(canvas.surfaceHas(surface, 2, 3));
+  TEST_ASSERT_TRUE(canvas.hasPixel(2, 3));
   TEST_ASSERT_TRUE(sameColor(canvas.resolve(2, 3), rgb(10, 20, 30)));
 }
 
-void test_setPixel_last_write_wins_within_layer() {
+void test_setPixel_last_write_wins_within_surface() {
   BoardCanvas canvas;
-  canvas.setPixel(BoardLayer::GAME, 0, 0, LedColors::Red);
-  canvas.setPixel(BoardLayer::GAME, 0, 0, LedColors::Green);
+  BoardCanvasHandle surface = acquireTestSurface(canvas);
+  canvas.setPixel(surface, 0, 0, LedColors::Red);
+  canvas.setPixel(surface, 0, 0, LedColors::Green);
   TEST_ASSERT_TRUE(sameColor(canvas.resolve(0, 0), LedColors::Green));
 }
 
 // ---------------------------------------------------------------------------
-// Layer composition (top wins)
+// Surface composition (newest wins)
 // ---------------------------------------------------------------------------
 
-void test_top_layer_wins_over_bottom() {
+void test_newer_surface_write_wins_over_earlier_write() {
   BoardCanvas canvas;
-  canvas.setPixel(BoardLayer::GAME, 4, 4, LedColors::Red);
-  canvas.setPixel(BoardLayer::EFFECT, 4, 4, LedColors::Green);
+  BoardCanvasHandle earlier = acquireTestSurface(canvas);
+  BoardCanvasHandle newer = acquireTestSurface(canvas);
+  canvas.setPixel(earlier, 4, 4, LedColors::Red);
+  canvas.setPixel(newer, 4, 4, LedColors::Green);
   TEST_ASSERT_TRUE(sameColor(canvas.resolve(4, 4), LedColors::Green));
 }
 
-void test_bottom_visible_when_top_absent() {
+void test_earlier_surface_visible_when_later_absent() {
   BoardCanvas canvas;
-  canvas.setPixel(BoardLayer::GAME, 5, 5, LedColors::Red);
-  // No write to EFFECT — GAME shows through.
+  BoardCanvasHandle earlier = acquireTestSurface(canvas);
+  (void)acquireTestSurface(canvas);
+  canvas.setPixel(earlier, 5, 5, LedColors::Red);
   TEST_ASSERT_TRUE(sameColor(canvas.resolve(5, 5), LedColors::Red));
 }
 
-void test_clearing_top_reveals_bottom() {
+void test_clearing_newer_surface_reveals_older_surface() {
   BoardCanvas canvas;
-  canvas.setPixel(BoardLayer::GAME, 1, 1, LedColors::Red);
-  canvas.setPixel(BoardLayer::EFFECT, 1, 1, LedColors::Green);
-  canvas.clearLayerSquare(BoardLayer::EFFECT, 1, 1);
+  BoardCanvasHandle earlier = acquireTestSurface(canvas);
+  BoardCanvasHandle newer = acquireTestSurface(canvas);
+  canvas.setPixel(earlier, 1, 1, LedColors::Red);
+  canvas.setPixel(newer, 1, 1, LedColors::Green);
+  canvas.clearSurfaceSquare(newer, 1, 1);
   TEST_ASSERT_TRUE(sameColor(canvas.resolve(1, 1), LedColors::Red));
 }
 
-void test_clearLayer_does_not_affect_other_layers() {
+void test_surface_write_order_follows_acquisition_order() {
   BoardCanvas canvas;
-  canvas.setPixel(BoardLayer::GAME, 0, 0, LedColors::Red);
-  canvas.setPixel(BoardLayer::FEEDBACK, 0, 0, LedColors::Yellow);
-  canvas.clearLayer(BoardLayer::FEEDBACK);
+  BoardCanvasHandle first = acquireTestSurface(canvas);
+  BoardCanvasHandle second = acquireTestSurface(canvas);
+  canvas.setPixel(second, 2, 2, LedColors::Green);
+  canvas.setPixel(first, 2, 2, LedColors::Red);
+  TEST_ASSERT_TRUE(sameColor(canvas.resolve(2, 2), LedColors::Green));
+}
+
+void test_bringToFront_updates_surface_order() {
+  BoardCanvas canvas;
+  BoardCanvasHandle first = acquireTestSurface(canvas);
+  BoardCanvasHandle second = acquireTestSurface(canvas);
+  canvas.setPixel(second, 3, 3, LedColors::Green);
+  canvas.setPixel(first, 3, 3, LedColors::Red);
+  TEST_ASSERT_TRUE(sameColor(canvas.resolve(3, 3), LedColors::Green));
+  canvas.bringToFront(first);
+  TEST_ASSERT_TRUE(sameColor(canvas.resolve(3, 3), LedColors::Red));
+}
+
+void test_clearSurface_does_not_affect_other_surfaces() {
+  BoardCanvas canvas;
+  BoardCanvasHandle first = acquireTestSurface(canvas);
+  BoardCanvasHandle second = acquireTestSurface(canvas);
+  canvas.setPixel(first, 0, 0, LedColors::Red);
+  canvas.setPixel(second, 0, 0, LedColors::Yellow);
+  canvas.clearSurface(second);
   TEST_ASSERT_TRUE(sameColor(canvas.resolve(0, 0), LedColors::Red));
-  TEST_ASSERT_FALSE(canvas.layerHas(BoardLayer::FEEDBACK, 0, 0));
-  TEST_ASSERT_TRUE(canvas.layerHas(BoardLayer::GAME, 0, 0));
+  TEST_ASSERT_FALSE(canvas.surfaceHas(second, 0, 0));
+  TEST_ASSERT_TRUE(canvas.surfaceHas(first, 0, 0));
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +134,8 @@ void test_clearLayer_does_not_affect_other_layers() {
 
 void test_compose_clears_dirty_flag() {
   BoardCanvas canvas;
-  canvas.setPixel(BoardLayer::GAME, 0, 0, LedColors::Red);
+  BoardCanvasHandle surface = acquireTestSurface(canvas);
+  canvas.setPixel(surface, 0, 0, LedColors::Red);
   TEST_ASSERT_TRUE(canvas.dirty());
   LedRGB out[8][8];
   canvas.compose(out);
@@ -108,21 +144,21 @@ void test_compose_clears_dirty_flag() {
 
 void test_setPixel_marks_dirty() {
   BoardCanvas canvas;
+  BoardCanvasHandle surface = acquireTestSurface(canvas);
   LedRGB out[8][8];
-  canvas.compose(out);  // Drains initial dirty bit.
+  canvas.compose(out);  // Drains initial/acquire dirty bits.
   TEST_ASSERT_FALSE(canvas.dirty());
-  canvas.setPixel(BoardLayer::GAME, 0, 0, LedColors::Red);
+  canvas.setPixel(surface, 0, 0, LedColors::Red);
   TEST_ASSERT_TRUE(canvas.dirty());
 }
 
-void test_clearLayer_no_op_does_not_dirty() {
-  // Clearing an already-empty layer should not pin the dirty flag, otherwise
-  // an idle canvas would force the renderer to flush every tick.
+void test_clearSurface_no_op_does_not_dirty() {
   BoardCanvas canvas;
+  BoardCanvasHandle surface = acquireTestSurface(canvas);
   LedRGB out[8][8];
   canvas.compose(out);
   TEST_ASSERT_FALSE(canvas.dirty());
-  canvas.clearLayer(BoardLayer::FEEDBACK);  // Already empty.
+  canvas.clearSurface(surface);  // Already empty.
   TEST_ASSERT_FALSE(canvas.dirty());
 }
 
@@ -130,10 +166,12 @@ void test_clearLayer_no_op_does_not_dirty() {
 // Compose output buffer
 // ---------------------------------------------------------------------------
 
-void test_compose_fills_buffer_with_top_layer_colors() {
+void test_compose_fills_buffer_with_resolved_colors() {
   BoardCanvas canvas;
-  canvas.setPixel(BoardLayer::GAME, 0, 0, LedColors::Red);
-  canvas.setPixel(BoardLayer::EFFECT, 7, 7, LedColors::Green);
+  BoardCanvasHandle first = acquireTestSurface(canvas);
+  BoardCanvasHandle second = acquireTestSurface(canvas);
+  canvas.setPixel(first, 0, 0, LedColors::Red);
+  canvas.setPixel(second, 7, 7, LedColors::Green);
   LedRGB out[8][8];
   canvas.compose(out);
   TEST_ASSERT_TRUE(sameColor(out[0][0], LedColors::Red));
@@ -147,9 +185,10 @@ void test_compose_fills_buffer_with_top_layer_colors() {
 
 void test_out_of_bounds_writes_silently_ignored() {
   BoardCanvas canvas;
-  canvas.setPixel(BoardLayer::GAME, -1, 0, LedColors::Red);
-  canvas.setPixel(BoardLayer::GAME, 0, 8, LedColors::Red);
-  canvas.setPixel(BoardLayer::GAME, 8, 8, LedColors::Red);
+  BoardCanvasHandle surface = acquireTestSurface(canvas);
+  canvas.setPixel(surface, -1, 0, LedColors::Red);
+  canvas.setPixel(surface, 0, 8, LedColors::Red);
+  canvas.setPixel(surface, 8, 8, LedColors::Red);
   // Nothing should have been recorded; canvas is still empty.
   for (int r = 0; r < 8; ++r) {
     for (int c = 0; c < 8; ++c) {
@@ -164,7 +203,8 @@ void test_out_of_bounds_writes_silently_ignored() {
 
 void test_fillRect_paints_inclusive_range() {
   BoardCanvas canvas;
-  canvas.fillRect(BoardLayer::GAME, 1, 2, 3, 4, LedColors::Blue);
+  BoardCanvasHandle surface = acquireTestSurface(canvas);
+  canvas.fillRect(surface, 1, 2, 3, 4, LedColors::Blue);
   for (int r = 1; r <= 3; ++r) {
     for (int c = 2; c <= 4; ++c) {
       TEST_ASSERT_TRUE(sameColor(canvas.resolve(r, c), LedColors::Blue));
@@ -178,7 +218,8 @@ void test_fillRect_paints_inclusive_range() {
 
 void test_drawRect_paints_outline_only() {
   BoardCanvas canvas;
-  canvas.drawRect(BoardLayer::GAME, 2, 2, 4, 4, LedColors::Red);
+  BoardCanvasHandle surface = acquireTestSurface(canvas);
+  canvas.drawRect(surface, 2, 2, 4, 4, LedColors::Red);
   // Corners + edges painted.
   TEST_ASSERT_TRUE(canvas.hasPixel(2, 2));
   TEST_ASSERT_TRUE(canvas.hasPixel(4, 4));
@@ -192,7 +233,8 @@ void test_drawRect_paints_outline_only() {
 
 void test_fillAll_paints_every_square() {
   BoardCanvas canvas;
-  canvas.fillAll(BoardLayer::EFFECT, LedColors::Cyan);
+  BoardCanvasHandle surface = acquireTestSurface(canvas);
+  canvas.fillAll(surface, LedColors::Cyan);
   for (int r = 0; r < 8; ++r) {
     for (int c = 0; c < 8; ++c) {
       TEST_ASSERT_TRUE(sameColor(canvas.resolve(r, c), LedColors::Cyan));
@@ -202,7 +244,8 @@ void test_fillAll_paints_every_square() {
 
 void test_drawLine_horizontal() {
   BoardCanvas canvas;
-  canvas.drawLine(BoardLayer::GAME, 3, 1, 3, 6, LedColors::Red);
+  BoardCanvasHandle surface = acquireTestSurface(canvas);
+  canvas.drawLine(surface, 3, 1, 3, 6, LedColors::Red);
   for (int c = 1; c <= 6; ++c) {
     TEST_ASSERT_TRUE(sameColor(canvas.resolve(3, c), LedColors::Red));
   }
@@ -214,7 +257,8 @@ void test_drawLine_horizontal() {
 void test_drawLine_vertical_reversed_endpoints() {
   // Bresenham must work regardless of endpoint order.
   BoardCanvas canvas;
-  canvas.drawLine(BoardLayer::GAME, 5, 2, 1, 2, LedColors::Green);
+  BoardCanvasHandle surface = acquireTestSurface(canvas);
+  canvas.drawLine(surface, 5, 2, 1, 2, LedColors::Green);
   for (int r = 1; r <= 5; ++r) {
     TEST_ASSERT_TRUE(sameColor(canvas.resolve(r, 2), LedColors::Green));
   }
@@ -222,7 +266,8 @@ void test_drawLine_vertical_reversed_endpoints() {
 
 void test_drawLine_diagonal_paints_endpoints() {
   BoardCanvas canvas;
-  canvas.drawLine(BoardLayer::GAME, 0, 0, 7, 7, LedColors::Blue);
+  BoardCanvasHandle surface = acquireTestSurface(canvas);
+  canvas.drawLine(surface, 0, 0, 7, 7, LedColors::Blue);
   TEST_ASSERT_TRUE(sameColor(canvas.resolve(0, 0), LedColors::Blue));
   TEST_ASSERT_TRUE(sameColor(canvas.resolve(7, 7), LedColors::Blue));
   // Each step must paint along the main diagonal.
@@ -233,17 +278,15 @@ void test_drawLine_diagonal_paints_endpoints() {
 
 void test_drawLine_single_pixel() {
   BoardCanvas canvas;
-  canvas.drawLine(BoardLayer::GAME, 4, 4, 4, 4, LedColors::Yellow);
+  BoardCanvasHandle surface = acquireTestSurface(canvas);
+  canvas.drawLine(surface, 4, 4, 4, 4, LedColors::Yellow);
   TEST_ASSERT_TRUE(sameColor(canvas.resolve(4, 4), LedColors::Yellow));
 }
 
 void test_drawRing_centered_radius_one() {
-  // halfWidth 0.5 → only cells whose distance is ~1 from center (3.5, 3.5)
-  // get painted. The four cells immediately around the board center each
-  // sit at distance sqrt(0.5) ≈ 0.707, which is NOT within 0.5 of radius 1
-  // (|0.707 - 1| = 0.293 < 0.5) — so all four should paint.
   BoardCanvas canvas;
-  canvas.drawRing(BoardLayer::EFFECT, 3.5f, 3.5f, 1.0f, 0.5f, LedColors::Red);
+  BoardCanvasHandle surface = acquireTestSurface(canvas);
+  canvas.drawRing(surface, 3.5f, 3.5f, 1.0f, 0.5f, LedColors::Red);
   TEST_ASSERT_TRUE(canvas.hasPixel(3, 3));
   TEST_ASSERT_TRUE(canvas.hasPixel(3, 4));
   TEST_ASSERT_TRUE(canvas.hasPixel(4, 3));
@@ -255,13 +298,13 @@ void test_drawRing_centered_radius_one() {
 
 void test_drawRing_zero_radius_paints_only_nearest_cells() {
   BoardCanvas canvas;
-  canvas.drawRing(BoardLayer::EFFECT, 3.5f, 3.5f, 0.0f, 0.8f, LedColors::Red);
-  // sqrt(0.5) ≈ 0.707 < 0.8 → the four center cells paint.
+  BoardCanvasHandle surface = acquireTestSurface(canvas);
+  canvas.drawRing(surface, 3.5f, 3.5f, 0.0f, 0.8f, LedColors::Red);
   TEST_ASSERT_TRUE(canvas.hasPixel(3, 3));
   TEST_ASSERT_TRUE(canvas.hasPixel(3, 4));
   TEST_ASSERT_TRUE(canvas.hasPixel(4, 3));
   TEST_ASSERT_TRUE(canvas.hasPixel(4, 4));
-  // (3,2) is at distance sqrt(0.5^2 + 1.5^2) ≈ 1.58 → not painted.
+  // (3,2) is too far from the board center to be painted.
   TEST_ASSERT_FALSE(canvas.hasPixel(3, 2));
 }
 
@@ -270,16 +313,18 @@ void test_drawRing_zero_radius_paints_only_nearest_cells() {
 void register_canvas_tests() {
   RUN_TEST(test_fresh_canvas_has_no_pixels);
   RUN_TEST(test_fresh_canvas_is_dirty);
-  RUN_TEST(test_setPixel_makes_layer_present);
-  RUN_TEST(test_setPixel_last_write_wins_within_layer);
-  RUN_TEST(test_top_layer_wins_over_bottom);
-  RUN_TEST(test_bottom_visible_when_top_absent);
-  RUN_TEST(test_clearing_top_reveals_bottom);
-  RUN_TEST(test_clearLayer_does_not_affect_other_layers);
+  RUN_TEST(test_setPixel_makes_surface_present);
+  RUN_TEST(test_setPixel_last_write_wins_within_surface);
+  RUN_TEST(test_newer_surface_write_wins_over_earlier_write);
+  RUN_TEST(test_earlier_surface_visible_when_later_absent);
+  RUN_TEST(test_clearing_newer_surface_reveals_older_surface);
+  RUN_TEST(test_surface_write_order_follows_acquisition_order);
+  RUN_TEST(test_bringToFront_updates_surface_order);
+  RUN_TEST(test_clearSurface_does_not_affect_other_surfaces);
   RUN_TEST(test_compose_clears_dirty_flag);
   RUN_TEST(test_setPixel_marks_dirty);
-  RUN_TEST(test_clearLayer_no_op_does_not_dirty);
-  RUN_TEST(test_compose_fills_buffer_with_top_layer_colors);
+  RUN_TEST(test_clearSurface_no_op_does_not_dirty);
+  RUN_TEST(test_compose_fills_buffer_with_resolved_colors);
   RUN_TEST(test_out_of_bounds_writes_silently_ignored);
   RUN_TEST(test_fillRect_paints_inclusive_range);
   RUN_TEST(test_drawRect_paints_outline_only);

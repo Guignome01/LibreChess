@@ -1,7 +1,7 @@
 #ifndef BOARD_WORKFLOWS_MENU_H
 #define BOARD_WORKFLOWS_MENU_H
 
-#include "board/gui/selection.h"
+#include "board/menus/selection.h"
 #include "board/menus/view.h"
 
 #include <stdint.h>
@@ -37,7 +37,7 @@ class BoardMenu {
   /// Enter the root game-selection menu. Idempotent.
   void start();
 
-  /// Reset the navigator and erase the menu layer.
+  /// Reset the navigator and erase the active menu surface.
   void clear();
 
   /// Non-blocking poll; returns a non-empty selection only after the user
