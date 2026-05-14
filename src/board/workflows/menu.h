@@ -1,8 +1,8 @@
 #ifndef BOARD_WORKFLOWS_MENU_H
 #define BOARD_WORKFLOWS_MENU_H
 
+#include "board/menus/options.h"
 #include "board/menus/selection.h"
-#include "board/menus/view.h"
 
 #include <stdint.h>
 
@@ -11,9 +11,9 @@ class BoardRuntime;
 // ---------------------------------------------------------------------------
 // BoardMenu — game-selection workflow + modal confirmation prompts.
 // ---------------------------------------------------------------------------
-// Owns three `MenuView` instances (root / bot-difficulty / bot-color) and
+// Owns three `MenuSelection` screens (root / bot-difficulty / bot-color) and
 // drives them through a small explicit state machine. `confirmAction` and
-// `confirmResume` reuse a transient `MenuView` for a green/red yes/no prompt.
+// `confirmResume` reuse `MenuPrompt` for green/red yes/no prompts.
 //
 // The blocking `confirmAction` / `confirmResume` API is preserved for now;
 // internally it polls at sensor cadence and the renderer keeps the prompt
@@ -63,13 +63,13 @@ class BoardMenu {
   };
 
   BoardRuntime& runtime_;
-  MenuView gameMenu_;
-  MenuView botDifficultyMenu_;
-  MenuView botColorMenu_;
+  MenuSelection gameMenu_;
+  MenuSelection botDifficultyMenu_;
+  MenuSelection botColorMenu_;
   uint8_t pendingBotDifficulty_;
   Stage stage_;
 
-  MenuView* activeView();
+  MenuSelection* activeSelection();
 };
 
 #endif  // BOARD_WORKFLOWS_MENU_H

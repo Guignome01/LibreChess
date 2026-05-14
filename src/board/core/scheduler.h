@@ -1,9 +1,35 @@
 #ifndef BOARD_CORE_SCHEDULER_H
 #define BOARD_CORE_SCHEDULER_H
 
-#include "board/core/painter.h"
+#include "board/core/canvas.h"
 
 #include <stdint.h>
+
+// ---------------------------------------------------------------------------
+// BoardPainter — scheduled canvas callback descriptor
+// ---------------------------------------------------------------------------
+// A producer describes how to paint one logical frame on a BoardCanvas. The
+// scheduler owns timing, cancellation, context storage, and surface lifecycle;
+// the callback owns only the pixels it writes into the supplied surface.
+// ---------------------------------------------------------------------------
+
+enum class BoardPaintMode : uint8_t {
+  INCREMENTAL,   ///< Painter updates/cleans only the pixels it owns.
+  FULL_SURFACE,  ///< Scheduler clears the painter-owned surface before each frame.
+};
+
+using BoardPaintCallback = void (*)(const void* context, BoardCanvas& canvas,
+                                    BoardCanvasHandle surface, uint32_t elapsedMs);
+using BoardPaintCleanup = void (*)(const void* context, BoardCanvas& canvas,
+                                   BoardCanvasHandle surface);
+
+struct BoardPainter {
+  const void* context = nullptr;
+  uint8_t contextSize = 0;
+  BoardPaintCallback paint = nullptr;
+  BoardPaintCleanup cleanup = nullptr;
+  BoardPaintMode mode = BoardPaintMode::INCREMENTAL;
+};
 
 // ---------------------------------------------------------------------------
 // BoardScheduler — fixed-slot timed painter runner

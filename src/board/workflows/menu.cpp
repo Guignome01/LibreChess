@@ -1,8 +1,8 @@
 #include "board/workflows/menu.h"
 
-#include "board/config.h"
 #include "board/core/colors.h"
 #include "board/core/runtime.h"
+#include "board/menus/prompt.h"
 
 #include <Arduino.h>
 
@@ -33,18 +33,22 @@ BoardMenu::BoardMenu(BoardRuntime& runtime)
       botColorMenu_(runtime),
       pendingBotDifficulty_(4),
       stage_(Stage::IDLE) {
-  configureMenus(gameMenu_, botDifficultyMenu_, botColorMenu_);
+  gameMenu_.setOptions(GAME_MENU_OPTIONS);
+  botDifficultyMenu_.setOptions(BOT_DIFFICULTY_OPTIONS);
+  botDifficultyMenu_.setBackButton(4, 4);
+  botColorMenu_.setOptions(BOT_COLOR_OPTIONS);
+  botColorMenu_.setBackButton(4, 4);
 }
 
 // ---------------------------------------------------------------------------
 // Game-selection state machine.
 // ---------------------------------------------------------------------------
 // The game selection tree is small (3 levels) and uses three different
-// MenuView instances. A local state machine keeps the active surface and
+// MenuSelection screens. A local state machine keeps the active surface and
 // back-navigation rules explicit without a generic tree walker.
 // ---------------------------------------------------------------------------
 
-MenuView* BoardMenu::activeView() {
+MenuSelection* BoardMenu::activeSelection() {
   switch (stage_) {
     case Stage::GAME:
       return &gameMenu_;
@@ -75,10 +79,10 @@ void BoardMenu::clear() {
 
 BoardMenu::GameSelection BoardMenu::poll() {
   GameSelection selection;
-  MenuView* view = activeView();
-  if (!view) return selection;
+  MenuSelection* active = activeSelection();
+  if (!active) return selection;
 
-  int result = view->poll();
+  int result = active->poll();
   if (result == MENU_RESULT_NONE) return selection;
 
   if (result == MENU_RESULT_BACK) {
@@ -99,51 +103,51 @@ BoardMenu::GameSelection BoardMenu::poll() {
   }
 
   switch (result) {
-    case MenuId::CHESS_MOVES:
+    case MenuOptionId::CHESS_MOVES:
       selection.mode = GameSelectionMode::CHESS_MOVES;
       clear();
       return selection;
-    case MenuId::BOT:
+    case MenuOptionId::BOT:
       gameMenu_.erase();
       stage_ = Stage::DIFFICULTY;
       botDifficultyMenu_.reset();
       botDifficultyMenu_.draw();
       return selection;
-    case MenuId::LICHESS:
+    case MenuOptionId::LICHESS:
       selection.mode = GameSelectionMode::LICHESS;
       clear();
       return selection;
-    case MenuId::BOARD_DIAGNOSTICS:
+    case MenuOptionId::BOARD_DIAGNOSTICS:
       selection.mode = GameSelectionMode::BOARD_DIAGNOSTICS;
       clear();
       return selection;
-    case MenuId::DIFF_1:
-    case MenuId::DIFF_2:
-    case MenuId::DIFF_3:
-    case MenuId::DIFF_4:
-    case MenuId::DIFF_5:
-    case MenuId::DIFF_6:
-    case MenuId::DIFF_7:
-    case MenuId::DIFF_8:
-      pendingBotDifficulty_ = static_cast<uint8_t>(result - MenuId::DIFF_1 + 1);
+    case MenuOptionId::DIFF_1:
+    case MenuOptionId::DIFF_2:
+    case MenuOptionId::DIFF_3:
+    case MenuOptionId::DIFF_4:
+    case MenuOptionId::DIFF_5:
+    case MenuOptionId::DIFF_6:
+    case MenuOptionId::DIFF_7:
+    case MenuOptionId::DIFF_8:
+      pendingBotDifficulty_ = static_cast<uint8_t>(result - MenuOptionId::DIFF_1 + 1);
       botDifficultyMenu_.erase();
       stage_ = Stage::COLOR;
       botColorMenu_.reset();
       botColorMenu_.draw();
       return selection;
-    case MenuId::PLAY_WHITE:
+    case MenuOptionId::PLAY_WHITE:
       selection.mode = GameSelectionMode::BOT;
       selection.botDifficulty = pendingBotDifficulty_;
       selection.playerColor = 'w';
       clear();
       return selection;
-    case MenuId::PLAY_BLACK:
+    case MenuOptionId::PLAY_BLACK:
       selection.mode = GameSelectionMode::BOT;
       selection.botDifficulty = pendingBotDifficulty_;
       selection.playerColor = 'b';
       clear();
       return selection;
-    case MenuId::PLAY_RANDOM:
+    case MenuOptionId::PLAY_RANDOM:
       selection.mode = GameSelectionMode::BOT;
       selection.botDifficulty = pendingBotDifficulty_;
       selection.playerColor = (random(2) == 0) ? 'w' : 'b';
@@ -155,7 +159,7 @@ BoardMenu::GameSelection BoardMenu::poll() {
 }
 
 bool BoardMenu::confirmAction(bool flipped) {
-  return confirmBoardPrompt(runtime_, flipped);
+  return MenuPrompt::confirm(runtime_, flipped);
 }
 
 bool BoardMenu::confirmResume(GameSelectionMode mode, bool flipped) {

@@ -82,7 +82,7 @@ The LED strip is wired in a serpentine (zigzag) pattern across the physical boar
 
 ### Board Public Surface
 
-`src/board/board.*` is the public physical-board package root. `Board` exposes lifecycle (`begin()` returns `bool`), LED settings (brightness/dim multiplier getters/setters and `saveLedSettings()`), sensor cadence (`cadenceMs()`), `clearAllSurfaces()`, status handles for the WiFi-connecting animation (`BoardAnimationHandle startConnectingStatus()` / `void stopConnectingStatus(BoardAnimationHandle&)`), and accessors to its owned workflows: `gameplay()`, `menu()`, `diagnostics()`, `calibration()`. External firmware may consume `Board`, `BoardAnimationHandle` (`board/gui/animations.h`), and the selection types from `board/menus/selection.h`. It must never include `BoardDriver`, `BoardRuntime`, `BoardCanvas`, `BoardScheduler`, `BoardAnimations`, `BoardInput`, `BoardRenderer`, `BoardFeedback`, or `BoardAssistance` directly.
+`src/board/board.*` is the public physical-board package root. `Board` exposes lifecycle (`begin()` returns `bool`), LED settings (brightness/dim multiplier getters/setters and `saveLedSettings()`), sensor cadence (`cadenceMs()`), `clearAllSurfaces()`, status handles for the WiFi-connecting animation (`BoardAnimationHandle startConnectingStatus()` / `void stopConnectingStatus(BoardAnimationHandle&)`), and accessors to its owned workflows: `gameplay()`, `menu()`, `diagnostics()`, `calibration()`. External firmware may consume `Board`, `BoardAnimationHandle` (`board/gui/animations.h`), and the selection result types from `board/menus/options.h`. It must never include `BoardDriver`, `BoardRuntime`, `BoardCanvas`, `BoardScheduler`, `BoardAnimations`, `BoardInput`, `BoardRenderer`, `BoardFeedback`, or `BoardAssistance` directly.
 
 Logical 8×8 board geometry (`BOARD_ROWS`, `BOARD_COLS`, `BOARD_SQUARES`, `BoardSquare`, `isValidSquare`) lives next to the public surface in `board.h` because it is shared by every workflow.
 
@@ -99,7 +99,7 @@ g.animations.startBlink(row, col, LedColors::Green, 1, millis());
 
 `BoardCanvas` (`core/canvas.*`) is a fixed-size ordered stack of 8×8 surfaces. Each active surface stores `LedRGB` pixels plus one `uint64_t` presence mask, and `resolve(r, c)` returns the newest active surface with a present pixel at that square. Visual owners acquire explicit `BoardCanvasHandle` surfaces; there is no layer enum or role priority. The renderer flushes the canvas through `BoardDriver` only when `dirty()` is set. Drawing helpers include rectangles, fills, `drawLine()`, and `drawRing()` for a chosen surface.
 
-`BoardPainter` (`core/painter.h`) is the generic logical-frame paint contract: copied context, paint mode, and callback. `BoardScheduler` (`core/scheduler.*`) owns six fixed timed painter slots addressed by `BoardScheduledHandle{slot, generation}`; it has no animation vocabulary and handles allocation, cancellation, expiration, looping, and one canvas surface per scheduled painter. Full-surface painters clear their own surface before each frame, so sibling animations never clear each other. `BoardAnimations` (`gui/animations.*`) owns the board-specific animation API and frame painters. One-shot helpers (`startBlink`, `startFlash`, `startCapture`, `startPromotion`, `startFirework`) and looping helpers (`startThinking`, `startWaiting`, `startConnecting`) schedule painters and return `BoardAnimationHandle` (an alias of `BoardScheduledHandle`). Looping animations are cancelled by handing the handle back through the helper that owns it (e.g. `feedback_.stopAnimation(handle)`, `Board::stopConnectingStatus(handle)`).
+`BoardScheduler` (`core/scheduler.*`) owns the generic logical-frame paint contract (`BoardPainter`: copied context, paint mode, and callback) and six fixed timed painter slots addressed by `BoardScheduledHandle{slot, generation}`. It has no animation vocabulary and handles allocation, cancellation, expiration, looping, and one canvas surface per scheduled painter. Full-surface painters clear their own surface before each frame, so sibling animations never clear each other. `BoardAnimations` (`gui/animations.*`) owns the board-specific animation API and frame painters. One-shot helpers (`startBlink`, `startFlash`, `startCapture`, `startPromotion`, `startFirework`) and looping helpers (`startThinking`, `startWaiting`, `startConnecting`) schedule painters and return `BoardAnimationHandle` (an alias of `BoardScheduledHandle`). Looping animations are cancelled by handing the handle back through the helper that owns it (e.g. `feedback_.stopAnimation(handle)`, `Board::stopConnectingStatus(handle)`).
 
 `BoardInput` (`core/input.*`) stores debounced occupancy plus a 16-slot event ring. `BoardRuntime` owns the cooperative FreeRTOS poll task on Core 1 (priority 1, 2 KiB stack) at `cadenceMs()` (40 ms), feeds `BoardInput`, and protects producer/consumer access with a dedicated input mutex. Workflows never hold that mutex directly: they call `drainInputEvents()` for short event batches, `copyInputOccupancy()` for full-board scans, or `inputOccupied(r, c)` for single-square waits. If the ring overflows, the drained batch carries dropped-event count and max queue depth; gameplay logs those diagnostics, discards the partial gesture, and resyncs from current occupancy.
 
@@ -117,10 +117,12 @@ Both `BoardFeedback` and `BoardAssistance` may read `Game` through public APIs f
 
 ### Board Menu Primitives
 
-`src/board/menus/*` carries the menu primitive:
+`src/board/menus/*` carries the menu primitives and option catalog:
 
-- `view.{h,cpp}` defines `MenuView`, the drawable menu primitive: takes a `BoardRuntime&`, paints to its owned surface, snapshots occupancy once per poll via `BoardRuntime::copyInputOccupancy()`, supports a configurable back button, flipping for black-on-bottom orientation, and an inner empty-then-occupied selection debouncer. `MENU_RESULT_NONE` and `MENU_RESULT_BACK` live beside the view because the explicit menu state machines are the only callers.
-- `selection.h` defines the public-safe game-selection result types (`BoardGameSelection`, `BoardGameSelectionMode`) returned by `BoardMenu`.
+- `options.h` defines public-safe game-selection result types (`BoardGameSelection`, `BoardGameSelectionMode`), menu result sentinels, menu option ids, and the fixed option layouts used by selection screens and prompts.
+- `panel.{h,cpp}` defines `MenuPanel`, the shared physical-board draw/poll/debounce primitive. It owns one canvas surface, snapshots occupancy once per poll via `BoardRuntime::copyInputOccupancy()`, supports flipping for black-on-bottom orientation, and returns selected option ids without interpreting them.
+- `selection.{h,cpp}` defines `MenuSelection`, a thin screen wrapper over `MenuPanel` that stores one selectable menu page and appends the standard white back button when needed.
+- `prompt.{h,cpp}` defines `MenuPrompt`, the green/red modal confirmation prompt built from `MenuPanel`.
 
 ### Board Workflows
 
@@ -129,7 +131,7 @@ Long-lived workflows in `src/board/workflows/*` each take a `BoardRuntime&`:
 - `gameplay.*` — `BoardGameplay` owns its own `BoardFeedback` and `BoardAssistance`. It drains short `BoardInputEventBatch` snapshots from `BoardRuntime` to detect player intent (lift / placement / capture / en passant / castling) and runs the king-held resign gesture (3 s hold + two re-lifts within 1 s). Status helpers (`startThinkingStatus`, `startWaitingStatus`) return a `BoardAnimationHandle`; `stopStatusAnimation(handle&)` cancels and invalidates.
 - `diagnostics.*` — `BoardDiagnostics` runs the user-facing Sensor Test mode. Each update it scans current occupancy, paints visited squares to its owned surface, and on completion clears that surface before triggering a cyan firework.
 - `calibration.*` — `BoardCalibration` is a friend of `BoardRuntime`. The public ctor takes `BoardRuntime&` for runtime recalibration (`trigger()`); a private ctor takes `BoardDriver&` and is invoked by `BoardRuntime::begin()` to drive private `load()`/`run()`/`save()` at startup. Persists mapping tables to NVS namespace `"boardCal"`.
-- `menu.*` — `BoardMenu` runs a small explicit `MenuStage` state machine over three pre-built `MenuView` instances (game, difficulty, color). It also folds in the blocking `confirmAction(flipped)` and `confirmResume(mode, flipped)` prompts used during boot and resign confirmation.
+- `menu.*` — `BoardMenu` runs a small explicit `MenuStage` state machine over three pre-built `MenuSelection` screens (game, difficulty, color). It delegates blocking `confirmAction(flipped)` and `confirmResume(mode, flipped)` prompts to `MenuPrompt`.
 
 ### BoardDriver
 
@@ -332,7 +334,7 @@ For game resume: `begin()` detects the `resumingGame` flag, skips piece setup, c
 
 ### Menu Navigation
 
-`BoardMenu` (`src/board/workflows/menu.*`) drives the game-selection flow as a small instance-owned `Stage` state machine over three pre-built `MenuView` instances (game, difficulty, color). `main.cpp` calls `physicalBoard.menu().start()` to open the root menu, polls it via `menu().poll()` on each tick, and receives a semantic `BoardGameSelection` result (selection mode + bot configuration) when a leaf is chosen. `MenuView` (in `src/board/menus/*`) paints to its owned surface and snapshots selection occupancy through `BoardRuntime::copyInputOccupancy()`.
+`BoardMenu` (`src/board/workflows/menu.*`) drives the game-selection flow as a small instance-owned `Stage` state machine over three pre-built `MenuSelection` screens (game, difficulty, color). `main.cpp` calls `physicalBoard.menu().start()` to open the root menu, polls it via `menu().poll()` on each tick, and receives a semantic `BoardGameSelection` result (selection mode + bot configuration) when a leaf is chosen. `MenuSelection` composes `MenuPanel`, which paints to its owned surface and snapshots selection occupancy through `BoardRuntime::copyInputOccupancy()`.
 
 The flow is:
 
@@ -452,11 +454,11 @@ Colors in the `LedColors` namespace (`src/board/core/colors.h`) have fixed meani
 
 ## Menu System
 
-### MenuView
+### Menu Primitives
 
-`MenuView` (`src/board/menus/view.*`) is a reusable menu primitive for the 8×8 LED grid. It takes a `BoardRuntime&`, paints to an owned canvas surface via `runtime.lockCanvas()`, and snapshots board occupancy once per poll for selections. It is a plain drawable — no `BoardDrawable` interface, no modal stack. State is stack-allocated; no heap usage.
+`MenuPanel` (`src/board/menus/panel.*`) is the reusable physical-board primitive for the 8×8 LED grid. It takes a `BoardRuntime&`, paints to an owned canvas surface via `runtime.lockCanvas()`, snapshots board occupancy once per poll for selections, and returns option ids without interpreting them. `MenuSelection` (`src/board/menus/selection.*`) wraps one selectable menu page around `MenuPanel` and optionally appends the standard back button. `MenuPrompt` (`src/board/menus/prompt.*`) builds the blocking green/red confirmation prompt from the same panel primitive. State is fixed-size and stack/member allocated; no heap usage.
 
-**Item definition** — `MenuItem` struct: `{row, col, color, id}`. Coordinates are authored in white-side orientation (row 7 = rank 1). Arrays are `constexpr` file-scoped statics in `src/board/config.h`, stored in flash with zero RAM cost. The menu does not copy the array — the pointer must outlive the menu.
+**Option definition** — `MenuOption` struct: `{row, col, color, id}`. Coordinates are authored in white-side orientation (row 7 = rank 1). All selectable ids and `constexpr MenuOption[]` layouts live in `src/board/menus/options.h`, covering the root menu, bot difficulty, bot colour, and confirmation prompts.
 
 **Two-phase debounce** — prevents pieces already on the board from triggering selections when a menu appears:
 1. Phase 1 (empty): the square must read empty for `DEBOUNCE_CYCLES` (5) consecutive sensor polls (~200 ms).
@@ -464,18 +466,18 @@ Colors in the `LedColors` namespace (`src/board/core/colors.h`) have fixed meani
 
 After confirmed selection, the square blinks once in its own color via `BoardAnimations::startBlink` for visual feedback.
 
-**Back button** — set via `setBackButton(row, col)`, lit in `LedColors::White`. `MenuView::poll()` returns `MENU_RESULT_BACK` (= -2) when the back square is occupied; the caller decides whether to pop. `MENU_RESULT_NONE` (= -1) means no selection yet.
+**Back button** — set via `MenuSelection::setBackButton(row, col)`, lit in `LedColors::White`. `MenuSelection::poll()` returns `MENU_RESULT_BACK` (= -2) when the back square is occupied; the caller decides whether to pop. `MENU_RESULT_NONE` (= -1) means no selection yet.
 
 **Orientation** — `setFlipped(true)` mirrors row coordinates (`row' = 7 - row`) so menus face a player on the black side. Applied to bot games where the player chose black, and to the resign confirm dialog on black's turn.
 
-**Confirmation prompts** — `BoardMenu::confirmAction(flipped)` and `BoardMenu::confirmResume(mode, flipped)` and `BoardGameplay::confirmResign(...)` build a transient `MenuView` (green d4 = yes, red e4 = no) and block until the player selects.
+**Confirmation prompts** — `BoardMenu::confirmAction(flipped)` and `BoardMenu::confirmResume(mode, flipped)` and `BoardGameplay::confirmResign(...)` call `MenuPrompt::confirm(...)`, which displays the `CONFIRM_OPTIONS` layout (green d4 = yes, red e4 = no) and blocks until the player selects.
 
-### Menu Configuration
+### Menu Options
 
-All menu layout data lives in `src/board/config.h/.cpp`:
-- `MenuId` namespace: distinct ID ranges per menu level (0–9 root, 10–19 difficulty, 20–29 color)
-- `constexpr MenuItem[]` arrays: `gameMenuItems`, `botDifficultyItems`, `botColorItems`
-- `configureMenus(...)`: helper that wires the `BoardMenu`-owned `MenuView` instances with items and back buttons.
+All menu option data lives in `src/board/menus/options.h`:
+- `MenuOptionId` namespace: distinct ID ranges per menu level plus confirmation ids.
+- `constexpr MenuOption[]` arrays: `GAME_MENU_OPTIONS`, `BOT_DIFFICULTY_OPTIONS`, `BOT_COLOR_OPTIONS`, `CONFIRM_OPTIONS`.
+- `BoardGameSelection` and `BoardGameSelectionMode`: public-safe result types returned by `BoardMenu`.
 
 ## External API Integration
 

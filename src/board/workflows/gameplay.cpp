@@ -2,7 +2,7 @@
 
 #include "board/core/colors.h"
 #include "board/core/runtime.h"
-#include "board/menus/view.h"
+#include "board/menus/prompt.h"
 
 #include <Arduino.h>
 

@@ -25,20 +25,19 @@ External firmware must not include `BoardDriver`, `BoardRuntime`,
 `BoardCanvas`, `BoardScheduler`, `BoardAnimations`, `BoardInput`,
 `BoardRenderer`, `BoardFeedback`, or `BoardAssistance` directly. The only
 board-internal types it may name are `BoardAnimationHandle`
-(`board/gui/animations.h`) and the selection types from `board/menus/selection.h`.
+(`board/gui/animations.h`) and the selection result types from
+`board/menus/options.h`.
 
 ## Internal layout
 
 ```
 src/board/
 ├── board.{h,cpp}              public package root
-├── config.{h,cpp}             menu config helpers
 ├── core/                      runtime primitives
 │   ├── runtime.{h,cpp}        composes driver + canvas + scheduler + animations + input + renderer
 │   ├── driver.{h,cpp}         hall sensors, shift register, WS2812 strip, NVS
 │   ├── canvas.{h,cpp}         ordered fixed-size surface stack + dirty flag
-│   ├── painter.h              logical-frame painter contract
-│   ├── scheduler.{h,cpp}      generic fixed-slot timed painter runner
+│   ├── scheduler.{h,cpp}      generic fixed-slot timed painter runner + callback contract
 │   ├── input.{h,cpp}          pure occupancy snapshot + event queue
 │   ├── renderer.{h,cpp}       FreeRTOS render task (~30 Hz)
 │   └── colors.h               semantic LED palette
@@ -47,8 +46,10 @@ src/board/
 │   ├── assistance.{h,cpp}     optional move/setup/capture guidance
 │   ├── animations.{h,cpp}     animation API + frame painters
 ├── menus/                     menu primitives
-│   ├── view.{h,cpp}           MenuView drawable + selection debouncer
-│   └── selection.h            game-selection types (public)
+│   ├── options.h              option ids/layouts + game-selection result types
+│   ├── panel.{h,cpp}          shared draw/poll/debounce mechanics
+│   ├── selection.{h,cpp}      selectable menu screen + optional back button
+│   └── prompt.{h,cpp}         green/red modal confirmation prompts
 └── workflows/                 long-lived workflows (take BoardRuntime&)
     ├── gameplay.{h,cpp}       physical chess interactions, holds feedback+assistance
     ├── diagnostics.{h,cpp}    sensor test
@@ -117,14 +118,11 @@ and release it when the owning object is destroyed. `drawLine()` and
 blanks every active surface and is used by `Board::clearAllSurfaces()` before
 scheduled animations are also cancelled.
 
-## BoardScheduler, BoardPainter, and BoardAnimations
+## BoardScheduler and BoardAnimations
 
-`BoardPainter` (`core/painter.h`) is the generic logical-frame paint contract:
-a callback plus fixed-size copied context and paint mode. It does not know
-about hardware, timing, cancellation, or animation semantics.
-
-`BoardScheduler` (`core/scheduler.*`) owns six generic timed painter slots
-(`SLOT_COUNT = 6`). Scheduled painters are addressed by
+`BoardScheduler` (`core/scheduler.*`) owns the generic logical-frame paint
+contract (`BoardPainter`: callback + fixed-size copied context + paint mode)
+and six timed painter slots (`SLOT_COUNT = 6`). Scheduled painters are addressed by
 `BoardScheduledHandle{slot, generation}`; the 16-bit generation counter prevents
 stale handles from cancelling a re-used slot. The scheduler has no animation
 vocabulary. It owns slot allocation, start time, duration/looping,
