@@ -20,7 +20,7 @@ class BoardRuntime;
 
 class BoardFeedback {
  public:
-  explicit BoardFeedback(BoardRuntime& runtime);
+  BoardFeedback(BoardRuntime& runtime, BoardAnimations& animations);
 
   /// Clear this helper's surface entirely.
   void clearBoard();
@@ -63,6 +63,7 @@ class BoardFeedback {
 
  private:
   BoardRuntime& runtime_;
+  BoardAnimations& animations_;
   BoardCanvasHandle surface_;
 
   BoardCanvasHandle writableSurface(BoardCanvas& canvas);

@@ -8,9 +8,8 @@
 // BoardFeedback implementation
 // ---------------------------------------------------------------------------
 // All operations acquire the canvas guard for the duration of the change
-// (microseconds), then release. Animations are started via the canvas guard's
-// animation reference; the renderer task picks up the change on the next
-// wake.
+// (microseconds), then release. Animations are scheduled while the same guard
+// is held, so scheduler/canvas state stays synchronized with the renderer.
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -19,7 +18,8 @@ constexpr float RESIGN_BRIGHTNESS_LEVELS[] = {0.25f, 0.50f, 0.75f, 1.0f};
 
 }  // namespace
 
-BoardFeedback::BoardFeedback(BoardRuntime& runtime) : runtime_(runtime), surface_() {}
+BoardFeedback::BoardFeedback(BoardRuntime& runtime, BoardAnimations& animations)
+    : runtime_(runtime), animations_(animations), surface_() {}
 
 BoardCanvasHandle BoardFeedback::writableSurface(BoardCanvas& canvas) {
   if (!canvas.active(surface_)) {
@@ -46,28 +46,31 @@ void BoardFeedback::showMoveResultFeedback(const LibreChess::MoveResult& result,
 
   const uint32_t now = millis();
   if (result.isCapture()) {
-    g.animations.startCapture(toRow, toCol, now);
+    animations_.startCapture(toRow, toCol, now);
   } else {
-    g.animations.startBlink(toRow, toCol, LedColors::Green, 1, now);
+    animations_.startBlink(toRow, toCol, LedColors::Green, 1, now);
   }
 
   if (result.isPromotion()) {
-    g.animations.startPromotion(toCol, now);
+    animations_.startPromotion(toCol, now);
   }
 
   if (result.gameResult == LibreChess::GameResult::CHECKMATE) {
-    g.animations.startFirework(LedColors::forWinner(result.winnerColor), now);
+    LedRGB winnerColor = LedColors::Cyan;
+    if (result.winnerColor == 'w') winnerColor = LedColors::White;
+    if (result.winnerColor == 'b') winnerColor = LedColors::Blue;
+    animations_.startFirework(winnerColor, now);
   } else if (result.gameResult != LibreChess::GameResult::IN_PROGRESS) {
-    g.animations.startFirework(LedColors::Cyan, now);
+    animations_.startFirework(LedColors::Cyan, now);
   } else if (result.isCheck()) {
     LibreChess::Color turn = game.sideToMove();
-    g.animations.startBlink(game.kingRow(turn), game.kingCol(turn), LedColors::Yellow, 3, now);
+    animations_.startBlink(game.kingRow(turn), game.kingCol(turn), LedColors::Yellow, 3, now);
   }
 }
 
 void BoardFeedback::showIllegalMoveFeedback(int row, int col) {
   auto g = runtime_.lockCanvas();
-  g.animations.startBlink(row, col, LedColors::Red, 2, millis());
+  animations_.startBlink(row, col, LedColors::Red, 2, millis());
 }
 
 void BoardFeedback::showResignProgress(int row, int col, int level, bool clearFirst) {
@@ -88,31 +91,36 @@ void BoardFeedback::clearResignFeedback(int row, int col) {
 void BoardFeedback::showWinner(LibreChess::Color winnerColor) {
   auto g = runtime_.lockCanvas();
   if (g.canvas.active(surface_)) g.canvas.clearSurface(surface_);
-  g.animations.startFirework(LedColors::forPieceColor(winnerColor), millis());
+  animations_.startFirework(winnerColor == LibreChess::Color::WHITE ? LedColors::White
+                                                                    : LedColors::Blue,
+                             millis());
 }
 
 void BoardFeedback::showRemoteGameEnd(char winnerColor) {
   auto g = runtime_.lockCanvas();
   if (g.canvas.active(surface_)) g.canvas.clearSurface(surface_);
-  g.animations.startFirework(LedColors::forWinner(winnerColor), millis());
+  LedRGB ledColor = LedColors::Cyan;
+  if (winnerColor == 'w') ledColor = LedColors::White;
+  if (winnerColor == 'b') ledColor = LedColors::Blue;
+  animations_.startFirework(ledColor, millis());
 }
 
 void BoardFeedback::showError() {
   auto g = runtime_.lockCanvas();
-  g.animations.startFlash(LedColors::Red, 3, millis());
+  animations_.startFlash(LedColors::Red, 3, millis());
 }
 
 BoardAnimationHandle BoardFeedback::startThinking() {
   auto g = runtime_.lockCanvas();
-  return g.animations.startThinking(millis());
+  return animations_.startThinking(millis());
 }
 
 BoardAnimationHandle BoardFeedback::startWaiting() {
   auto g = runtime_.lockCanvas();
-  return g.animations.startWaiting(millis());
+  return animations_.startWaiting(millis());
 }
 
 void BoardFeedback::stopAnimation(BoardAnimationHandle& handle) {
   auto g = runtime_.lockCanvas();
-  g.animations.cancel(handle);
+  animations_.cancel(handle);
 }

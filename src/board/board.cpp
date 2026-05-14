@@ -10,6 +10,7 @@
 
 struct Board::Impl {
   BoardRuntime runtime;
+  BoardAnimations animations;
   BoardGameplay gameplay;
   BoardDiagnostics diagnostics;
   BoardCalibration calibration;
@@ -17,10 +18,11 @@ struct Board::Impl {
 
   Impl()
       : runtime(),
-        gameplay(runtime),
-        diagnostics(runtime),
+        animations(runtime.presentationScheduler(), runtime.presentationCanvas()),
+        gameplay(runtime, animations),
+        diagnostics(runtime, animations),
         calibration(runtime),
-        menu(runtime) {}
+        menu(runtime, animations) {}
 };
 
 Board::Board() : impl_(std::make_unique<Impl>()) {}
@@ -51,15 +53,15 @@ BoardCalibration& Board::calibration() { return impl_->calibration; }
 void Board::clearAllSurfaces() {
   auto g = impl_->runtime.lockCanvas();
   g.canvas.clearAll();
-  g.animations.clearAll(g.canvas);
+  impl_->animations.clearAll(g.canvas);
 }
 
 BoardAnimationHandle Board::startConnectingStatus() {
   auto g = impl_->runtime.lockCanvas();
-  return g.animations.startConnecting(millis());
+  return impl_->animations.startConnecting(millis());
 }
 
 void Board::stopConnectingStatus(BoardAnimationHandle& handle) {
   auto g = impl_->runtime.lockCanvas();
-  g.animations.cancel(handle);
+  impl_->animations.cancel(handle);
 }

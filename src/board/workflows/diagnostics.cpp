@@ -2,11 +2,17 @@
 
 #include "board/core/colors.h"
 #include "board/core/runtime.h"
+#include "board/gui/animations.h"
 
 #include <Arduino.h>
 
-BoardDiagnostics::BoardDiagnostics(BoardRuntime& runtime)
-    : runtime_(runtime), surface_(), visited_{}, complete_(false), visitedCount_(0) {}
+BoardDiagnostics::BoardDiagnostics(BoardRuntime& runtime, BoardAnimations& animations)
+    : runtime_(runtime),
+      animations_(animations),
+      surface_(),
+      visited_{},
+      complete_(false),
+      visitedCount_(0) {}
 
 BoardCanvasHandle BoardDiagnostics::writableSurface(BoardCanvas& canvas) {
   if (!canvas.active(surface_)) {
@@ -35,7 +41,7 @@ void BoardDiagnostics::update() {
     Serial.println("Sensor Test complete! All squares verified.");
     auto g = runtime_.lockCanvas();
     if (g.canvas.active(surface_)) g.canvas.clearSurface(surface_);
-    g.animations.startFirework(LedColors::Cyan, millis());
+    animations_.startFirework(LedColors::Cyan, millis());
   }
 }
 

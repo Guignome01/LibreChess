@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 class BoardRuntime;
+class BoardAnimations;
 
 // ---------------------------------------------------------------------------
 // MenuPanel — shared physical-board menu mechanics
@@ -18,7 +19,7 @@ class BoardRuntime;
 
 class MenuPanel {
  public:
-  explicit MenuPanel(BoardRuntime& runtime);
+  MenuPanel(BoardRuntime& runtime, BoardAnimations& animations);
   ~MenuPanel();
 
   MenuPanel(const MenuPanel&) = delete;
@@ -68,6 +69,7 @@ class MenuPanel {
   };
 
   BoardRuntime& runtime_;
+  BoardAnimations& animations_;
   BoardCanvasHandle surface_;
   const MenuOption* options_;
   uint8_t optionCount_;

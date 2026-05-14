@@ -1,13 +1,14 @@
 #include "board/menus/prompt.h"
 
 #include "board/core/runtime.h"
+#include "board/gui/animations.h"
 #include "board/menus/options.h"
 #include "board/menus/panel.h"
 
 #include <Arduino.h>
 
-bool MenuPrompt::confirm(BoardRuntime& runtime, bool flipped) {
-  MenuPanel panel(runtime);
+bool MenuPrompt::confirm(BoardRuntime& runtime, BoardAnimations& animations, bool flipped) {
+  MenuPanel panel(runtime, animations);
   panel.setFlipped(flipped);
   panel.reset();
   panel.show(CONFIRM_OPTIONS);
@@ -20,8 +21,4 @@ bool MenuPrompt::confirm(BoardRuntime& runtime, bool flipped) {
     }
     delay(runtime.cadenceMs());
   }
-}
-
-bool confirmBoardPrompt(BoardRuntime& runtime, bool flipped) {
-  return MenuPrompt::confirm(runtime, flipped);
 }

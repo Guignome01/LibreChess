@@ -41,7 +41,7 @@ struct BoardGameplayMove {
 
 class BoardGameplay {
  public:
-  explicit BoardGameplay(BoardRuntime& runtime);
+  BoardGameplay(BoardRuntime& runtime, BoardAnimations& animations);
 
   /// Wait until the physical board matches the in-memory game position.
   void waitForSetup(const LibreChess::Game& game, LibreChess::Log& logger);
@@ -87,6 +87,7 @@ class BoardGameplay {
   static constexpr unsigned long RESIGN_LIFT_WINDOW_MS = 1000;
 
   BoardRuntime& runtime_;
+  BoardAnimations& animations_;
   BoardFeedback feedback_;
   BoardAssistance assistance_;
 

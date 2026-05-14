@@ -88,18 +88,18 @@ Logical 8×8 board geometry (`BOARD_ROWS`, `BOARD_COLS`, `BOARD_SQUARES`, `Board
 
 ### BoardRuntime — Canvas / Scheduler / IO Boundary
 
-`src/board/core/runtime.*` composes `BoardDriver`, `BoardCanvas`, `BoardInput`, `BoardScheduler`, `BoardAnimations`, and `BoardRenderer`. It is constructed once inside `Board::Impl` and passed to every workflow and visual helper as a `BoardRuntime&`. All canvas mutation flows through `runtime.lockCanvas()`, which returns a `CanvasGuard` RAII handle holding `canvas` and `animations` references under the runtime mutex:
+`src/board/core/runtime.*` composes `BoardDriver`, `BoardCanvas`, `BoardInput`, `BoardScheduler`, and `BoardRenderer`. It is constructed once inside `Board::Impl` and passed to every workflow and visual helper as a `BoardRuntime&`. `Board::Impl` owns the GUI-level `BoardAnimations` instance next to runtime and injects it into workflows/helpers that need animation vocabulary. All canvas mutation flows through `runtime.lockCanvas()`, which returns a `CanvasGuard` RAII handle holding the `canvas` reference under the runtime mutex. Animation scheduling/cancellation uses the injected `BoardAnimations&` while the same guard is held:
 
 ```cpp
 auto g = runtime.lockCanvas();
 BoardCanvasHandle surface = g.canvas.acquireSurface();
 g.canvas.setPixel(surface, row, col, LedColors::Cyan);
-g.animations.startBlink(row, col, LedColors::Green, 1, millis());
+animations.startBlink(row, col, LedColors::Green, 1, millis());
 ```
 
 `BoardCanvas` (`core/canvas.*`) is a fixed-size ordered stack of 8×8 surfaces. Each active surface stores `LedRGB` pixels plus one `uint64_t` presence mask, and `resolve(r, c)` returns the newest active surface with a present pixel at that square. Visual owners acquire explicit `BoardCanvasHandle` surfaces; there is no layer enum or role priority. The renderer flushes the canvas through `BoardDriver` only when `dirty()` is set. Drawing helpers include rectangles, fills, `drawLine()`, and `drawRing()` for a chosen surface.
 
-`BoardScheduler` (`core/scheduler.*`) owns the generic logical-frame paint contract (`BoardPainter`: copied context, paint mode, and callback) and six fixed timed painter slots addressed by `BoardScheduledHandle{slot, generation}`. It has no animation vocabulary and handles allocation, cancellation, expiration, looping, and one canvas surface per scheduled painter. Full-surface painters clear their own surface before each frame, so sibling animations never clear each other. `BoardAnimations` (`gui/animations.*`) owns the board-specific animation API and frame painters. One-shot helpers (`startBlink`, `startFlash`, `startCapture`, `startPromotion`, `startFirework`) and looping helpers (`startThinking`, `startWaiting`, `startConnecting`) schedule painters and return `BoardAnimationHandle` (an alias of `BoardScheduledHandle`). Looping animations are cancelled by handing the handle back through the helper that owns it (e.g. `feedback_.stopAnimation(handle)`, `Board::stopConnectingStatus(handle)`).
+`BoardScheduler` (`core/scheduler.*`) owns the generic logical-frame paint contract (`BoardPainter`: copied context, paint mode, and callback) and six fixed timed painter slots addressed by `BoardScheduledHandle{slot, generation}`. It has no animation vocabulary and handles allocation, cancellation, expiration, looping, and one canvas surface per scheduled painter. Full-surface painters clear their own surface before each frame, so sibling animations never clear each other. `BoardAnimations` (`gui/animations.*`) owns the board-specific animation API and frame painters and is owned by `Board::Impl`, not `BoardRuntime`. One-shot helpers (`startBlink`, `startFlash`, `startCapture`, `startPromotion`, `startFirework`) and looping helpers (`startThinking`, `startWaiting`, `startConnecting`) schedule painters and return `BoardAnimationHandle` (an alias of `BoardScheduledHandle`). Looping animations are cancelled by handing the handle back through the helper that owns it (e.g. `feedback_.stopAnimation(handle)`, `Board::stopConnectingStatus(handle)`).
 
 `BoardInput` (`core/input.*`) stores debounced occupancy plus a 16-slot event ring. `BoardRuntime` owns the cooperative FreeRTOS poll task on Core 1 (priority 1, 2 KiB stack) at `cadenceMs()` (40 ms), feeds `BoardInput`, and protects producer/consumer access with a dedicated input mutex. Workflows never hold that mutex directly: they call `drainInputEvents()` for short event batches, `copyInputOccupancy()` for full-board scans, or `inputOccupied(r, c)` for single-square waits. If the ring overflows, the drained batch carries dropped-event count and max queue depth; gameplay logs those diagnostics, discards the partial gesture, and resyncs from current occupancy.
 
@@ -107,7 +107,7 @@ g.animations.startBlink(row, col, LedColors::Green, 1, millis());
 
 ### Board GUI Helpers
 
-Visual helpers in `src/board/gui/*` take a `BoardRuntime&` and are owned by their consuming workflow:
+Visual helpers in `src/board/gui/*` take a `BoardRuntime&` plus the board-owned `BoardAnimations&` when they need animation scheduling, and are owned by their consuming workflow:
 
 - `feedback.*` — always-on outcomes: resign progress, post-move blinks, illegal flashes, capture/promotion animations, check/game-end visuals, status animations (`startThinking()`, `startWaiting()` returning `BoardAnimationHandle`).
 - `assistance.*` — optional guidance: setup prompts, legal-move highlights, castling prompts, remote-move completion, capture placement.
@@ -227,7 +227,7 @@ Notation convenience methods: `makeMove(const std::string& move)` parses a coord
 
 `utils` (in `lib/core/`, `utils.h`, header-only) is a namespace providing stateless board-level helper functions: LERF-native coordinate helpers (`squareName(Square)`, `fileChar`, `rankCharFromRank`, `fileIndex`, `rankIndexFromChar`), validation (`isValidPromotionChar`), castling rights string formatting/parsing (`castlingRightsToString`/`castlingRightsFromString`), `hasCastlingRight()` via `BIT[2][2]` lookup, `castlingCharToBit()`, `updateCastlingRights()` (pure lookup-table function returning updated castling rights bitmask), `resolveKingSquare()` (inline king-square finder used by movegen + search). Display-coordinate helpers (`rankChar(row)`, `squareName(row,col)`) live in `game/types.h`. `gameResultName()` lives in `types.h` next to `GameResult`. `checkEnPassant(mailbox, from, to)` and `checkCastling(mailbox, from, to)` are Square-based free functions for EP/castling detection from a mailbox + square pair — shared by both `Position` member methods (row/col API) and `movegen` (Square API). `boardToText` is a `Position` member method. `EnPassantInfo` and `CastlingInfo` structs live in `types.h`. `fen` (in `lib/core/`, `fen.h/cpp`) centralizes all FEN string handling: `boardToFEN()` (mailbox → FEN string), `fenToBoard()` (FEN string → `BitboardSet` + `mailbox` + state), and `validateFEN()` (format validation). FEN validation also enforces storage-compatible clock ranges: halfmove `0..100` and fullmove `1..65535`, preventing integer wrap in `PositionState`. `notation` (in `lib/core/`, `notation.h/cpp`) provides Square-native move notation conversion: coordinate notation (`"e2e4"`), SAN (`"Nf3"`), and LAN (`"Ng1-f3"`) output and parsing. Parse functions output `Square` (LERF) directly; format functions take `Square`. All functions are pure — `const BitboardSet&` and `const Piece mailbox[]` are passed in as parameters. Output functions omit check/checkmate suffixes; the caller appends them. `Game` provides row/col wrappers (`toCoordinate()`, `parseCoordinate()`) for firmware callers that work in display coordinates. All functions use `std::string` (not Arduino `String`). Internal APIs (`updateBoardState`, `addFen`, `setBoardStateFromFEN`) accept `std::string` directly; Arduino `String` conversion happens only at the hardware/network boundary (e.g., HTTP responses, LittleFS reads).
 
-`SystemUtils` (declared in `src/shared/utils.h`) contains Arduino/ESP32-dependent utility functions shared by firmware modules, currently `ensureNvsInitialized()` for guarding Arduino `Preferences` use. `SerialLogger` lives beside it in `src/shared/serial_logger.*` as the concrete Arduino `Serial` implementation of `ILogger`. Player-color LED mapping lives in `LedColors` inside the board subsystem. Board debug output uses `Position::boardToText()`. These helpers are not available in native tests.
+`SystemUtils` (declared in `src/shared/utils.h`) contains Arduino/ESP32-dependent utility functions shared by firmware modules, currently `ensureNvsInitialized()` for guarding Arduino `Preferences` use. `SerialLogger` lives beside it in `src/shared/serial_logger.*` as the concrete Arduino `Serial` implementation of `ILogger`. Tiny player-color LED choices stay local to the board GUI implementation that renders them. Board debug output uses `Position::boardToText()`. These helpers are not available in native tests.
 
 ### WiFiManagerESP32
 
@@ -396,21 +396,21 @@ A dedicated FreeRTOS render task owned by `BoardRenderer` runs on Core 1 at prio
 
 ### Canvas-First Writes
 
-Every persistent visual is a surface write to `BoardCanvas`; owners store explicit `BoardCanvasHandle` values for lifetime and cleanup. `BoardRuntime::lockCanvas()` returns a `CanvasGuard` RAII handle holding `canvas` + `animations` references under the runtime mutex:
+Every persistent visual is a surface write to `BoardCanvas`; owners store explicit `BoardCanvasHandle` values for lifetime and cleanup. `BoardRuntime::lockCanvas()` returns a `CanvasGuard` RAII handle holding the `canvas` reference under the runtime mutex. Animation scheduling uses the injected `BoardAnimations&` while that guard is held:
 
 ```cpp
 auto g = runtime.lockCanvas();
 BoardCanvasHandle surface = g.canvas.acquireSurface();
 g.canvas.clearSurface(surface);
 g.canvas.setPixel(surface, row, col, LedColors::Cyan);
-g.animations.startBlink(row, col, LedColors::Green, 1, millis());
+animations.startBlink(row, col, LedColors::Green, 1, millis());
 ```
 
 Surface ordering is deterministic by insertion/activation: older active surfaces are drawn first, and later active surfaces override earlier ones per square. `canvas.resolve(r, c)` returns the newest present surface colour. `Board::clearAllSurfaces()` blanks every canvas surface and clears all scheduled animations.
 
 ### Scheduled Animations
 
-Animations are exposed by `BoardAnimations` and run through the generic `BoardScheduler` (six slots, addressed via `BoardScheduledHandle{slot, generation}` / `BoardAnimationHandle` with a 16-bit generation counter). Helpers fall into three families:
+Animations are exposed by the GUI-owned `BoardAnimations` instance in `Board::Impl` and run through the generic `BoardScheduler` (six slots, addressed via `BoardScheduledHandle{slot, generation}` / `BoardAnimationHandle` with a 16-bit generation counter). Helpers fall into three families:
 
 - **One-shot** (`startBlink`, `startFlash`, `startCapture`, `startPromotion`, `startFirework`) — auto-clear when their duration expires.
 - **Looping** (`startThinking`, `startWaiting`, `startConnecting`) — keep running until cancelled by handing the handle back to the helper that owns it (e.g. `feedback_.stopAnimation(handle)`, `Board::stopConnectingStatus(handle)`). The generation counter prevents stale handles from cancelling a recycled slot.
@@ -420,7 +420,7 @@ Frame painting lives in `gui/animations.*`; scheduler infrastructure lives in `c
 
 ### Color Semantics
 
-Colors in the `LedColors` namespace (`src/board/core/colors.h`) have fixed meanings:
+Colors in the `LedColors` namespace (`src/board/core/colors.h`) have fixed meanings. `colors.h` is a self-contained LED palette and math header; it does not include chess/game headers. When GUI code needs to turn a chess side or winner metadata into an LED color, keep that tiny choice local to the rendering implementation.
 
 | Color | RGB | Meaning |
 |-------|-----|---------|
@@ -456,7 +456,7 @@ Colors in the `LedColors` namespace (`src/board/core/colors.h`) have fixed meani
 
 ### Menu Primitives
 
-`MenuPanel` (`src/board/menus/panel.*`) is the reusable physical-board primitive for the 8×8 LED grid. It takes a `BoardRuntime&`, paints to an owned canvas surface via `runtime.lockCanvas()`, snapshots board occupancy once per poll for selections, and returns option ids without interpreting them. `MenuSelection` (`src/board/menus/selection.*`) wraps one selectable menu page around `MenuPanel` and optionally appends the standard back button. `MenuPrompt` (`src/board/menus/prompt.*`) builds the blocking green/red confirmation prompt from the same panel primitive. State is fixed-size and stack/member allocated; no heap usage.
+`MenuPanel` (`src/board/menus/panel.*`) is the reusable physical-board primitive for the 8×8 LED grid. It takes a `BoardRuntime&` plus the board-owned `BoardAnimations&`, paints to an owned canvas surface via `runtime.lockCanvas()`, snapshots board occupancy once per poll for selections, blinks confirmed selections through `BoardAnimations`, and returns option ids without interpreting them. `MenuSelection` (`src/board/menus/selection.*`) wraps one selectable menu page around `MenuPanel` and optionally appends the standard back button. `MenuPrompt` (`src/board/menus/prompt.*`) builds the blocking green/red confirmation prompt from the same panel primitive. State is fixed-size and stack/member allocated; no heap usage.
 
 **Option definition** — `MenuOption` struct: `{row, col, color, id}`. Coordinates are authored in white-side orientation (row 7 = rank 1). All selectable ids and `constexpr MenuOption[]` layouts live in `src/board/menus/options.h`, covering the root menu, bot difficulty, bot colour, and confirmation prompts.
 

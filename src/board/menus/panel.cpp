@@ -1,6 +1,7 @@
 #include "board/menus/panel.h"
 
 #include "board/core/runtime.h"
+#include "board/gui/animations.h"
 
 #include <Arduino.h>
 
@@ -58,8 +59,13 @@ bool MenuPanel::SelectionDebouncer::update(bool occupied) {
 // MenuPanel
 // ---------------------------------------------------------------------------
 
-MenuPanel::MenuPanel(BoardRuntime& runtime)
-    : runtime_(runtime), surface_(), options_(nullptr), optionCount_(0), flipped_(false) {}
+MenuPanel::MenuPanel(BoardRuntime& runtime, BoardAnimations& animations)
+    : runtime_(runtime),
+      animations_(animations),
+      surface_(),
+      options_(nullptr),
+      optionCount_(0),
+      flipped_(false) {}
 
 MenuPanel::~MenuPanel() {
   auto g = runtime_.lockCanvas();
@@ -111,7 +117,7 @@ int MenuPanel::trySelect(SelectionDebouncer& state, const bool (&occupied)[8][8]
   const bool squareOccupied = inBounds(sq.row, sq.col) && occupied[sq.row][sq.col];
   if (state.update(squareOccupied)) {
     auto g = runtime_.lockCanvas();
-    g.animations.startBlink(sq.row, sq.col, option.color, 1, millis());
+    animations_.startBlink(sq.row, sq.col, option.color, 1, millis());
     return option.id;
   }
   return MENU_RESULT_NONE;

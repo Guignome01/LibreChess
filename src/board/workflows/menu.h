@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 class BoardRuntime;
+class BoardAnimations;
 
 // ---------------------------------------------------------------------------
 // BoardMenu — game-selection workflow + modal confirmation prompts.
@@ -25,7 +26,7 @@ class BoardMenu {
   using GameSelectionMode = BoardGameSelectionMode;
   using GameSelection = BoardGameSelection;
 
-  explicit BoardMenu(BoardRuntime& runtime);
+  BoardMenu(BoardRuntime& runtime, BoardAnimations& animations);
 
   BoardMenu(const BoardMenu&) = delete;
   BoardMenu& operator=(const BoardMenu&) = delete;
@@ -63,6 +64,7 @@ class BoardMenu {
   };
 
   BoardRuntime& runtime_;
+  BoardAnimations& animations_;
   MenuSelection gameMenu_;
   MenuSelection botDifficultyMenu_;
   MenuSelection botColorMenu_;

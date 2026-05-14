@@ -6,6 +6,7 @@
 #include <stdint.h>
 
 class BoardRuntime;
+class BoardAnimations;
 
 // ---------------------------------------------------------------------------
 // BoardDiagnostics — physical sensor coverage workflow.
@@ -21,7 +22,7 @@ class BoardDiagnostics {
   static constexpr int COLS = 8;
   static constexpr int SQUARES = ROWS * COLS;
 
-  explicit BoardDiagnostics(BoardRuntime& runtime);
+  BoardDiagnostics(BoardRuntime& runtime, BoardAnimations& animations);
 
   void begin();
   void update();
@@ -29,6 +30,7 @@ class BoardDiagnostics {
 
  private:
   BoardRuntime& runtime_;
+  BoardAnimations& animations_;
   BoardCanvasHandle surface_;
   bool visited_[ROWS][COLS];
   bool complete_;

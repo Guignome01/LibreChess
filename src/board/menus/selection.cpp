@@ -2,9 +2,11 @@
 
 static constexpr LedRGB BACK_BUTTON_COLOR = LedColors::White;
 
-MenuSelection::MenuSelection(BoardRuntime& runtime)
-    : panel_(runtime), optionCount_(0), hasBack_(false), backOption_{0, 0, BACK_BUTTON_COLOR,
-                                                                     MENU_RESULT_BACK} {}
+MenuSelection::MenuSelection(BoardRuntime& runtime, BoardAnimations& animations)
+    : panel_(runtime, animations),
+      optionCount_(0),
+      hasBack_(false),
+      backOption_{0, 0, BACK_BUTTON_COLOR, MENU_RESULT_BACK} {}
 
 void MenuSelection::setOptions(const MenuOption* options, uint8_t count) {
   optionCount_ = (count > MENU_SELECTION_OPTION_COUNT) ? MENU_SELECTION_OPTION_COUNT : count;

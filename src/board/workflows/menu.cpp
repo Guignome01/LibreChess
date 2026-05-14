@@ -2,6 +2,7 @@
 
 #include "board/core/colors.h"
 #include "board/core/runtime.h"
+#include "board/gui/animations.h"
 #include "board/menus/prompt.h"
 
 #include <Arduino.h>
@@ -26,11 +27,12 @@ LedRGB resumeIndicatorColor(BoardGameSelectionMode mode) {
 
 }  // namespace
 
-BoardMenu::BoardMenu(BoardRuntime& runtime)
+BoardMenu::BoardMenu(BoardRuntime& runtime, BoardAnimations& animations)
     : runtime_(runtime),
-      gameMenu_(runtime),
-      botDifficultyMenu_(runtime),
-      botColorMenu_(runtime),
+      animations_(animations),
+      gameMenu_(runtime, animations),
+      botDifficultyMenu_(runtime, animations),
+      botColorMenu_(runtime, animations),
       pendingBotDifficulty_(4),
       stage_(Stage::IDLE) {
   gameMenu_.setOptions(GAME_MENU_OPTIONS);
@@ -159,13 +161,13 @@ BoardMenu::GameSelection BoardMenu::poll() {
 }
 
 bool BoardMenu::confirmAction(bool flipped) {
-  return MenuPrompt::confirm(runtime_, flipped);
+  return MenuPrompt::confirm(runtime_, animations_, flipped);
 }
 
 bool BoardMenu::confirmResume(GameSelectionMode mode, bool flipped) {
   {
     auto g = runtime_.lockCanvas();
-    g.animations.startBlink(3, 3, resumeIndicatorColor(mode), 2, millis());
+    animations_.startBlink(3, 3, resumeIndicatorColor(mode), 2, millis());
   }
   // Let the blink play out before the prompt appears.
   delay(900);

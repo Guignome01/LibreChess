@@ -6,7 +6,6 @@
 #include "board/core/input.h"
 #include "board/core/renderer.h"
 #include "board/core/scheduler.h"
-#include "board/gui/animations.h"
 
 #include <atomic>
 #include <stdint.h>
@@ -18,14 +17,13 @@ class BoardCalibration;
 // ---------------------------------------------------------------------------
 // Owns: BoardDriver (LEDs + sensors), BoardCanvas (ordered surfaces),
 // BoardInput (debounced occupancy + event queue), BoardScheduler (timed
-// painters), BoardAnimations (GUI animation API), BoardRenderer (~30 Hz
-// FreeRTOS flush task).
+// painters), BoardRenderer (~30 Hz FreeRTOS flush task).
 //
 // External firmware consumes `Board` (the public package root); workflows
 // take `BoardRuntime&` directly via constructor.
 //
 // Synchronization: the renderer owns a single FreeRTOS mutex. Workflows
-// must mutate the canvas / start animations only while holding the
+// must mutate the canvas / schedule presentation work only while holding the
 // `CanvasGuard` returned by `lockCanvas()`. The guard releases on
 // destruction. The renderer holds the same mutex for the duration of one
 // frame (microseconds).
@@ -49,13 +47,13 @@ struct BoardInputEventBatch {
   uint8_t maxQueueDepth = 0;
 };
 
-/// RAII canvas + animation accessor. Acquires the renderer mutex on
-/// construction, releases on destruction. Workflows mutate the canvas and
-/// start/cancel animations through the public references; changes become
-/// visible when the renderer task next wakes.
+/// RAII canvas accessor. Acquires the renderer mutex on construction, releases
+/// on destruction. Workflows mutate the canvas and schedule presentation work
+/// while holding this guard; changes become visible when the renderer task next
+/// wakes.
 class CanvasGuard {
  public:
-  CanvasGuard(BoardRuntime& runtime, BoardCanvas& canvas, BoardAnimations& animations);
+  CanvasGuard(BoardRuntime& runtime, BoardCanvas& canvas);
   ~CanvasGuard();
 
   CanvasGuard(const CanvasGuard&) = delete;
@@ -64,7 +62,6 @@ class CanvasGuard {
   CanvasGuard& operator=(CanvasGuard&&) = delete;
 
   BoardCanvas& canvas;
-  BoardAnimations& animations;
 
  private:
   BoardRuntime& runtime_;
@@ -94,7 +91,7 @@ class BoardRuntime {
   // Workflow accessors
   // -------------------------------------------------------------------------
 
-  /// Acquire the renderer mutex for canvas + animation mutation. Hold for
+  /// Acquire the renderer mutex for canvas/presentation mutation. Hold for
   /// microseconds only — the renderer also blocks on the same mutex.
   CanvasGuard lockCanvas();
 
@@ -115,6 +112,14 @@ class BoardRuntime {
   /// Direct canvas access (for read-only queries). Mutation must go
   /// through `lockCanvas()`.
   const BoardCanvas& canvas() const { return canvas_; }
+
+  /// Mutable canvas access for GUI-owned presentation adapters. Callers must
+  /// still mutate through `lockCanvas()` while the renderer is running.
+  BoardCanvas& presentationCanvas() { return canvas_; }
+
+  /// Scheduler access for GUI-owned presentation adapters. Callers must hold
+  /// `lockCanvas()` before scheduling/cancelling painters.
+  BoardScheduler& presentationScheduler() { return scheduler_; }
 
   // -------------------------------------------------------------------------
   // LED settings (passthrough to driver)
@@ -148,7 +153,6 @@ class BoardRuntime {
   BoardCanvas canvas_;
   BoardInput input_;
   BoardScheduler scheduler_;
-  BoardAnimations animations_;
   BoardRenderer renderer_;
 
   // Input state is produced by the input poll task and consumed by workflows.

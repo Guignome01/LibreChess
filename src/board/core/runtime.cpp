@@ -8,7 +8,7 @@
 #include "board/workflows/calibration.h"
 
 // ---------------------------------------------------------------------------
-// BoardRuntime — wires driver + canvas + input + scheduler + animations + renderer.
+// BoardRuntime — wires driver + canvas + input + scheduler + renderer.
 // ---------------------------------------------------------------------------
 // `begin()` ordering matters:
 //   1. driver_.begin() — initializes hardware.
@@ -63,8 +63,8 @@ void BoardRuntime::inputPollLoop() {
 // CanvasGuard
 // ---------------------------------------------------------------------------
 
-CanvasGuard::CanvasGuard(BoardRuntime& runtime, BoardCanvas& canvas, BoardAnimations& animations)
-    : canvas(canvas), animations(animations), runtime_(runtime) {
+CanvasGuard::CanvasGuard(BoardRuntime& runtime, BoardCanvas& canvas)
+    : canvas(canvas), runtime_(runtime) {
   auto* mtx = static_cast<SemaphoreHandle_t>(runtime.mutexHandle());
   if (mtx != nullptr) {
     xSemaphoreTake(mtx, portMAX_DELAY);
@@ -87,7 +87,6 @@ BoardRuntime::BoardRuntime()
       canvas_(),
       input_(),
       scheduler_(),
-      animations_(scheduler_, canvas_),
       renderer_(),
       inputMutex_(nullptr),
       inputTaskHandle_(nullptr),
@@ -159,7 +158,7 @@ void BoardRuntime::shutdown() {
 }
 
 CanvasGuard BoardRuntime::lockCanvas() {
-  return CanvasGuard(*this, canvas_, animations_);
+  return CanvasGuard(*this, canvas_);
 }
 
 void* BoardRuntime::mutexHandle() {

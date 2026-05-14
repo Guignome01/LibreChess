@@ -1,6 +1,7 @@
 #include "board/gui/assistance.h"
 
 #include "board/core/runtime.h"
+#include "board/gui/animations.h"
 
 #include <Arduino.h>
 
@@ -25,8 +26,12 @@ void waitSquareOccupied(BoardRuntime& runtime, int row, int col, uint16_t cadenc
 
 }  // namespace
 
-BoardAssistance::BoardAssistance(BoardRuntime& runtime, BoardAssistanceLevel level)
-    : runtime_(runtime), level_(level), surface_() {}
+BoardAssistance::BoardAssistance(BoardRuntime& runtime, BoardAnimations& animations,
+                                 BoardAssistanceLevel level)
+    : runtime_(runtime),
+      animations_(animations),
+      level_(level),
+      surface_() {}
 
 BoardCanvasHandle BoardAssistance::writableSurface(BoardCanvas& canvas) {
   if (!canvas.active(surface_)) {
@@ -74,8 +79,10 @@ void BoardAssistance::waitForSetup(const LibreChess::Game& game, LibreChess::Log
         const bool hasPiece = occupied[row][col];
         if (shouldHavePiece != hasPiece) allCorrect = false;
         if (shouldHavePiece && !hasPiece) {
-          g.canvas.setPixel(surface, row, col,
-                            LedColors::forPieceColor(LibreChess::Game::pieceColor(piece)));
+          const LedRGB pieceColor = LibreChess::Game::pieceColor(piece) == LibreChess::Color::WHITE
+                                        ? LedColors::White
+                                        : LedColors::Blue;
+          g.canvas.setPixel(surface, row, col, pieceColor);
         } else if (!shouldHavePiece && hasPiece) {
           g.canvas.setPixel(surface, row, col, LedColors::Red);
         }
@@ -88,7 +95,7 @@ void BoardAssistance::waitForSetup(const LibreChess::Game& game, LibreChess::Log
   {
     auto g = runtime_.lockCanvas();
     if (g.canvas.active(surface_)) g.canvas.clearSurface(surface_);
-    g.animations.startFirework(LedColors::Yellow, millis());
+    animations_.startFirework(LedColors::Yellow, millis());
   }
   runtime_.clearInputEvents();
 }
@@ -120,7 +127,7 @@ void BoardAssistance::showLegalMoveHighlights(int fromRow, int fromCol,
 
 void BoardAssistance::showCapturePlacementPrompt(int row, int col) {
   auto g = runtime_.lockCanvas();
-  g.animations.startBlink(row, col, LedColors::Red, 1, millis());
+  animations_.startBlink(row, col, LedColors::Red, 1, millis());
 }
 
 void BoardAssistance::guideCastling(int kingFromRow, int kingFromCol, int kingToRow,

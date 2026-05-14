@@ -1,8 +1,6 @@
 #ifndef BOARD_COLORS_H
 #define BOARD_COLORS_H
 
-#include "piece.h"
-
 #include <stdint.h>
 
 struct LedRGB {
@@ -33,16 +31,6 @@ inline constexpr LedRGB scaleColor(LedRGB color, float factor) {
   };
 }
 
-/// Return the board feedback color associated with a chess side.
-inline constexpr LedRGB forPieceColor(LibreChess::Color color) {
-  return (color == LibreChess::Color::WHITE) ? White : Blue;
-}
-
-/// Return the game-end color encoded by persisted remote-game winner metadata.
-inline constexpr LedRGB forWinner(char winnerColor) {
-  return winnerColor == 'w' ? forPieceColor(LibreChess::Color::WHITE)
-                            : (winnerColor == 'b' ? forPieceColor(LibreChess::Color::BLACK) : Cyan);
-}
 }  // namespace LedColors
 
 #endif  // BOARD_COLORS_H

@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 class BoardRuntime;
+class BoardAnimations;
 
 /// Optional move hinting mode for board-owned chess assistance.
 enum class BoardAssistanceLevel : uint8_t {
@@ -29,7 +30,7 @@ enum class BoardAssistanceLevel : uint8_t {
 
 class BoardAssistance {
  public:
-  explicit BoardAssistance(BoardRuntime& runtime,
+  BoardAssistance(BoardRuntime& runtime, BoardAnimations& animations,
                            BoardAssistanceLevel level = BoardAssistanceLevel::LEGAL_MOVES);
 
   void setLevel(BoardAssistanceLevel level) { level_ = level; }
@@ -64,6 +65,7 @@ class BoardAssistance {
 
  private:
   BoardRuntime& runtime_;
+  BoardAnimations& animations_;
   BoardAssistanceLevel level_;
   BoardCanvasHandle surface_;
 

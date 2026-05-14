@@ -7,6 +7,7 @@
 #include <stdint.h>
 
 class BoardRuntime;
+class BoardAnimations;
 
 // ---------------------------------------------------------------------------
 // MenuSelection — selectable physical menu screen
@@ -17,7 +18,7 @@ class BoardRuntime;
 
 class MenuSelection {
  public:
-  explicit MenuSelection(BoardRuntime& runtime);
+  MenuSelection(BoardRuntime& runtime, BoardAnimations& animations);
 
   MenuSelection(const MenuSelection&) = delete;
   MenuSelection& operator=(const MenuSelection&) = delete;

@@ -34,23 +34,23 @@ board-internal types it may name are `BoardAnimationHandle`
 src/board/
 ├── board.{h,cpp}              public package root
 ├── core/                      runtime primitives
-│   ├── runtime.{h,cpp}        composes driver + canvas + scheduler + animations + input + renderer
+│   ├── runtime.{h,cpp}        composes driver + canvas + scheduler + input + renderer
 │   ├── driver.{h,cpp}         hall sensors, shift register, WS2812 strip, NVS
 │   ├── canvas.{h,cpp}         ordered fixed-size surface stack + dirty flag
 │   ├── scheduler.{h,cpp}      generic fixed-slot timed painter runner + callback contract
 │   ├── input.{h,cpp}          pure occupancy snapshot + event queue
 │   ├── renderer.{h,cpp}       FreeRTOS render task (~30 Hz)
 │   └── colors.h               semantic LED palette
-├── gui/                       visual helpers (take BoardRuntime&)
+├── gui/                       visual helpers (take BoardRuntime& + BoardAnimations& when needed)
 │   ├── feedback.{h,cpp}       always-on outcomes, status handles
 │   ├── assistance.{h,cpp}     optional move/setup/capture guidance
-│   ├── animations.{h,cpp}     animation API + frame painters
+│   └── animations.{h,cpp}     animation API + frame painters
 ├── menus/                     menu primitives
 │   ├── options.h              option ids/layouts + game-selection result types
 │   ├── panel.{h,cpp}          shared draw/poll/debounce mechanics
 │   ├── selection.{h,cpp}      selectable menu screen + optional back button
 │   └── prompt.{h,cpp}         green/red modal confirmation prompts
-└── workflows/                 long-lived workflows (take BoardRuntime&)
+└── workflows/                 long-lived workflows (take BoardRuntime& + BoardAnimations& when needed)
     ├── gameplay.{h,cpp}       physical chess interactions, holds feedback+assistance
     ├── diagnostics.{h,cpp}    sensor test
     ├── calibration.{h,cpp}    interactive calibration (friend of BoardRuntime)
@@ -60,21 +60,23 @@ src/board/
 ## BoardRuntime — the canvas/scheduler/IO boundary
 
 `BoardRuntime` owns one `BoardDriver`, one `BoardCanvas`, one `BoardInput`,
-one `BoardScheduler`, one `BoardAnimations`, and one `BoardRenderer`. It is
-constructed by `Board::Impl` and shared with every workflow and visual helper
-through a `BoardRuntime&` reference.
+one `BoardScheduler`, and one `BoardRenderer`. It is constructed by
+`Board::Impl` and shared with every workflow and visual helper through a
+`BoardRuntime&` reference. `BoardAnimations` is GUI-owned by `Board::Impl` and
+is injected into workflows/helpers that need animation vocabulary.
 
 Key contracts:
 
 - **All canvas mutation flows through `runtime.lockCanvas()`**, which returns a
-  `CanvasGuard` RAII handle holding `canvas` and `animations` references under
-  the runtime mutex. Hold the guard for the minimum scope needed; never store
-  references to the underlying canvas/animations.
+  `CanvasGuard` RAII handle holding the `canvas` reference under the runtime
+  mutex. Hold the guard for the minimum scope needed; never store references to
+  the underlying canvas. Animation scheduling/cancellation must also happen
+  while this guard is held, using the injected `BoardAnimations&`.
   ```cpp
   auto g = runtime.lockCanvas();
   BoardCanvasHandle surface = g.canvas.acquireSurface();
   g.canvas.setPixel(surface, row, col, LedColors::Cyan);
-  g.animations.startBlink(row, col, LedColors::Green, 1, millis());
+  animations.startBlink(row, col, LedColors::Green, 1, millis());
   ```
 - **Render task runs on Core 1, priority 1, ~30 Hz** (33 ms cadence, 4 KiB stack).
   It asks `BoardScheduler` to run scheduled painters, picks up the dirty flag
@@ -131,9 +133,11 @@ clear only their own surface before painting each frame, so sibling animations
 do not erase each other.
 
 `BoardAnimations` (`gui/animations.*`) is the GUI-owned animation API and frame
-painting implementation. It converts animation requests into scheduled painters
-and exposes `BoardAnimationHandle` (an alias of `BoardScheduledHandle`) for
-callers. Helpers:
+painting implementation. `Board::Impl` owns one instance next to `BoardRuntime`
+and injects it into workflows/helpers that need animation vocabulary. It
+converts animation requests into scheduled painters and exposes
+`BoardAnimationHandle` (an alias of `BoardScheduledHandle`) for callers.
+Helpers:
 
 - One-shot: `startBlink`, `startFlash`, `startCapture`, `startPromotion`,
   `startFirework`.
@@ -147,7 +151,9 @@ invalidated. **Status animations do not use `std::atomic<bool>*` flags.**
 ## Color Semantics
 
 Colors in `LedColors` (`src/board/core/colors.h`) have **fixed semantic
-meanings**. Never use a color for a different purpose.
+meanings**. Never use a color for a different purpose. `colors.h` is
+self-contained and must not include chess/game headers; tiny Game-facing color
+choices should stay local to the GUI implementation that renders them.
 
 | Color  | Meaning                | Usage                                    |
 |--------|------------------------|------------------------------------------|
@@ -222,8 +228,9 @@ use. Key namespaces:
   of the steady-state sensor scan path.
 - **Workflows own their visual helpers** — `BoardGameplay` holds a
   `BoardFeedback` and a `BoardAssistance` directly (constructed with the
-  shared `BoardRuntime&`). Visual helpers no longer live on a controller
-  facade; they are just objects scoped to their consumer.
+  shared `BoardRuntime&` plus the board-owned `BoardAnimations&`). Visual
+  helpers no longer live on a controller facade; they are just objects scoped
+  to their consumer.
 - **Status animations are exposed as handles** — `BoardGameplay::startThinking`
   and friends return `BoardAnimationHandle`. The caller stores the handle and
   passes it back to `stopStatusAnimation`. There is no "and-wait" semantics:

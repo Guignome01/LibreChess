@@ -72,8 +72,11 @@ bool inputOverflowed(const BoardInputEventBatch& batch, BoardFeedback& feedback,
 
 }  // namespace
 
-BoardGameplay::BoardGameplay(BoardRuntime& runtime)
-    : runtime_(runtime), feedback_(runtime), assistance_(runtime) {}
+BoardGameplay::BoardGameplay(BoardRuntime& runtime, BoardAnimations& animations)
+    : runtime_(runtime),
+      animations_(animations),
+      feedback_(runtime, animations),
+      assistance_(runtime, animations) {}
 
 void BoardGameplay::waitForSetup(const Game& game, Log& logger) {
   assistance_.waitForSetup(game, logger);
@@ -238,7 +241,7 @@ void BoardGameplay::completeAppliedMove(const Game& game, const MoveResult& resu
 bool BoardGameplay::confirmResign(Color resignColor, bool flipped, Log& logger) {
   logger.infof("Resign confirmation for %s...", Game::colorName(resignColor));
 
-  const bool confirmed = confirmBoardPrompt(runtime_, flipped);
+  const bool confirmed = MenuPrompt::confirm(runtime_, animations_, flipped);
   if (!confirmed) {
     logger.info("Resign cancelled");
   }
