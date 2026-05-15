@@ -1,6 +1,8 @@
 #ifndef BOARD_INPUT_H
 #define BOARD_INPUT_H
 
+#include "board/core/helpers.h"
+
 #include <stdint.h>
 
 // ---------------------------------------------------------------------------
@@ -22,8 +24,8 @@
 
 class BoardInput {
  public:
-  static constexpr int ROWS = 8;
-  static constexpr int COLS = 8;
+  static constexpr int ROWS = BoardHelpers::ROWS;
+  static constexpr int COLS = BoardHelpers::COLS;
   static constexpr uint8_t EVENT_QUEUE_SIZE = 16;
 
   enum class EventKind : uint8_t {
@@ -105,7 +107,7 @@ class BoardInput {
 
  private:
   static bool inBounds(int row, int col) {
-    return row >= 0 && row < ROWS && col >= 0 && col < COLS;
+    return BoardHelpers::inBounds(row, col);
   }
 
   void pushEvent(EventKind kind, int row, int col, uint32_t nowMs);

@@ -27,6 +27,10 @@ static constexpr uint8_t rawIdentityLedIndex(int row, int col) {
   return static_cast<uint8_t>(row * NUM_COLS + col);
 }
 
+static constexpr uint8_t scaleChannel(uint8_t channel, uint8_t percent) {
+  return static_cast<uint8_t>((static_cast<uint16_t>(channel) * percent + 50) / 100);
+}
+
 }  // namespace
 
 BoardDriver::BoardDriver()
@@ -153,7 +157,7 @@ bool BoardDriver::getSensorState(int row, int col) const {
   return sensorState[row][col];
 }
 
-void BoardDriver::readRawCalibrationSensors(bool (&rawState)[NUM_ROWS][NUM_COLS]) {
+void BoardDriver::readRawSensors(bool (&rawState)[NUM_ROWS][NUM_COLS]) {
   for (int row = 0; row < NUM_ROWS; row++)
     for (int col = 0; col < NUM_COLS; col++)
       rawState[row][col] = false;
@@ -194,10 +198,10 @@ void BoardDriver::clearAllLEDs(bool show) {
 
 void BoardDriver::setSquareLED(int row, int col, LedRGB color) {
   currentColors[row][col] = color;
-  float multiplier = 1.0f;
-  if ((row + col) % 2 == 1)
-    multiplier = dimMultiplier / 100.0f;
-  strip.SetPixelColor(getPixelIndex(row, col), RgbColor(color.r * multiplier, color.g * multiplier, color.b * multiplier));
+  const uint8_t percent = ((row + col) % 2 == 1) ? dimMultiplier : 100;
+  strip.SetPixelColor(getPixelIndex(row, col),
+                      RgbColor(scaleChannel(color.r, percent), scaleChannel(color.g, percent),
+                               scaleChannel(color.b, percent)));
 }
 
 void BoardDriver::showLEDs() {
@@ -224,7 +228,10 @@ void BoardDriver::loadLedSettings() {
     return;
   }
   Preferences prefs;
-  prefs.begin("ledSettings", true);
+  if (!prefs.begin("ledSettings", true)) {
+    Serial.println("LED settings namespace could not be opened");
+    return;
+  }
   brightness = clampBrightness(prefs.getUChar("brightness", BRIGHTNESS));
   dimMultiplier = clampDimMultiplier(prefs.getUChar("dimMult", 70));
   prefs.end();
@@ -237,7 +244,10 @@ void BoardDriver::saveLedSettings() {
     return;
   }
   Preferences prefs;
-  prefs.begin("ledSettings", false);
+  if (!prefs.begin("ledSettings", false)) {
+    Serial.println("LED settings namespace could not be opened for writing");
+    return;
+  }
   prefs.putUChar("brightness", brightness);
   prefs.putUChar("dimMult", dimMultiplier);
   prefs.end();

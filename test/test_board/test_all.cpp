@@ -10,9 +10,12 @@
 
 // Include source units once for this test binary.
 #include "board/core/canvas.cpp"            // NOLINT
+#include "board/core/helpers.cpp"           // NOLINT
 #include "board/core/input.cpp"             // NOLINT
 #include "board/core/scheduler.cpp"         // NOLINT
-#include "board/gui/animations.cpp"         // NOLINT
+#include "board/core/visual/animations.cpp"         // NOLINT
+#include "board/menus/confirm.cpp"          // NOLINT
+#include "board/menus/game_selection.cpp"   // NOLINT
 
 void setUp(void) {}
 void tearDown(void) {}
@@ -21,11 +24,15 @@ void tearDown(void) {}
 void register_canvas_tests();
 void register_input_tests();
 void register_animation_tests();
+void register_board_type_tests();
+void register_menu_tests();
 
 int main(int /*argc*/, char** /*argv*/) {
   UNITY_BEGIN();
   register_canvas_tests();
   register_input_tests();
   register_animation_tests();
+  register_board_type_tests();
+  register_menu_tests();
   return UNITY_END();
 }

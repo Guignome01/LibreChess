@@ -9,6 +9,7 @@
 #include <unity.h>
 
 #include "board/core/canvas.h"
+#include "board/core/helpers.h"
 
 namespace {
 
@@ -30,8 +31,8 @@ BoardCanvasHandle acquireTestSurface(BoardCanvas& canvas) {
 
 void test_fresh_canvas_has_no_pixels() {
   BoardCanvas canvas;
-  for (int r = 0; r < 8; ++r) {
-    for (int c = 0; c < 8; ++c) {
+  for (int r = 0; r < BoardCanvas::ROWS; ++r) {
+    for (int c = 0; c < BoardCanvas::COLS; ++c) {
       TEST_ASSERT_FALSE(canvas.hasPixel(r, c));
       TEST_ASSERT_TRUE(sameColor(canvas.resolve(r, c), LedColors::Off));
     }
@@ -137,7 +138,7 @@ void test_compose_clears_dirty_flag() {
   BoardCanvasHandle surface = acquireTestSurface(canvas);
   canvas.setPixel(surface, 0, 0, LedColors::Red);
   TEST_ASSERT_TRUE(canvas.dirty());
-  LedRGB out[8][8];
+  LedRGB out[BoardCanvas::ROWS][BoardCanvas::COLS];
   canvas.compose(out);
   TEST_ASSERT_FALSE(canvas.dirty());
 }
@@ -145,7 +146,7 @@ void test_compose_clears_dirty_flag() {
 void test_setPixel_marks_dirty() {
   BoardCanvas canvas;
   BoardCanvasHandle surface = acquireTestSurface(canvas);
-  LedRGB out[8][8];
+  LedRGB out[BoardCanvas::ROWS][BoardCanvas::COLS];
   canvas.compose(out);  // Drains initial/acquire dirty bits.
   TEST_ASSERT_FALSE(canvas.dirty());
   canvas.setPixel(surface, 0, 0, LedColors::Red);
@@ -155,11 +156,41 @@ void test_setPixel_marks_dirty() {
 void test_clearSurface_no_op_does_not_dirty() {
   BoardCanvas canvas;
   BoardCanvasHandle surface = acquireTestSurface(canvas);
-  LedRGB out[8][8];
+  LedRGB out[BoardCanvas::ROWS][BoardCanvas::COLS];
   canvas.compose(out);
   TEST_ASSERT_FALSE(canvas.dirty());
   canvas.clearSurface(surface);  // Already empty.
   TEST_ASSERT_FALSE(canvas.dirty());
+}
+
+void test_surface_helper_acquires_and_reuses_surface() {
+  BoardCanvas canvas;
+  BoardCanvasHandle surface;
+  BoardCanvasHandle first = BoardSurface::writable(canvas, surface);
+  TEST_ASSERT_TRUE(first.valid());
+  TEST_ASSERT_TRUE(surface.valid());
+
+  BoardCanvasHandle second = BoardSurface::writable(canvas, surface);
+  TEST_ASSERT_EQUAL_UINT8(first.slot, second.slot);
+  TEST_ASSERT_EQUAL_UINT16(first.generation, second.generation);
+}
+
+void test_surface_helper_clear_and_release_are_safe() {
+  BoardCanvas canvas;
+  BoardCanvasHandle surface;
+  BoardSurface::writable(canvas, surface);
+  canvas.setPixel(surface, 0, 0, LedColors::Red);
+
+  BoardSurface::clearSquare(canvas, surface, 0, 0);
+  TEST_ASSERT_FALSE(canvas.hasPixel(0, 0));
+
+  canvas.setPixel(surface, 1, 1, LedColors::Green);
+  BoardSurface::clear(canvas, surface);
+  TEST_ASSERT_FALSE(canvas.hasPixel(1, 1));
+
+  BoardSurface::release(canvas, surface);
+  TEST_ASSERT_FALSE(surface.valid());
+  BoardSurface::clear(canvas, surface);
 }
 
 // ---------------------------------------------------------------------------
@@ -190,8 +221,8 @@ void test_out_of_bounds_writes_silently_ignored() {
   canvas.setPixel(surface, 0, 8, LedColors::Red);
   canvas.setPixel(surface, 8, 8, LedColors::Red);
   // Nothing should have been recorded; canvas is still empty.
-  for (int r = 0; r < 8; ++r) {
-    for (int c = 0; c < 8; ++c) {
+  for (int r = 0; r < BoardCanvas::ROWS; ++r) {
+    for (int c = 0; c < BoardCanvas::COLS; ++c) {
       TEST_ASSERT_FALSE(canvas.hasPixel(r, c));
     }
   }
@@ -235,8 +266,8 @@ void test_fillAll_paints_every_square() {
   BoardCanvas canvas;
   BoardCanvasHandle surface = acquireTestSurface(canvas);
   canvas.fillAll(surface, LedColors::Cyan);
-  for (int r = 0; r < 8; ++r) {
-    for (int c = 0; c < 8; ++c) {
+  for (int r = 0; r < BoardCanvas::ROWS; ++r) {
+    for (int c = 0; c < BoardCanvas::COLS; ++c) {
       TEST_ASSERT_TRUE(sameColor(canvas.resolve(r, c), LedColors::Cyan));
     }
   }
@@ -271,7 +302,7 @@ void test_drawLine_diagonal_paints_endpoints() {
   TEST_ASSERT_TRUE(sameColor(canvas.resolve(0, 0), LedColors::Blue));
   TEST_ASSERT_TRUE(sameColor(canvas.resolve(7, 7), LedColors::Blue));
   // Each step must paint along the main diagonal.
-  for (int i = 0; i < 8; ++i) {
+  for (int i = 0; i < BoardCanvas::ROWS; ++i) {
     TEST_ASSERT_TRUE(canvas.hasPixel(i, i));
   }
 }
@@ -324,6 +355,8 @@ void register_canvas_tests() {
   RUN_TEST(test_compose_clears_dirty_flag);
   RUN_TEST(test_setPixel_marks_dirty);
   RUN_TEST(test_clearSurface_no_op_does_not_dirty);
+  RUN_TEST(test_surface_helper_acquires_and_reuses_surface);
+  RUN_TEST(test_surface_helper_clear_and_release_are_safe);
   RUN_TEST(test_compose_fills_buffer_with_resolved_colors);
   RUN_TEST(test_out_of_bounds_writes_silently_ignored);
   RUN_TEST(test_fillRect_paints_inclusive_range);

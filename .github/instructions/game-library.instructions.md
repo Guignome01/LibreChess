@@ -5,7 +5,7 @@ description: "Game library: shared conventions, dependency model, and cross-cutt
 
 # Game Library (`lib/game/`) — General
 
-Central game orchestrator composing `Position` (from core), `History` (in-memory move log + persistent recording), and optionally `IGameObserver`. Optionally composes an `Engine` (from core) for bot-mode search. All chess-state mutations flow through `Game`. Dependency: `core ← game`.
+Central game orchestrator composing `Position` (from core), `History` (in-memory move log + persistent recording), and optionally `IGameObserver`. Optionally composes an `Engine` (from core) for bot-mode search. The library also owns the pure `provider.h` engine contract shared by firmware game modes. All chess-state mutations flow through `Game`. Dependency: `core ← game`.
 
 Pure C++ — uses `std::string` (not Arduino `String`); firmware bridges with `.c_str()` / `std::string()`.
 
@@ -16,6 +16,7 @@ Pure C++ — uses `std::string` (not Arduino `String`); firmware bridges with `.
 | `game.instructions.md` | `Game` — orchestrator, dual overloads, re-exported APIs, data flow |
 | `history.instructions.md` | `History` — move log, persistent recording, branch-on-undo |
 | `game-headers.instructions.md` | `types.h`, `storage.h` (IGameStorage), `observer.h` (IGameObserver) |
+| `provider.h` | Pure `EngineProvider` contract/data; no firmware, Arduino, FreeRTOS, or board dependencies |
 
 ## Cross-Cutting Design Rules
 
@@ -30,6 +31,10 @@ Pure C++ — uses `std::string` (not Arduino `String`); firmware bridges with `.
 - **Non-throwing search allocation** — `Game::initSearch()` must tolerate ESP32 heap pressure. It uses `new(std::nothrow)`, logs allocation failures, and exposes search/hash diagnostics so firmware can continue with fallback behavior.
 
 - **Nullable DI** — Storage, observer, and logger are pointer-injected. All nullable — storage/observer guard with `if (ptr_)`, logger uses `Log` proxy (no manual guards).
+
+- **Provider contract stays pure** — `provider.h` may expose game-layer data such as `GameResult`, but it must not interpret firmware metadata. `EngineInitResult::mode` is an opaque byte that firmware maps to `GameModeId`/`GameMeta` in `src/game_mode/`.
+
+- **Disambiguate core `engine.h`** — firmware engine folders use local `engine.h` filenames. When `lib/game` needs the core search facade, include it explicitly as `../../core/src/engine.h` so PlatformIO include paths cannot resolve to a firmware engine header.
 
 ## Data Flow: How a Move Works
 
@@ -63,5 +68,6 @@ Every change to `lib/game/` MUST include:
 | `game.instructions.md` | Per-file — Game orchestrator |
 | `history.instructions.md` | Per-file — History move log + recording |
 | `game-headers.instructions.md` | Per-file — types.h, storage.h, observer.h |
+| `engine.instructions.md` | Firmware engines implementing the pure `EngineProvider` contract |
 | `core.instructions.md` | Upstream dependency (`core ← game`) |
 | `testing.instructions.md` | Test architecture and per-group details |

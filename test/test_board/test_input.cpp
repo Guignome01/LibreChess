@@ -15,10 +15,12 @@ using Event = BoardInput::Event;
 using EventKind = BoardInput::EventKind;
 
 // Helper: zero-fill an 8x8 sensor matrix.
-void clear(bool s[8][8]) { memset(s, 0, sizeof(bool) * 64); }
+void clear(bool s[BoardInput::ROWS][BoardInput::COLS]) {
+  memset(s, 0, sizeof(bool) * BoardHelpers::SQUARES);
+}
 
 // Helper: set one square occupied.
-void place(bool s[8][8], int r, int c) { s[r][c] = true; }
+void place(bool s[BoardInput::ROWS][BoardInput::COLS], int r, int c) { s[r][c] = true; }
 
 // ---------------------------------------------------------------------------
 // Baseline
@@ -26,7 +28,7 @@ void place(bool s[8][8], int r, int c) { s[r][c] = true; }
 
 void test_syncBaseline_emits_one_event_only() {
   BoardInput input;
-  bool sensors[8][8];
+  bool sensors[BoardInput::ROWS][BoardInput::COLS];
   clear(sensors);
   place(sensors, 0, 0);
   place(sensors, 7, 7);
@@ -41,7 +43,7 @@ void test_syncBaseline_emits_one_event_only() {
 
 void test_syncBaseline_clears_prior_events() {
   BoardInput input;
-  bool s[8][8];
+  bool s[BoardInput::ROWS][BoardInput::COLS];
   clear(s);
   input.syncBaseline(s, 0);
   // Generate some transitions.
@@ -61,7 +63,7 @@ void test_syncBaseline_clears_prior_events() {
 
 void test_place_emits_PLACED_event() {
   BoardInput input;
-  bool s[8][8];
+  bool s[BoardInput::ROWS][BoardInput::COLS];
   clear(s);
   input.syncBaseline(s, 0);
   input.consume(1);  // drop baseline event
@@ -80,7 +82,7 @@ void test_place_emits_PLACED_event() {
 
 void test_lift_emits_LIFTED_event() {
   BoardInput input;
-  bool s[8][8];
+  bool s[BoardInput::ROWS][BoardInput::COLS];
   clear(s);
   place(s, 2, 3);
   input.syncBaseline(s, 0);
@@ -100,7 +102,7 @@ void test_lift_emits_LIFTED_event() {
 
 void test_stable_frame_emits_no_events() {
   BoardInput input;
-  bool s[8][8];
+  bool s[BoardInput::ROWS][BoardInput::COLS];
   clear(s);
   place(s, 1, 1);
   input.syncBaseline(s, 0);
@@ -121,7 +123,7 @@ void test_stable_frame_emits_no_events() {
 
 void test_multiple_changes_in_one_poll() {
   BoardInput input;
-  bool s[8][8];
+  bool s[BoardInput::ROWS][BoardInput::COLS];
   clear(s);
   input.syncBaseline(s, 0);
   input.consume(1);
@@ -145,7 +147,7 @@ void test_multiple_changes_in_one_poll() {
 
 void test_consume_advances_head() {
   BoardInput input;
-  bool s[8][8];
+  bool s[BoardInput::ROWS][BoardInput::COLS];
   clear(s);
   input.syncBaseline(s, 0);
   // Generate three PLACED events.
@@ -167,7 +169,7 @@ void test_consume_advances_head() {
 
 void test_consume_clamps_to_count() {
   BoardInput input;
-  bool s[8][8];
+  bool s[BoardInput::ROWS][BoardInput::COLS];
   clear(s);
   input.syncBaseline(s, 0);
   input.consume(99);  // way more than available
@@ -180,13 +182,13 @@ void test_consume_clamps_to_count() {
 
 void test_queue_overflow_drops_new_and_sets_flag() {
   BoardInput input;
-  bool s[8][8];
+  bool s[BoardInput::ROWS][BoardInput::COLS];
   clear(s);
   input.syncBaseline(s, 0);
   // Fill the queue to its max (16). Baseline already counts as 1.
   for (int i = 0; i < 16 + 5; ++i) {
-    int r = i % 8;
-    int c = (i / 8) % 8;
+    int r = i % BoardInput::ROWS;
+    int c = (i / BoardInput::ROWS) % BoardInput::COLS;
     s[r][c] = !s[r][c];  // toggle
     input.poll(s, static_cast<uint32_t>(i));
   }
@@ -201,12 +203,12 @@ void test_queue_overflow_drops_new_and_sets_flag() {
 
 void test_syncBaseline_resets_overflow_metrics() {
   BoardInput input;
-  bool s[8][8];
+  bool s[BoardInput::ROWS][BoardInput::COLS];
   clear(s);
   input.syncBaseline(s, 0);
   for (int i = 0; i < 20; ++i) {
-    const int r = i % 8;
-    const int c = (i / 8) % 8;
+    const int r = i % BoardInput::ROWS;
+    const int c = (i / BoardInput::ROWS) % BoardInput::COLS;
     s[r][c] = !s[r][c];
     input.poll(s, static_cast<uint32_t>(i + 1));
   }
@@ -225,15 +227,15 @@ void test_syncBaseline_resets_overflow_metrics() {
 
 void test_ring_wraps_correctly() {
   BoardInput input;
-  bool s[8][8];
+  bool s[BoardInput::ROWS][BoardInput::COLS];
   clear(s);
   input.syncBaseline(s, 0);
   input.consume(1);
 
   // Push 10 events, consume 8, push 8 more — head should have wrapped.
   for (int i = 0; i < 10; ++i) {
-    int r = i / 8;
-    int c = i % 8;
+    int r = i / BoardInput::COLS;
+    int c = i % BoardInput::COLS;
     s[r][c] = true;
     input.poll(s, static_cast<uint32_t>(i + 1));
   }
@@ -241,9 +243,9 @@ void test_ring_wraps_correctly() {
   input.consume(8);
   TEST_ASSERT_EQUAL_UINT8(2, input.eventCount());
   // Push 8 more transitions.
-  for (int i = 0; i < 8; ++i) {
-    int r = i / 8;
-    int c = i % 8;
+  for (int i = 0; i < BoardInput::COLS; ++i) {
+    int r = i / BoardInput::COLS;
+    int c = i % BoardInput::COLS;
     s[r][c] = false;
     input.poll(s, static_cast<uint32_t>(100 + i));
   }
@@ -262,7 +264,7 @@ void test_ring_wraps_correctly() {
 
 void test_oob_queries_return_false() {
   BoardInput input;
-  bool s[8][8];
+  bool s[BoardInput::ROWS][BoardInput::COLS];
   clear(s);
   input.syncBaseline(s, 0);
   TEST_ASSERT_FALSE(input.occupied(-1, 0));

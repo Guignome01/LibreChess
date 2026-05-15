@@ -57,18 +57,21 @@ class GameMode {
   WiFiManagerESP32* wifiManager_;
   Game* chess_;
   Log logger_;
-
   // --- Resign ---
   bool resignPending_ = false;    // Set by web resign endpoint
 
   // Constructor
-  GameMode(BoardGameplay* gameplay, WiFiManagerESP32* wm, Game* cg, ILogger* logger = nullptr);
+  GameMode(BoardGameplay* gameplay, WiFiManagerESP32* wm, Game* cg,
+           ILogger* logger = nullptr);
 
   // Common initialization and game flow methods
   void waitForBoardSetup();
-  MoveResult applyMove(int fromRow, int fromCol, int toRow, int toCol, char promotion = ' ', bool isRemoteMove = false);
+  MoveResult applyMove(int fromRow, int fromCol, int toRow, int toCol,
+                       char promotion = ' ', bool isRemoteMove = false);
   MoveResult applyMove(const std::string& move);
   bool tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int& toRow, int& toCol);
+  void serviceAssistance();
+  void cancelAssistance();
 
   /// Try to resume a live game from Game. Returns true if resumed.
   /// If no live game exists, returns false (caller should start a new game).
@@ -95,7 +98,7 @@ class GameMode {
   bool completeResign(Color resignColor);
 
  public:
-  virtual ~GameMode() {}
+  virtual ~GameMode();
 
   virtual void begin() = 0;
   virtual void update() = 0;

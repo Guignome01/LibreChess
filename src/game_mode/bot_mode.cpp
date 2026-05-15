@@ -1,12 +1,12 @@
 #include "bot_mode.h"
 #include "board/workflows/gameplay.h"
 #include "game.h"
-
 #include "wifi_manager_esp32.h"
+
 #include <Arduino.h>
 
-BotMode::BotMode(BoardGameplay* gameplay, WiFiManagerESP32* wm, Game* cg, EngineProvider* provider,
-                 ILogger* logger)
+BotMode::BotMode(BoardGameplay* gameplay, WiFiManagerESP32* wm, Game* cg,
+                 EngineProvider* provider, ILogger* logger)
   : GameMode(gameplay, wm, cg, logger), provider_(provider) {}
 
 BotMode::~BotMode() {
@@ -80,6 +80,8 @@ void BotMode::update() {
   if (processResign()) return;
 
   if (botState_ == BotState::PLAYER_TURN) {
+    serviceAssistance();
+
     int fromRow, fromCol, toRow, toCol;
     if (tryPlayerMove(playerColor(), fromRow, fromCol, toRow, toCol)) {
       MoveResult result = applyMove(fromRow, fromCol, toRow, toCol);

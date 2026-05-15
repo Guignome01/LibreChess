@@ -18,11 +18,13 @@ void tearDown(void) {}
 void register_game_tests();
 void register_history_tests();
 void register_history_persistence_tests();
+void register_provider_tests();
 
 int main(int argc, char** argv) {
   UNITY_BEGIN();
   register_history_tests();
   register_history_persistence_tests();
+  register_provider_tests();
   register_game_tests();
   return UNITY_END();
 }

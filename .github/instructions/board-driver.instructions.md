@@ -1,5 +1,5 @@
 ---
-description: "Use when modifying anything under src/board/** — public Board API, BoardRuntime, BoardDriver, BoardCanvas, BoardScheduler, BoardAnimations, BoardInput, BoardRenderer, GUI helpers, menus, or workflows. Covers the runtime/canvas/scheduler model, ordered surface semantics, status-handle contract, sensor cadence, and NVS persistence."
+description: "Use when modifying anything under src/board/** — public Board API, BoardRuntime, BoardDriver, BoardCanvas, BoardScheduler, BoardAnimations, BoardInput, BoardRenderer, visual helpers, menus, or workflows. Covers the runtime/canvas/scheduler model, ordered surface semantics, status-handle contract, sensor cadence, and NVS persistence."
 applyTo: "src/board/**, src/shared/utils.*"
 ---
 
@@ -19,42 +19,53 @@ deliberately narrow API consumed by firmware outside the board folder:
 - Canvas reset: `clearAllSurfaces()`.
 - Status animations exposed as handles: `BoardAnimationHandle startConnectingStatus()`
   and `void stopConnectingStatus(BoardAnimationHandle&)`.
-- Workflow accessors: `gameplay()`, `menu()`, `diagnostics()`, `calibration()`.
+- Workflow accessors: `gameplay()` and `diagnostics()`.
+- Typed menu facade: `showMenu(BoardMenu&)`, `pollMenu()`,
+  `runMenuBlocking(BoardMenu&)`, and `clearMenu()`.
+- Facade helpers for external firmware: diagnostics begin/update/completion and
+  `triggerCalibration()`.
 
 External firmware must not include `BoardDriver`, `BoardRuntime`,
 `BoardCanvas`, `BoardScheduler`, `BoardAnimations`, `BoardInput`,
 `BoardRenderer`, `BoardFeedback`, or `BoardAssistance` directly. The only
 board-internal types it may name are `BoardAnimationHandle`
-(`board/gui/animations.h`) and the selection result types from
-`board/menus/options.h`.
+(`board/core/visual/animations.h`) plus typed menu objects from `board/menus/*`
+(`GameSelectionMenu`, `ConfirmMenu`, `ResumeConfirmMenu`) passed back through
+the public `Board` menu facade.
 
 ## Internal layout
 
 ```
 src/board/
 ├── board.{h,cpp}              public package root
+├── assistance_provider.h      board-owned assistance provider contract
+├── game_provider.h            board-owned game provider contract
+├── types.h                    engine-agnostic board DTOs
 ├── core/                      runtime primitives
 │   ├── runtime.{h,cpp}        composes driver + canvas + scheduler + input + renderer
+│   ├── calibration.{h,cpp}    raw startup calibration runner
 │   ├── driver.{h,cpp}         hall sensors, shift register, WS2812 strip, NVS
 │   ├── canvas.{h,cpp}         ordered fixed-size surface stack + dirty flag
 │   ├── scheduler.{h,cpp}      generic fixed-slot timed painter runner + callback contract
 │   ├── input.{h,cpp}          pure occupancy snapshot + event queue
 │   ├── renderer.{h,cpp}       FreeRTOS render task (~30 Hz)
+│   ├── helpers.{h,cpp}        shared 8x8 dimensions + retained-surface helpers
+│   ├── visual/                board-owned visual helpers
+│   │   ├── animations.{h,cpp} animation API + frame painters
+│   │   ├── feedback.{h,cpp}   always-on outcomes, status handles
+│   │   └── assistance.{h,cpp} optional setup/legal/best-move/capture guidance
+│   ├── menu/                  board-owned typed menu runner primitives
+│   │   ├── types.h            MenuOption + generic menu result constants
+│   │   ├── panel.{h,cpp}      shared draw/poll/debounce mechanics
+│   │   ├── selection.{h,cpp}  selectable page + optional back button
+│   │   └── menu.{h,cpp}       BoardMenu contract + BoardMenuRunner
 │   └── colors.h               semantic LED palette
-├── gui/                       visual helpers (take BoardRuntime& + BoardAnimations& when needed)
-│   ├── feedback.{h,cpp}       always-on outcomes, status handles
-│   ├── assistance.{h,cpp}     optional move/setup/capture guidance
-│   └── animations.{h,cpp}     animation API + frame painters
-├── menus/                     menu primitives
-│   ├── options.h              option ids/layouts + game-selection result types
-│   ├── panel.{h,cpp}          shared draw/poll/debounce mechanics
-│   ├── selection.{h,cpp}      selectable menu screen + optional back button
-│   └── prompt.{h,cpp}         green/red modal confirmation prompts
+├── menus/                     predefined typed menus
+│   ├── game_selection.{h,cpp} game selection tree + result types
+│   └── confirm.{h,cpp}        green/red and resume confirmation menus
 └── workflows/                 long-lived workflows (take BoardRuntime& + BoardAnimations& when needed)
     ├── gameplay.{h,cpp}       physical chess interactions, holds feedback+assistance
-    ├── diagnostics.{h,cpp}    sensor test
-    ├── calibration.{h,cpp}    interactive calibration (friend of BoardRuntime)
-    └── menu.{h,cpp}           game-selection state machine + confirm prompts
+  └── diagnostics.{h,cpp}    sensor test
 ```
 
 ## BoardRuntime — the canvas/scheduler/IO boundary
@@ -62,8 +73,10 @@ src/board/
 `BoardRuntime` owns one `BoardDriver`, one `BoardCanvas`, one `BoardInput`,
 one `BoardScheduler`, and one `BoardRenderer`. It is constructed by
 `Board::Impl` and shared with every workflow and visual helper through a
-`BoardRuntime&` reference. `BoardAnimations` is GUI-owned by `Board::Impl` and
-is injected into workflows/helpers that need animation vocabulary.
+`BoardRuntime&` reference. `BoardAnimations` is owned by `Board::Impl` and
+is injected into workflows/helpers that need animation vocabulary. It receives
+the runtime-owned scheduler/canvas references from `BoardRuntime` and all
+scheduling/cancellation still happens while callers hold `lockCanvas()`.
 
 Key contracts:
 
@@ -74,7 +87,7 @@ Key contracts:
   while this guard is held, using the injected `BoardAnimations&`.
   ```cpp
   auto g = runtime.lockCanvas();
-  BoardCanvasHandle surface = g.canvas.acquireSurface();
+  BoardCanvasHandle surface = BoardSurface::writable(g.canvas, surface_);
   g.canvas.setPixel(surface, row, col, LedColors::Cyan);
   animations.startBlink(row, col, LedColors::Green, 1, millis());
   ```
@@ -107,6 +120,12 @@ Key contracts:
 
 ## BoardCanvas — ordered surface stack
 
+`BoardHelpers` (`core/helpers.h`) is the shared logical-board dimension source
+for canvas, input, menus, diagnostics, and board DTOs. Prefer
+`BoardHelpers::ROWS`, `COLS`, `SQUARES`, and `inBounds()` over local 8/64
+constants in board code. The same helper module also exposes `BoardSurface`,
+the retained-surface lifecycle helper used by visual owners.
+
 `BoardCanvas` owns a fixed pool of ordered 8x8 surfaces. Each active surface
 stores one `LedRGB[8][8]`, a `uint64_t` presence mask, a generation counter,
 and an insertion/activation order. `BoardCanvas::resolve(r, c)` returns the
@@ -114,8 +133,10 @@ newest active surface that has presence at that square. No heap allocation is
 used.
 
 All visual owners use explicit `BoardCanvasHandle` values. Persistent helpers
-store their handle as a member, repaint that surface under the canvas guard,
-and release it when the owning object is destroyed. `drawLine()` and
+store their handle as a member and use `BoardSurface::writable()`
+(`core/helpers.h`) under the canvas guard to lazily acquire/re-front the retained
+surface before painting. Use `BoardSurface::clear()` / `clearSquare()` /
+`release()` for active-handle-safe cleanup. `drawLine()` and
 `drawRing()` are available for common geometry on a chosen surface. `clearAll()`
 blanks every active surface and is used by `Board::clearAllSurfaces()` before
 scheduled animations are also cancelled.
@@ -132,11 +153,12 @@ cancellation, and one canvas surface per scheduled painter. Full-surface painter
 clear only their own surface before painting each frame, so sibling animations
 do not erase each other.
 
-`BoardAnimations` (`gui/animations.*`) is the GUI-owned animation API and frame
+`BoardAnimations` (`core/visual/animations.*`) is the board-owned visual animation API and frame
 painting implementation. `Board::Impl` owns one instance next to `BoardRuntime`
-and injects it into workflows/helpers that need animation vocabulary. It
-converts animation requests into scheduled painters and exposes
-`BoardAnimationHandle` (an alias of `BoardScheduledHandle`) for callers.
+and constructs it with the runtime-owned `BoardScheduler&` and `BoardCanvas&`.
+It converts animation requests into scheduled painters and exposes
+`BoardAnimationHandle` (an alias of `BoardScheduledHandle` in
+`board/core/visual/animations.h`) for callers.
 Helpers:
 
 - One-shot: `startBlink`, `startFlash`, `startCapture`, `startPromotion`,
@@ -147,6 +169,28 @@ All return a `BoardAnimationHandle`. To stop a looping animation, hand the
 handle back to the helper that owns it (e.g. `feedback_.stopAnimation(handle)`,
 `Board::stopConnectingStatus(handle)`). After cancellation the handle is
 invalidated. **Status animations do not use `std::atomic<bool>*` flags.**
+
+## BoardMenuRunner and predefined menus
+
+Generic menu mechanics live under `src/board/core/menu/`. `MenuPanel` owns the
+canvas surface, orientation transform, occupancy polling, two-phase debounce,
+and selection blink. `MenuSelection` stores one fixed-size page and optional
+white back button. `BoardMenuRunner` is the only class that polls input for
+menus; it implements `BoardMenuController` and drives typed `BoardMenu` objects
+through `begin()`, `onSelect()`, `onBack()`, and `cancel()` hooks.
+
+Predefined menu flows live under `src/board/menus/` and are passed to `Board` at
+runtime:
+
+- `GameSelectionMenu` owns the root/difficulty/color state machine and exposes
+  `BoardGameSelection` / `BoardGameSelectionMode` after completion.
+- `ConfirmMenu` owns the green/red yes/no result.
+- `ResumeConfirmMenu` extends confirmation with the mode-coloured resume blink.
+
+Menus define option layouts and semantic transitions only. They must not call
+`BoardRuntime`, drain `BoardInput`, or run their own polling loops. Use
+`Board::showMenu(menu)`, `Board::pollMenu()`, `Board::runMenuBlocking(menu)`, and
+`Board::clearMenu()` outside `src/board/`.
 
 ## Color Semantics
 
@@ -186,17 +230,15 @@ progression.
 
 ## Calibration
 
-`BoardCalibration` lives in `workflows/calibration.{h,cpp}` and is a friend of
-`BoardRuntime`. Two entry points:
-
-- **Public `trigger()`** — invoked by WiFi/web UI for runtime recalibration.
-- **Private `load()` / `run()` / `save()`** — invoked by `BoardRuntime::begin()`
-  during startup. The friend declaration lets `BoardRuntime` construct a
-  `BoardCalibration` instance bound to its own `BoardDriver&`.
+`BoardCalibrationRunner` lives in `core/calibration.{h,cpp}` and is invoked by
+`BoardRuntime::begin()` during startup for `load()` / `run()` / `save()`.
+Runtime recalibration is exposed directly on `Board::triggerCalibration()`,
+which clears the calibration NVS namespace and reboots so startup calibration
+runs again.
 
 NVS namespace `"boardCal"` stores `toLogicalRow[]`, `toLogicalCol[]`,
 `ledIndexMap[8][8]`, and `swapAxes`. `BoardDriver` consults the mapping during
-normal sensor/LED operations but does not include calibration logic.
+normal sensor/LED operations but does not include workflow calibration logic.
 
 ## NVS Persistence
 
@@ -222,15 +264,30 @@ use. Key namespaces:
   that previously had to be sprinkled through every game-mode update loop.
   Runtime-level synchronized drains keep the producer task and workflow
   consumers from racing.
-- **Calibration is one workflow with two entry points** — `trigger()` is
-  public, `load()`/`run()`/`save()` are private and reachable only via the
-  `friend BoardRuntime` declaration. This keeps first-boot calibration UX out
-  of the steady-state sensor scan path.
+- **Startup calibration is core, runtime recalibration is Board-owned** —
+  `BoardCalibrationRunner` owns serial-guided raw startup calibration over
+  `BoardDriver`; `Board::triggerCalibration()` only clears persisted mapping
+  and reboots. `BoardRuntime` no longer depends on workflow calibration or
+  exposes friend raw-driver access.
 - **Workflows own their visual helpers** — `BoardGameplay` holds a
   `BoardFeedback` and a `BoardAssistance` directly (constructed with the
   shared `BoardRuntime&` plus the board-owned `BoardAnimations&`). Visual
   helpers no longer live on a controller facade; they are just objects scoped
   to their consumer.
+- **Menus are typed objects, not workflows** — `BoardMenuRunner` owns all menu
+  polling/debounce/rendering. Predefined menus under `board/menus/` are small
+  state machines that define which page to show and what result to record when
+  a square is selected. This keeps game-selection/resume/resign prompts reusable
+  without exposing runtime internals or creating another long-lived workflow.
+- **Board gameplay is engine-agnostic** — `types.h` defines the board-owned
+  DTOs, `game_provider.h` defines the board-owned `BoardGameProvider`
+  contract, and `assistance_provider.h` defines the board-owned
+  `BoardAssistanceProvider` contract. `BoardGameplay`, `BoardAssistance`, and
+  `BoardFeedback` consume only these mapped structures; they must not include
+  `Game`, `MoveList`, `MoveResult`, concrete engine providers, or search APIs.
+  `Board` owns the active assistance provider. `NONE` and `LEGAL_MOVES` are
+  fixed board providers that never call an engine. BEST_MOVE is the only
+  assistance level allowed to use an engine-backed provider.
 - **Status animations are exposed as handles** — `BoardGameplay::startThinking`
   and friends return `BoardAnimationHandle`. The caller stores the handle and
   passes it back to `stopStatusAnimation`. There is no "and-wait" semantics:
@@ -238,13 +295,13 @@ use. Key namespaces:
 - **Colors have fixed semantics** — the table in `core/colors.h` is a
   project-wide contract. Never reuse a color for a different meaning.
 - **The board root must not re-export internals** — if firmware outside
-  `src/board/` needs new behaviour, expose it on the relevant workflow
-  (`BoardGameplay`, `BoardMenu`, …) or add a narrow method to `Board`. Never
-  widen `Board` with raw runtime/driver access.
+  `src/board/` needs new behaviour, expose it on the relevant workflow,
+  implement a typed `BoardMenu`, or add a narrow method to `Board`. Never widen
+  `Board` with raw runtime/driver access.
 
 ## Related Instruction Files
 
 | File                            | Relationship                              |
 |---------------------------------|-------------------------------------------|
 | `game-mode.instructions.md`     | Game modes consume `BoardGameplay`, not `Board` directly |
-| `wifi-manager.instructions.md`  | WiFiManager uses `Board::startConnectingStatus`/`stopConnectingStatus` and `BoardCalibration::trigger()` |
+| `wifi-manager.instructions.md`  | WiFiManager uses `Board::startConnectingStatus`/`stopConnectingStatus` and `Board::triggerCalibration()` |

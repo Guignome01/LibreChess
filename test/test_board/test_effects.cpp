@@ -8,7 +8,7 @@
 
 #include "board/core/canvas.h"
 #include "board/core/scheduler.h"
-#include "board/gui/animations.h"
+#include "board/core/visual/animations.h"
 
 namespace {
 
@@ -140,7 +140,7 @@ void test_connecting_paints_progressive_columns() {
   TEST_ASSERT_FALSE(canvas.hasPixel(3, 7));
   // Frame 7: all columns lit.
   scheduler.run(7 * BoardAnimationTiming::CONNECTING_FRAME_MS, canvas);
-  for (int c = 0; c < 8; ++c) {
+  for (int c = 0; c < BoardCanvas::COLS; ++c) {
     TEST_ASSERT_TRUE(canvas.hasPixel(3, c));
     TEST_ASSERT_TRUE(canvas.hasPixel(4, c));
   }
@@ -204,7 +204,7 @@ void test_clearAll_recycles_every_slot() {
   animations.startThinking(0);
   animations.startBlink(0, 0, LedColors::Red, 3, 0);
   TEST_ASSERT_TRUE(animations.any());
-  animations.clearAll(canvas);
+  animations.clearAll();
   TEST_ASSERT_FALSE(animations.any());
   // Surfaces used by those animations must be cleared.
   TEST_ASSERT_FALSE(canvas.hasPixel(0, 0));

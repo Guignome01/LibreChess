@@ -122,7 +122,7 @@ struct TTEntry {
 
 static_assert(sizeof(TTEntry) <= 16, "TTEntry should fit in 16 bytes");
 
-// Default TT size: 4096 entries (64 KiB).  LibreChessProvider may further
+// Default TT size: 4096 entries (64 KiB).  LibreChessEngine may further
 // cap TT size dynamically based on available heap.
 static constexpr int DEFAULT_TT_SIZE = 4096;
 

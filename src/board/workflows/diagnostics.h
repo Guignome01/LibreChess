@@ -2,6 +2,7 @@
 #define BOARD_WORKFLOWS_DIAGNOSTICS_H
 
 #include "board/core/canvas.h"
+#include "board/core/helpers.h"
 
 #include <stdint.h>
 
@@ -18,9 +19,9 @@ class BoardAnimations;
 
 class BoardDiagnostics {
  public:
-  static constexpr int ROWS = 8;
-  static constexpr int COLS = 8;
-  static constexpr int SQUARES = ROWS * COLS;
+  static constexpr int ROWS = BoardHelpers::ROWS;
+  static constexpr int COLS = BoardHelpers::COLS;
+  static constexpr int SQUARES = BoardHelpers::SQUARES;
 
   BoardDiagnostics(BoardRuntime& runtime, BoardAnimations& animations);
 
@@ -40,7 +41,6 @@ class BoardDiagnostics {
   void recordCurrentOccupancy();
   void recordVisitedSquare(int row, int col);
   void paintVisited();
-  BoardCanvasHandle writableSurface(BoardCanvas& canvas);
 };
 
 #endif  // BOARD_WORKFLOWS_DIAGNOSTICS_H

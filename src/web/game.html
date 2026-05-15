@@ -35,6 +35,33 @@
             </div>
         </div>
 
+        <div class="config-panel visible" style="margin-top: 15px;">
+            <h3>Assistance</h3>
+
+            <div style="margin-bottom: 15px;">
+                <label style="font-weight: bold;">Mode:</label><br>
+                <select id="assistanceLevel" onchange="updateAssistanceOptions()" style="padding: 8px; font-size: 16px; margin-top: 5px; width: 100%;">
+                    <option value="none">Off</option>
+                    <option value="legal" selected>Legal Moves</option>
+                    <option value="best">Best Move</option>
+                </select>
+            </div>
+
+            <div style="margin-bottom: 15px;">
+                <label style="font-weight: bold;">Engine:</label><br>
+                <select id="assistanceEngine" style="padding: 8px; font-size: 16px; margin-top: 5px; width: 100%;">
+                    <option value="librechess" selected>LibreChess (On-board)</option>
+                    <option value="stockfish" disabled>Stockfish (Coming Soon)</option>
+                </select>
+            </div>
+
+            <div style="margin-bottom: 15px;">
+                <label style="font-weight: bold;">Difficulty:</label><br>
+                <select id="assistanceDifficulty" style="padding: 8px; font-size: 16px; margin-top: 5px; width: 100%;">
+                </select>
+            </div>
+        </div>
+
         <!-- Bot Configuration Panel (hidden by default) -->
         <div id="botConfigPanel" class="config-panel anim-panel">
             <h3>Bot Configuration</h3>
@@ -110,6 +137,26 @@
         }
         updateDifficultyOptions();
 
+        function updateAssistanceOptions() {
+            const bestMove = document.getElementById('assistanceLevel').value === 'best';
+            document.getElementById('assistanceEngine').disabled = !bestMove;
+            document.getElementById('assistanceDifficulty').disabled = !bestMove;
+
+            const select = document.getElementById('assistanceDifficulty');
+            const prev = select.value;
+            select.innerHTML = '';
+            ENGINE_LEVELS.librechess.forEach((l, i) => {
+                const opt = document.createElement('option');
+                opt.value = i + 1;
+                opt.textContent = (i + 1) + ' \u2014 ' + l.label + ' (Depth ' + l.depth + ')';
+                if (i + 1 === DEFAULT_LEVEL) opt.selected = true;
+                select.appendChild(opt);
+            });
+            if (prev && select.querySelector('option[value="' + prev + '"]'))
+                select.value = prev;
+        }
+        updateAssistanceOptions();
+
         function showBotConfig() {
             document.getElementById('botConfigPanel').classList.add('visible');
         }
@@ -123,7 +170,10 @@
                 const playerColor = mode === 2 ? document.getElementById('botPlayerColor').value : undefined;
                 const difficulty = mode === 2 ? document.getElementById('botDifficulty').value : undefined;
                 const engine = mode === 2 ? document.getElementById('botEngine').value : undefined;
-                Api.selectGame(mode, playerColor, difficulty, engine)
+                const assistanceLevel = (mode === 1 || mode === 2 || mode === 3) ? document.getElementById('assistanceLevel').value : undefined;
+                const assistanceEngine = (mode === 1 || mode === 2 || mode === 3) ? document.getElementById('assistanceEngine').value : undefined;
+                const assistanceDifficulty = (mode === 1 || mode === 2 || mode === 3) ? document.getElementById('assistanceDifficulty').value : undefined;
+                Api.selectGame(mode, playerColor, difficulty, engine, assistanceLevel, assistanceEngine, assistanceDifficulty)
                     .then(response => {
                     if (!response.ok) {
                         if (mode === 3) {

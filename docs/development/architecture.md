@@ -26,33 +26,38 @@ Game (lib/game/):
    └─ uses IGameObserver (notification)
 
 Firmware (src/):
-  Board package root (src/board/board.* — public board lifecycle/settings/cadence + status handles + owned workflows)
-  Board runtime (src/board/core/* — runtime, driver, canvas, layers, painter, scheduler, input, renderer, colors)
-  Board GUI helpers (src/board/gui/* — feedback, assistance, animations)
-  Board menu primitives (src/board/menus/* — view, selection)
-  Board workflows (src/board/workflows/* — gameplay, diagnostics, calibration, menu)
+  Board package root (src/board/board.* — public board lifecycle/settings/cadence + status handles + typed menu facade)
+  Board runtime (src/board/core/* — runtime, driver, canvas, scheduler, input, renderer, calibration, helpers, menu, colors)
+  Board visual helpers (src/board/core/visual/* — feedback, assistance, animations)
+  Board predefined menus (src/board/menus/* — game selection, confirmation)
+  Board workflows (src/board/workflows/* — gameplay, diagnostics)
   Shared firmware utilities (src/shared/* — Serial logger + ESP32 utility helpers)
   GameMode (abstract base, src/game_mode/)
    ├─ PlayerMode (human vs human)
    └─ BotMode (concrete, composes EngineProvider*)
 
-  EngineProvider (base class, src/engine/)
-   ├─ StockfishProvider (src/engine/stockfish/)
-   ├─ LichessProvider (src/engine/lichess/)
-   └─ LibreChessProvider (src/engine/librechess/)
+    EngineProvider (pure contract, lib/game/src/provider.h)
+    └─ AsyncEngineProvider (FreeRTOS helper, src/engines/async_provider.h)
+      ├─ StockfishEngine (src/engines/stockfish/engine.*)
+      ├─ LichessEngine (src/engines/lichess/engine.*)
+      └─ LibreChessEngine (src/engines/librechess/engine.*)
 ```
 
-`GameMode` defines the shared game infrastructure and common logic: `applyMove()` (delegates to `Game::makeMove()`; the string overload parses coordinate notation via `Game::parseCoordinate()`), `waitForBoardSetup()`, `tryResumeGame()`, and resign lifecycle hooks. Each `GameMode` consumes a long-lived `BoardGameplay*` that performs physical move detection, capture-removal handling, remote-move physical completion, setup guidance, and the king-based resign gesture through board-owned services. Each `GameMode` instance holds a `Game*` (`chess_`) which orchestrates board state, recording, and observer notification. All chess mutations flow through `Game`; the firmware never modifies the board or turn directly. Each subclass overrides `begin()` and `update()` to implement mode-specific behavior.
+`GameMode` defines the shared game infrastructure and common logic: `applyMove()` (delegates to `Game::makeMove()`; the string overload parses coordinate notation via `Game::parseCoordinate()`), `waitForBoardSetup()`, independent assistance service/cancel, `tryResumeGame()`, and resign lifecycle hooks. Each `GameMode` consumes a long-lived `BoardGameplay*` that performs physical move detection, capture-removal handling, remote-move physical completion, setup guidance, and the king-based resign gesture through board-owned services. `board_adapter.*` maps `LibreChess::Game` state and move metadata into board-owned DTOs/callbacks so `src/board/` does not import `Game`, `MoveList`, `MoveResult`, or engine providers. Each `GameMode` instance holds a `Game*` (`chess_`) which orchestrates board state, recording, and observer notification. All chess mutations flow through `Game`; the firmware never modifies the board or turn directly. Each subclass overrides `begin()` and `update()` to implement mode-specific behavior.
 
-`BotMode` is a concrete class that composes an `EngineProvider*` (strategy pattern). Its `update()` implements a non-blocking state machine (`BotState::PLAYER_TURN` / `ENGINE_THINKING`): on the player's turn it calls `tryPlayerMove()` → `applyMove()` → `provider_->onPlayerMoveApplied()`; when the turn flips to the engine it calls `provider_->requestMove()` (spawns a FreeRTOS task) and transitions to `ENGINE_THINKING`. In the thinking state, it polls `provider_->checkResult()` each tick — sensors, resign gestures, and web UI remain responsive while the engine computes. `BotMode` owns engine-specific infrastructure: thinking/waiting animation start/stop, remote game-end handling, error abort, and resign hooks. Physical move and remote-move guidance remain shared in `BoardGameplay`.
+`BotMode` is a concrete class that composes an opponent `EngineProvider*` (strategy pattern). Its `update()` implements a non-blocking state machine (`BotState::PLAYER_TURN` / `ENGINE_THINKING`): on the player's turn it services independent assistance, then calls `tryPlayerMove()` → `applyMove()` → `provider_->onPlayerMoveApplied()`; when the turn flips to the engine it calls `provider_->requestMove()` (spawns a FreeRTOS task) and transitions to `ENGINE_THINKING`. In the thinking state, it polls `provider_->checkResult()` each tick — sensors, resign gestures, and web UI remain responsive while the engine computes. `BotMode` owns opponent engine-specific infrastructure: thinking/waiting animation start/stop, remote game-end handling, error abort, and resign hooks. Physical move, hint, and remote-move guidance remain shared in `BoardGameplay`.
 
-`EngineProvider` is the base class in `src/engine/engine_provider.h`. It defines the contract for all chess engines: `initialize()` (blocking setup, returns `EngineInitResult` with player color, FEN, mode ID), `requestMove()` / `checkResult()` (async move computation via FreeRTOS tasks), plus optional hooks `onPlayerMoveApplied()` (Lichess sends the move to the server), `onResignConfirmed()` (Lichess resigns on the server), and `getEvaluation()` (Stockfish returns engine eval). It also owns the shared FreeRTOS task lifecycle: `activeTask_` pointer (a `BaseTaskContext*` with `std::atomic<bool>` cancel/ready flags and an `EngineResult`), `spawnTask()` (creates + launches a FreeRTOS task), `pollResult()` / `peekResult()` (non-destructive ready check), `finishTask()` (deletes the context), and `cancelRequest()`. Providers never touch board workflows, `BoardDriver`, or any hardware — they only compute/communicate and return data.
+`EngineProvider` is the pure contract in `lib/game/src/provider.h`. It defines engine-domain data (`DifficultyLevel`, `EngineInitResult`, `EngineResult`) and the virtual contract for all chess engines: `initialize()` (blocking setup, returns player color, FEN, opaque mode byte, engine ID, difficulty, and resume capability), `requestMove()` / `checkResult()` (async move computation), plus optional hooks `onPlayerMoveApplied()` (Lichess sends the move to the server), `onResignConfirmed()` (Lichess resigns on the server), and `getEvaluation()` (engines with an evaluation can expose it). It does not include Arduino, FreeRTOS, board workflows, or firmware-specific metadata types.
 
-`StockfishProvider` extends `EngineProvider` by spawning a one-shot FreeRTOS task per move that calls the Stockfish API. The task performs the HTTP GET with retry logic, parses the JSON response, and stores the result in its `TaskContext` (extends `BaseTaskContext` with FEN, depth, and evaluation fields).
+`AsyncEngineProvider` in `src/engines/async_provider.h` owns the shared firmware task lifecycle: `activeTask_` pointer (a `BaseTaskContext*` with `std::atomic<bool>` cancel/ready flags and an `EngineResult`), `spawnTask()` (creates + launches a FreeRTOS task), `pollResult()` / `peekResult()` (non-destructive ready check), `finishTask()` (deletes the context), and `cancelRequest()`. Concrete engines derive from it when they need a background task. Providers never touch board workflows, `BoardDriver`, or any hardware — they only compute/communicate and return data.
 
-`LichessProvider` extends `EngineProvider`. Its `initialize()` blocks during game discovery (token verification + polling for active games). Its `requestMove()` spawns a FreeRTOS task that opens a persistent NDJSON stream via `LichessAPI::connectGameStream()` and reads events via `readStreamEvent()`. On connection loss, it reconnects with exponential backoff (1s→2s→4s→8s, up to 5 attempts) — the game stays paused during reconnection; if all attempts are exhausted the game is aborted.
+`StockfishEngine` extends `AsyncEngineProvider` by spawning a one-shot FreeRTOS task per move that calls the Stockfish API. The task performs the HTTP GET with retry logic, parses the JSON response, and stores the result in its `TaskContext` (extends `BaseTaskContext` with FEN, depth, and evaluation fields).
 
-`LibreChessProvider` extends `EngineProvider`. It runs the on-board chess engine entirely in-process via `Game::calculateMove()` — no network, no string serialization required. The provider receives a `Game*` at construction (non-owning). `initialize()` calls `game->initSearch(ttEntries)` with a heap-sized TT (capped at 64 KiB) and `game->setTimeFunc(millis)`, allocating an `Engine` instance inside Game that persists across moves — no per-move heap fragmentation. Search allocation is non-throwing; Game exposes initialization/hash diagnostics and LibreChessProvider logs degraded heap-pressure cases while preserving fallback-move behavior. Each `requestMove()` spawns a FreeRTOS task (64 KiB stack) that wires `ctx->cancel` to `game->setExternalStop()` for cooperative cancellation, builds `SearchLimits` with depth, and calls `game->calculateMove(limits)`. `Game::calculateMove()` snapshots the current `Position` and searches the copy, preserving the live board while search make/unmake recursion runs. The Game already holds the correct position because BotMode makes all moves through Game. The `SearchResult` (bestMove, score, depth, nodes) is converted to `EngineResult` using `notation::toCoordinate()`. `initialize()` always succeeds, reports `mode = GameModeId::BOT`, `canResume = true`.
+`LichessEngine` extends `AsyncEngineProvider`. Its `initialize()` blocks during game discovery (token verification + polling for active games). Its `requestMove()` spawns a FreeRTOS task that opens a persistent NDJSON stream via `LichessAPI::connectGameStream()` and reads events via `readStreamEvent()`. On connection loss, it reconnects with exponential backoff (1s→2s→4s→8s, up to 5 attempts) — the game stays paused during reconnection; if all attempts are exhausted the game is aborted.
+
+`LibreChessEngine` extends `AsyncEngineProvider`. It runs the on-board chess engine entirely in-process via `Game::calculateMove()` — no network, no string serialization required. The engine receives a `Game*` at construction (non-owning). `initialize()` calls `game->initSearch(ttEntries)` with a heap-sized TT (capped at 64 KiB) and `game->setTimeFunc(millis)`, allocating an `Engine` instance inside Game that persists across moves — no per-move heap fragmentation. Search allocation is non-throwing; Game exposes initialization/hash diagnostics and `LibreChessEngine` logs degraded heap-pressure cases while preserving fallback-move behavior. Each `requestMove()` spawns a FreeRTOS task (64 KiB stack) that wires `ctx->cancel` to `game->setExternalStop()` for cooperative cancellation, builds `SearchLimits` with depth, and calls `game->calculateMove(limits)`. `Game::calculateMove()` snapshots the current `Position` and searches the copy, preserving the live board while search make/unmake recursion runs. The Game already holds the correct position because BotMode makes all moves through Game. The `SearchResult` (bestMove, score, depth, nodes) is converted to `EngineResult` using `notation::toCoordinate()`. `initialize()` always succeeds, reports `mode = GameModeId::BOT`, `canResume = true`.
+
+`LibreChessAssistanceProvider` under `src/engines/librechess/assistance.*` implements the board-owned `BoardAssistanceProvider` contract for BEST_MOVE assistance. It is installed on `Board`, separate from `BotMode`'s opponent provider, so assistance can be configured independently from the engine currently playing. It wraps an independent `LibreChessEngine`, lazily initializes or reuses `Game` search resources, requests a move for the current FEN, discards stale results when the FEN changes, and maps the coordinate result into `BoardBestMoveHint`.
 
 `BoardDiagnostics` follows the same `begin()`/`update()`/`isComplete()` lifecycle as the former sensor-test mode but lives inside the board firmware module. It does not inherit `GameMode` because it needs only physical sensor coverage and LED feedback, not chess logic, FEN state, or move history.
 
@@ -66,7 +71,9 @@ SerialLogger logger;
 LittleFSStorage storage(&logger);
 WiFiManagerESP32 wifiManager(&physicalBoard, &storage);
 Game chess(&storage, &wifiManager, &logger);
-auto* provider = new StockfishProvider(stockfishSettings, playerColor);
+auto* provider = Engines::createOpponentEngine(chess, gameSelection, &logger);
+physicalBoard.setAssistanceProvider(
+  Engines::createAssistanceProvider(chess, gameSelection.assistance, &logger));
 BotMode botGame(&physicalBoard.gameplay(), &wifiManager, &chess, provider);
 ```
 
@@ -76,62 +83,70 @@ BotMode botGame(&physicalBoard.gameplay(), &wifiManager, &chess, provider);
 
 Core internals use **LERF (Little-Endian Rank-File)** square indexing natively: a1=0, b1=1, ..., h8=63. Primary conversions: `rankOf(sq) = sq / 8`, `fileOf(sq) = sq % 8`, `makeSquare(rank, file) = rank * 8 + file`. The game layer and firmware use **row/col** display coordinates (row 0 = rank 8, col 0 = file a). Bridge functions (`rowColToSquare`, `squareToRow`, `squareToCol`, `rankChar`, `squareName`) live in `game/types.h`. Board mailbox is a flat `[64]` LERF-indexed array; `INITIAL_BOARD[64]` holds the starting position.
 
-The LED strip is wired in a serpentine (zigzag) pattern across the physical board, but `BoardCalibration` maps physical LED indices to logical `[row][col]` coordinates and persists that mapping in NVS. `BoardDriver` applies the saved mapping transparently during normal sensor reads and LED writes, so all code above the board subsystem works exclusively in logical coordinates.
+The LED strip is wired in a serpentine (zigzag) pattern across the physical board, but startup calibration maps physical LED indices to logical `[row][col]` coordinates and persists that mapping in NVS. `BoardDriver` applies the saved mapping transparently during normal sensor reads and LED writes, so all code above the board subsystem works exclusively in logical coordinates.
 
 ## Component Details
 
 ### Board Public Surface
 
-`src/board/board.*` is the public physical-board package root. `Board` exposes lifecycle (`begin()` returns `bool`), LED settings (brightness/dim multiplier getters/setters and `saveLedSettings()`), sensor cadence (`cadenceMs()`), `clearAllSurfaces()`, status handles for the WiFi-connecting animation (`BoardAnimationHandle startConnectingStatus()` / `void stopConnectingStatus(BoardAnimationHandle&)`), and accessors to its owned workflows: `gameplay()`, `menu()`, `diagnostics()`, `calibration()`. External firmware may consume `Board`, `BoardAnimationHandle` (`board/gui/animations.h`), and the selection result types from `board/menus/options.h`. It must never include `BoardDriver`, `BoardRuntime`, `BoardCanvas`, `BoardScheduler`, `BoardAnimations`, `BoardInput`, `BoardRenderer`, `BoardFeedback`, or `BoardAssistance` directly.
+`src/board/board.*` is the public physical-board package root. `Board` exposes lifecycle (`begin()` returns `bool`), LED settings (brightness/dim multiplier getters/setters and `saveLedSettings()`), sensor cadence (`cadenceMs()`), `clearAllSurfaces()`, status handles for the WiFi-connecting animation (`BoardAnimationHandle startConnectingStatus()` / `void stopConnectingStatus(BoardAnimationHandle&)`), typed menu facade methods (`showMenu`, `pollMenu`, `runMenuBlocking`, `clearMenu`), diagnostics/calibration facades, and accessors to its owned workflows: `gameplay()` and `diagnostics()`. External firmware may consume `Board`, `BoardAnimationHandle` (`board/core/visual/animations.h`), and typed predefined menu classes from `board/menus/*` such as `GameSelectionMenu`, `ConfirmMenu`, and `ResumeConfirmMenu`. It must never include `BoardDriver`, `BoardRuntime`, `BoardCanvas`, `BoardScheduler`, `BoardAnimations`, `BoardInput`, `BoardRenderer`, `BoardFeedback`, or `BoardAssistance` directly.
 
-Logical 8×8 board geometry (`BOARD_ROWS`, `BOARD_COLS`, `BOARD_SQUARES`, `BoardSquare`, `isValidSquare`) lives next to the public surface in `board.h` because it is shared by every workflow.
+Logical 8×8 board helpers live in `src/board/core/helpers.h` (`BoardHelpers::ROWS`, `COLS`, `SQUARES`, `LAST_ROW`, `LAST_COL`, `inBounds()`). Board DTOs, canvas, input, menus, diagnostics, and tests use that shared source instead of parallel local 8/64 constants.
 
 ### BoardRuntime — Canvas / Scheduler / IO Boundary
 
-`src/board/core/runtime.*` composes `BoardDriver`, `BoardCanvas`, `BoardInput`, `BoardScheduler`, and `BoardRenderer`. It is constructed once inside `Board::Impl` and passed to every workflow and visual helper as a `BoardRuntime&`. `Board::Impl` owns the GUI-level `BoardAnimations` instance next to runtime and injects it into workflows/helpers that need animation vocabulary. All canvas mutation flows through `runtime.lockCanvas()`, which returns a `CanvasGuard` RAII handle holding the `canvas` reference under the runtime mutex. Animation scheduling/cancellation uses the injected `BoardAnimations&` while the same guard is held:
+`src/board/core/runtime.*` composes `BoardDriver`, `BoardCanvas`, `BoardInput`, `BoardScheduler`, and `BoardRenderer`. It is constructed once inside `Board::Impl` and passed to every workflow and visual helper as a `BoardRuntime&`. `Board::Impl` owns the `BoardAnimations` instance next to runtime and injects animations into workflows/helpers that need animation vocabulary. All canvas mutation flows through `runtime.lockCanvas()`, which returns a `CanvasGuard` RAII handle holding the `canvas` reference under the runtime mutex. Animation scheduling/cancellation uses the injected `BoardAnimations&` while the same guard is held:
 
 ```cpp
 auto g = runtime.lockCanvas();
-BoardCanvasHandle surface = g.canvas.acquireSurface();
+BoardCanvasHandle surface = BoardSurface::writable(g.canvas, surface_);
 g.canvas.setPixel(surface, row, col, LedColors::Cyan);
 animations.startBlink(row, col, LedColors::Green, 1, millis());
 ```
 
-`BoardCanvas` (`core/canvas.*`) is a fixed-size ordered stack of 8×8 surfaces. Each active surface stores `LedRGB` pixels plus one `uint64_t` presence mask, and `resolve(r, c)` returns the newest active surface with a present pixel at that square. Visual owners acquire explicit `BoardCanvasHandle` surfaces; there is no layer enum or role priority. The renderer flushes the canvas through `BoardDriver` only when `dirty()` is set. Drawing helpers include rectangles, fills, `drawLine()`, and `drawRing()` for a chosen surface.
+`BoardCanvas` (`core/canvas.*`) is a fixed-size ordered stack of 8×8 surfaces. Each active surface stores `LedRGB` pixels plus one `uint64_t` presence mask, and `resolve(r, c)` returns the newest active surface with a present pixel at that square. Visual owners retain explicit `BoardCanvasHandle` values and use `BoardSurface` (`core/helpers.h`) to lazily acquire/re-front/clear/release those handles safely. There is no layer enum or role priority. The renderer flushes the canvas through `BoardDriver` only when `dirty()` is set. Drawing helpers include rectangles, fills, `drawLine()`, and `drawRing()` for a chosen surface.
 
-`BoardScheduler` (`core/scheduler.*`) owns the generic logical-frame paint contract (`BoardPainter`: copied context, paint mode, and callback) and six fixed timed painter slots addressed by `BoardScheduledHandle{slot, generation}`. It has no animation vocabulary and handles allocation, cancellation, expiration, looping, and one canvas surface per scheduled painter. Full-surface painters clear their own surface before each frame, so sibling animations never clear each other. `BoardAnimations` (`gui/animations.*`) owns the board-specific animation API and frame painters and is owned by `Board::Impl`, not `BoardRuntime`. One-shot helpers (`startBlink`, `startFlash`, `startCapture`, `startPromotion`, `startFirework`) and looping helpers (`startThinking`, `startWaiting`, `startConnecting`) schedule painters and return `BoardAnimationHandle` (an alias of `BoardScheduledHandle`). Looping animations are cancelled by handing the handle back through the helper that owns it (e.g. `feedback_.stopAnimation(handle)`, `Board::stopConnectingStatus(handle)`).
+`BoardScheduler` (`core/scheduler.*`) owns the generic logical-frame paint contract (`BoardPainter`: copied context, paint mode, and callback) and six fixed timed painter slots addressed by `BoardScheduledHandle{slot, generation}`. It has no animation vocabulary and handles allocation, cancellation, expiration, looping, and one canvas surface per scheduled painter. Full-surface painters clear their own surface before each frame, so sibling animations never clear each other. `BoardAnimations` (`core/visual/animations.*`) owns the board-specific animation API and frame painters and is owned by `Board::Impl`, not `BoardRuntime`. One-shot helpers (`startBlink`, `startFlash`, `startCapture`, `startPromotion`, `startFirework`) and looping helpers (`startThinking`, `startWaiting`, `startConnecting`) schedule painters on the runtime-owned scheduler/canvas and return `BoardAnimationHandle` (an alias of `BoardScheduledHandle` in `board/core/visual/animations.h`). Looping animations are cancelled by handing the handle back through the helper that owns it (e.g. `feedback_.stopAnimation(handle)`, `Board::stopConnectingStatus(handle)`).
 
 `BoardInput` (`core/input.*`) stores debounced occupancy plus a 16-slot event ring. `BoardRuntime` owns the cooperative FreeRTOS poll task on Core 1 (priority 1, 2 KiB stack) at `cadenceMs()` (40 ms), feeds `BoardInput`, and protects producer/consumer access with a dedicated input mutex. Workflows never hold that mutex directly: they call `drainInputEvents()` for short event batches, `copyInputOccupancy()` for full-board scans, or `inputOccupied(r, c)` for single-square waits. If the ring overflows, the drained batch carries dropped-event count and max queue depth; gameplay logs those diagnostics, discards the partial gesture, and resyncs from current occupancy.
 
 `BoardRenderer` (`core/renderer.*`) runs a FreeRTOS render task on Core 1 (priority 1, ~30 Hz, 4 KiB stack). Each wake it runs scheduled painters through `BoardScheduler`, picks up the canvas dirty flag, and writes the resolved frame to the WS2812 strip through `BoardDriver`. Runtime shutdown uses bounded waits for both renderer and input tasks and logs timeout fallbacks instead of blocking indefinitely. Workflows never call `show()` directly.
 
-### Board GUI Helpers
+### Board Visual Helpers
 
-Visual helpers in `src/board/gui/*` take a `BoardRuntime&` plus the board-owned `BoardAnimations&` when they need animation scheduling, and are owned by their consuming workflow:
+Visual helpers in `src/board/core/visual/*` take a `BoardRuntime&` plus the board-owned `BoardAnimations&` when they need animation scheduling, and are owned by their consuming workflow:
 
 - `feedback.*` — always-on outcomes: resign progress, post-move blinks, illegal flashes, capture/promotion animations, check/game-end visuals, status animations (`startThinking()`, `startWaiting()` returning `BoardAnimationHandle`).
-- `assistance.*` — optional guidance: setup prompts, legal-move highlights, castling prompts, remote-move completion, capture placement.
-- `animations.*` — GUI-owned animation vocabulary, helpers, and frame painters consumed through `BoardScheduler`.
+- `assistance.*` — optional guidance: setup prompts, legal-move highlights, best-move hints, castling prompts, remote-move completion, capture placement.
+- `animations.*` — board-owned visual animation vocabulary, helpers, and frame painters consumed through `BoardScheduler`.
 
-Both `BoardFeedback` and `BoardAssistance` may read `Game` through public APIs for display decisions but must not mutate chess state, talk to engine providers, or call WiFi APIs.
+`BoardFeedback` and `BoardAssistance` consume mapped board-owned DTOs only. They must not read `Game`, talk to engine providers, mutate chess state, or call WiFi APIs. Legal-move assistance renders mapped legal targets; BEST_MOVE renders a supplied `BoardBestMoveHint`. `Board` owns the active `BoardAssistanceProvider`; fixed NONE/LEGAL providers never call an engine, while engine-backed BEST_MOVE providers supply hints through that contract.
 
-### Board Menu Primitives
+### Board Menus
 
-`src/board/menus/*` carries the menu primitives and option catalog:
+Generic menu mechanics live in `src/board/core/menu/*` and are owned by the board:
 
-- `options.h` defines public-safe game-selection result types (`BoardGameSelection`, `BoardGameSelectionMode`), menu result sentinels, menu option ids, and the fixed option layouts used by selection screens and prompts.
+- `types.h` defines `MenuOption`, `MENU_RESULT_NONE`, `MENU_RESULT_BACK`, and fixed option-count constants.
 - `panel.{h,cpp}` defines `MenuPanel`, the shared physical-board draw/poll/debounce primitive. It owns one canvas surface, snapshots occupancy once per poll via `BoardRuntime::copyInputOccupancy()`, supports flipping for black-on-bottom orientation, and returns selected option ids without interpreting them.
-- `selection.{h,cpp}` defines `MenuSelection`, a thin screen wrapper over `MenuPanel` that stores one selectable menu page and appends the standard white back button when needed.
-- `prompt.{h,cpp}` defines `MenuPrompt`, the green/red modal confirmation prompt built from `MenuPanel`.
+- `selection.{h,cpp}` defines `MenuSelection`, a thin page wrapper over `MenuPanel` that stores one selectable menu page and appends the standard white back button when needed.
+- `menu.{h,cpp}` defines the typed `BoardMenu` contract, `BoardMenuController`, and `BoardMenuRunner`. The runner owns polling, debounce, drawing, and blocking cadence loops.
+
+Predefined semantic menus live in `src/board/menus/*` and are passed to `Board` at runtime:
+
+- `game_selection.{h,cpp}` defines `GameSelectionMenu`, `BoardGameSelection`, and `BoardGameSelectionMode`.
+- `confirm.{h,cpp}` defines `ConfirmMenu` and `ResumeConfirmMenu`.
+
+Typed menus define option layouts and what logic to execute when a square is selected; they must not poll sensors or access `BoardRuntime` directly.
 
 ### Board Workflows
 
 Long-lived workflows in `src/board/workflows/*` each take a `BoardRuntime&`:
 
-- `gameplay.*` — `BoardGameplay` owns its own `BoardFeedback` and `BoardAssistance`. It drains short `BoardInputEventBatch` snapshots from `BoardRuntime` to detect player intent (lift / placement / capture / en passant / castling) and runs the king-held resign gesture (3 s hold + two re-lifts within 1 s). Status helpers (`startThinkingStatus`, `startWaitingStatus`) return a `BoardAnimationHandle`; `stopStatusAnimation(handle&)` cancels and invalidates.
+- `board/types.h` — engine-agnostic board DTOs (setup snapshots, target lists, move feedback/completion, best-move hints).
+- `board/game_provider.h` — board-owned game provider contract (`BoardGameProvider`) consumed by gameplay for setup and physical move validation.
+- `board/assistance_provider.h` — board-owned assistance provider contract plus fixed NONE and LEGAL_MOVES providers. Engine-backed implementations live outside `src/board/` and only feed `BoardBestMoveHint` data back to gameplay.
+- `gameplay.*` — `BoardGameplay` owns its own `BoardFeedback` and `BoardAssistance`. It drains short `BoardInputEventBatch` snapshots from `BoardRuntime` to detect player intent (lift / placement / capture / en passant / castling), validates physical selections against mapped legal targets, services BEST_MOVE hint callbacks only when configured, and runs the king-held resign gesture (3 s hold + two re-lifts within 1 s). Status helpers (`startThinkingStatus`, `startWaitingStatus`) return a `BoardAnimationHandle`; `stopStatusAnimation(handle&)` cancels and invalidates.
 - `diagnostics.*` — `BoardDiagnostics` runs the user-facing Sensor Test mode. Each update it scans current occupancy, paints visited squares to its owned surface, and on completion clears that surface before triggering a cyan firework.
-- `calibration.*` — `BoardCalibration` is a friend of `BoardRuntime`. The public ctor takes `BoardRuntime&` for runtime recalibration (`trigger()`); a private ctor takes `BoardDriver&` and is invoked by `BoardRuntime::begin()` to drive private `load()`/`run()`/`save()` at startup. Persists mapping tables to NVS namespace `"boardCal"`.
-- `menu.*` — `BoardMenu` runs a small explicit `MenuStage` state machine over three pre-built `MenuSelection` screens (game, difficulty, color). It delegates blocking `confirmAction(flipped)` and `confirmResume(mode, flipped)` prompts to `MenuPrompt`.
 
 ### BoardDriver
 
@@ -151,7 +166,7 @@ GPIO pin definitions are `#define`d at the top of `src/board/core/driver.h`:
 
 The physical order of pin connections **does not matter** — calibration maps physical pins to logical board coordinates.
 
-**Calibration** — `BoardCalibration` (in `workflows/calibration.*`) runs the interactive serial-guided process at startup and also exposes `trigger()` for runtime recalibration via the web UI. The mapping tables (`toLogicalRow[]`, `toLogicalCol[]`, `ledIndexMap[8][8]`, `swapAxes`) are persisted in NVS namespace `"boardCal"`.
+**Calibration** — `BoardCalibrationRunner` (in `core/calibration.*`) runs the interactive serial-guided process at startup before the renderer starts. `Board::triggerCalibration()` clears the calibration NVS namespace and reboots for runtime recalibration via the web UI. The mapping tables (`toLogicalRow[]`, `toLogicalCol[]`, `ledIndexMap[8][8]`, `swapAxes`) are persisted in NVS namespace `"boardCal"`.
 
 **Sensor polling parameters**: `SENSOR_READ_DELAY_MS` = 40 ms (polling interval), `DEBOUNCE_MS` = 125 ms (state change debounce window). External timing comes from `Board::cadenceMs()`.
 
@@ -227,7 +242,7 @@ Notation convenience methods: `makeMove(const std::string& move)` parses a coord
 
 `utils` (in `lib/core/`, `utils.h`, header-only) is a namespace providing stateless board-level helper functions: LERF-native coordinate helpers (`squareName(Square)`, `fileChar`, `rankCharFromRank`, `fileIndex`, `rankIndexFromChar`), validation (`isValidPromotionChar`), castling rights string formatting/parsing (`castlingRightsToString`/`castlingRightsFromString`), `hasCastlingRight()` via `BIT[2][2]` lookup, `castlingCharToBit()`, `updateCastlingRights()` (pure lookup-table function returning updated castling rights bitmask), `resolveKingSquare()` (inline king-square finder used by movegen + search). Display-coordinate helpers (`rankChar(row)`, `squareName(row,col)`) live in `game/types.h`. `gameResultName()` lives in `types.h` next to `GameResult`. `checkEnPassant(mailbox, from, to)` and `checkCastling(mailbox, from, to)` are Square-based free functions for EP/castling detection from a mailbox + square pair — shared by both `Position` member methods (row/col API) and `movegen` (Square API). `boardToText` is a `Position` member method. `EnPassantInfo` and `CastlingInfo` structs live in `types.h`. `fen` (in `lib/core/`, `fen.h/cpp`) centralizes all FEN string handling: `boardToFEN()` (mailbox → FEN string), `fenToBoard()` (FEN string → `BitboardSet` + `mailbox` + state), and `validateFEN()` (format validation). FEN validation also enforces storage-compatible clock ranges: halfmove `0..100` and fullmove `1..65535`, preventing integer wrap in `PositionState`. `notation` (in `lib/core/`, `notation.h/cpp`) provides Square-native move notation conversion: coordinate notation (`"e2e4"`), SAN (`"Nf3"`), and LAN (`"Ng1-f3"`) output and parsing. Parse functions output `Square` (LERF) directly; format functions take `Square`. All functions are pure — `const BitboardSet&` and `const Piece mailbox[]` are passed in as parameters. Output functions omit check/checkmate suffixes; the caller appends them. `Game` provides row/col wrappers (`toCoordinate()`, `parseCoordinate()`) for firmware callers that work in display coordinates. All functions use `std::string` (not Arduino `String`). Internal APIs (`updateBoardState`, `addFen`, `setBoardStateFromFEN`) accept `std::string` directly; Arduino `String` conversion happens only at the hardware/network boundary (e.g., HTTP responses, LittleFS reads).
 
-`SystemUtils` (declared in `src/shared/utils.h`) contains Arduino/ESP32-dependent utility functions shared by firmware modules, currently `ensureNvsInitialized()` for guarding Arduino `Preferences` use. `SerialLogger` lives beside it in `src/shared/serial_logger.*` as the concrete Arduino `Serial` implementation of `ILogger`. Tiny player-color LED choices stay local to the board GUI implementation that renders them. Board debug output uses `Position::boardToText()`. These helpers are not available in native tests.
+`SystemUtils` (declared in `src/shared/utils.h`) contains Arduino/ESP32-dependent utility functions shared by firmware modules, currently `ensureNvsInitialized()` for guarding Arduino `Preferences` use. `SerialLogger` lives beside it in `src/shared/serial_logger.*` as the concrete Arduino `Serial` implementation of `ILogger`. Tiny player-color LED choices stay local to the board visual implementation that renders them. Board debug output uses `Position::boardToText()`. These helpers are not available in native tests.
 
 ### WiFiManagerESP32
 
@@ -289,10 +304,11 @@ The `GameHeader` struct (exactly 16 bytes, `#pragma pack(push, 1)`) contains:
 
 The `GameMode` base class coordinates between `BoardGameplay` (physical chess board mode) and `Game` (chess state + recording + notification):
 
-1. `BoardGameplay::tryPlayerMove()` — consumes gameplay-owned changed-square entries for piece lift, placement, and capture-removal detection, shows valid moves via `Game::getPossibleMoves(row, col, ...)` (which delegates to `movegen::getPossibleMoves()`), validates the physical selection, and returns a display-coordinate move to `GameMode`.
-2. `GameMode::applyMove()` — calls `chess_->makeMove()` which atomically updates the board, records the move in history, persists via History's recording, and notifies the observer. Returns a `MoveResult` struct with all move metadata.
-3. `BoardGameplay::completeAppliedMove()` — consumes the `MoveResult` after `Game` has mutated state, then drives remote-move physical guidance, castling prompts, LED feedback, and game-end animations through board-owned GUI services.
-4. Turn advancement, castling rights, and game-end detection are all handled internally by `Position::makeMove()` — the firmware never modifies the board or turn directly.
+1. `GameMode` constructs `BoardAdapter::GameProvider`, which maps `Game` queries into `BoardGameProvider` callbacks and `BoardMoveTargetList` values.
+2. `BoardGameplay::tryPlayerMove()` — consumes gameplay-owned changed-square entries for piece lift, placement, and capture-removal detection, optionally shows legal targets, validates the physical selection against mapped legal targets, and returns a display-coordinate move to `GameMode`.
+3. `GameMode::applyMove()` — cancels stale assistance, maps pre-move castling data, calls `chess_->makeMove()` which atomically updates the board, records the move in history, persists via History's recording, and notifies the observer. It then maps `MoveResult` into board completion/feedback DTOs.
+4. `BoardGameplay::completeAppliedMove()` — consumes board-owned completion/feedback DTOs after `Game` has mutated state, then drives remote-move physical guidance, castling prompts, LED feedback, and game-end animations through board-owned GUI services.
+5. Turn advancement, castling rights, and game-end detection are all handled internally by `Position::makeMove()` — the firmware never modifies the board or turn directly.
 
 ## Game Mode Lifecycle
 
@@ -315,7 +331,7 @@ Every iteration of `loop()`:
 1. `wifiManager.update()` — handle WiFi reconnection state machine
 2. Check for pending board edits from the web UI (`getPendingBoardEdit()`)
 3. Check for web-based game mode selection (`getSelectedGameMode()`)
-4. If in `AppMode::SELECTION`: poll the board-owned selection workflow via `BoardMenu::poll()` and map any completed selection to an app mode
+4. If in `AppMode::SELECTION`: poll the active typed menu via `Board::pollMenu()` and map the completed `GameSelectionMenu` result to an app mode
 5. If a mode is selected and not yet initialized: call `initializeSelectedMode()` (creates the game object or starts board diagnostics)
 6. If in a chess game mode: relay web resign flag, check `isGameOver()`, call `update()`
 7. If in Sensor Test: call `boardDiagnostics.update()` until `isComplete()` returns true
@@ -334,7 +350,7 @@ For game resume: `begin()` detects the `resumingGame` flag, skips piece setup, c
 
 ### Menu Navigation
 
-`BoardMenu` (`src/board/workflows/menu.*`) drives the game-selection flow as a small instance-owned `Stage` state machine over three pre-built `MenuSelection` screens (game, difficulty, color). `main.cpp` calls `physicalBoard.menu().start()` to open the root menu, polls it via `menu().poll()` on each tick, and receives a semantic `BoardGameSelection` result (selection mode + bot configuration) when a leaf is chosen. `MenuSelection` composes `MenuPanel`, which paints to its owned surface and snapshots selection occupancy through `BoardRuntime::copyInputOccupancy()`.
+`GameSelectionMenu` (`src/board/menus/game_selection.*`) drives the game-selection flow as a typed menu object. `main.cpp` owns one instance, passes it to `physicalBoard.showMenu(gameSelectionMenu)`, polls completion with `physicalBoard.pollMenu()`, and then reads `gameSelectionMenu.selection()` for the semantic `BoardGameSelection` result. `BoardMenuRunner` (`src/board/core/menu/menu.*`) owns the active `MenuSelection`, canvas surface, polling, and debounce mechanics.
 
 The flow is:
 
@@ -342,7 +358,7 @@ The flow is:
 - **Bot difficulty** (entered on Bot selection) → 8 squares across row 3, colors green→blue, levels 1–8
 - **Bot color** (entered on difficulty selection) → 3 squares: White, scaled White (play as Black), Yellow (random)
 
-The web UI can also trigger game selection via `POST /game/select`. The main loop detects the WiFi-side selection, calls `physicalBoard.menu().clear()` and `physicalBoard.clearAllSurfaces()`, and proceeds directly to mode initialization.
+The web UI can also trigger game selection via `POST /game/select`. The main loop detects the WiFi-side selection, calls `physicalBoard.clearMenu()` and `physicalBoard.clearAllSurfaces()`, and proceeds directly to mode initialization.
 
 ## Resign System
 
@@ -354,8 +370,8 @@ The physical gesture runs inline inside `BoardGameplay::tryPlayerMove()` — no 
 2. If the king stays off the board for `RESIGN_HOLD_MS` (3000ms), the resign sequence begins. The origin square shows orange at 25% brightness via `showResignProgress(row, col, 0)`.
 3. Player returns the king. Orange increases to 50% (`showResignProgress(row, col, 1, clearFirst=true)`). All other LEDs are cleared.
 4. `BoardGameplay::continueResignGesture()` takes over — a blocking loop that waits for 2 more quick lift-and-return cycles, each within `RESIGN_LIFT_WINDOW_MS` (1000ms). Orange progresses to 75% then 100%.
-5. If all lifts complete in time, `BoardGameplay::confirmResign()` asks the board GUI to show a yes/no dialog (green/red squares).
-6. On confirm, `GameMode::completeResign(resignColor)` runs mode hooks, asks `BoardGameplay` to show the winner firework, and ends the game with `GameResult::RESIGNATION`. In bot mode, `BotMode::onResignConfirmed()` delegates to `EngineProvider::onResignConfirmed()` — `LichessProvider` sends a resign request to the Lichess server.
+5. If all lifts complete in time, `BoardGameplay::confirmResign()` asks the board-owned menu runner to show a yes/no dialog (green/red squares).
+6. On confirm, `GameMode::completeResign(resignColor)` runs mode hooks, asks `BoardGameplay` to show the winner firework, and ends the game with `GameResult::RESIGNATION`. In bot mode, `BotMode::onResignConfirmed()` delegates to `EngineProvider::onResignConfirmed()` — `LichessEngine` sends a resign request to the Lichess server.
 
 If any step times out (king not returned within the window), the gesture is silently canceled — no error feedback, just a return to normal play. The progressive orange brightness (25% → 50% → 75% → 100%) uses `LedColors::scaleColor(LedColors::Orange, factor)` with factors from `RESIGN_BRIGHTNESS_LEVELS`.
 
@@ -400,7 +416,7 @@ Every persistent visual is a surface write to `BoardCanvas`; owners store explic
 
 ```cpp
 auto g = runtime.lockCanvas();
-BoardCanvasHandle surface = g.canvas.acquireSurface();
+BoardCanvasHandle surface = BoardSurface::writable(g.canvas, surface_);
 g.canvas.clearSurface(surface);
 g.canvas.setPixel(surface, row, col, LedColors::Cyan);
 animations.startBlink(row, col, LedColors::Green, 1, millis());
@@ -410,13 +426,13 @@ Surface ordering is deterministic by insertion/activation: older active surfaces
 
 ### Scheduled Animations
 
-Animations are exposed by the GUI-owned `BoardAnimations` instance in `Board::Impl` and run through the generic `BoardScheduler` (six slots, addressed via `BoardScheduledHandle{slot, generation}` / `BoardAnimationHandle` with a 16-bit generation counter). Helpers fall into three families:
+Animations are exposed by the board-owned `BoardAnimations` instance in `Board::Impl` and run through the generic `BoardScheduler` (six slots, addressed via `BoardScheduledHandle{slot, generation}` / `BoardAnimationHandle` with a 16-bit generation counter). Helpers fall into three families:
 
 - **One-shot** (`startBlink`, `startFlash`, `startCapture`, `startPromotion`, `startFirework`) — auto-clear when their duration expires.
 - **Looping** (`startThinking`, `startWaiting`, `startConnecting`) — keep running until cancelled by handing the handle back to the helper that owns it (e.g. `feedback_.stopAnimation(handle)`, `Board::stopConnectingStatus(handle)`). The generation counter prevents stale handles from cancelling a recycled slot.
 - **Status helpers exposed by workflows** — `BoardGameplay::startThinkingStatus()` / `startWaitingStatus()` return a handle, cancelled via `stopStatusAnimation(handle&)`. There are no `std::atomic<bool>*` flags anywhere.
 
-Frame painting lives in `gui/animations.*`; scheduler infrastructure lives in `core/scheduler.*` and knows only about `BoardPainter` callbacks. Full-surface animations clear only their own scheduled surface before each frame, so sibling animations do not erase each other.
+Frame painting lives in `core/visual/animations.*`; scheduler infrastructure lives in `core/scheduler.*` and knows only about `BoardPainter` callbacks. Full-surface animations clear only their own scheduled surface before each frame, so sibling animations do not erase each other.
 
 ### Color Semantics
 
@@ -456,9 +472,9 @@ Colors in the `LedColors` namespace (`src/board/core/colors.h`) have fixed meani
 
 ### Menu Primitives
 
-`MenuPanel` (`src/board/menus/panel.*`) is the reusable physical-board primitive for the 8×8 LED grid. It takes a `BoardRuntime&` plus the board-owned `BoardAnimations&`, paints to an owned canvas surface via `runtime.lockCanvas()`, snapshots board occupancy once per poll for selections, blinks confirmed selections through `BoardAnimations`, and returns option ids without interpreting them. `MenuSelection` (`src/board/menus/selection.*`) wraps one selectable menu page around `MenuPanel` and optionally appends the standard back button. `MenuPrompt` (`src/board/menus/prompt.*`) builds the blocking green/red confirmation prompt from the same panel primitive. State is fixed-size and stack/member allocated; no heap usage.
+`MenuPanel` (`src/board/core/menu/panel.*`) is the reusable physical-board primitive for the 8×8 LED grid. It takes a `BoardRuntime&` plus the board-owned `BoardAnimations&`, paints to an owned canvas surface via `runtime.lockCanvas()`, snapshots board occupancy once per poll for selections, blinks confirmed selections through `BoardAnimations`, and returns option ids without interpreting them. `MenuSelection` (`src/board/core/menu/selection.*`) wraps one selectable menu page around `MenuPanel` and optionally appends the standard back button. `BoardMenuRunner` (`src/board/core/menu/menu.*`) owns the active menu instance, polling, debounce, blocking cadence loops, and the `BoardMenuController` passed to typed menus. State is fixed-size and stack/member allocated; no heap use in the runner.
 
-**Option definition** — `MenuOption` struct: `{row, col, color, id}`. Coordinates are authored in white-side orientation (row 7 = rank 1). All selectable ids and `constexpr MenuOption[]` layouts live in `src/board/menus/options.h`, covering the root menu, bot difficulty, bot colour, and confirmation prompts.
+**Option definition** — `MenuOption` struct: `{row, col, color, id}`. Coordinates are authored in white-side orientation (row 7 = rank 1). Generic constants live in `src/board/core/menu/types.h`; predefined option ids and `constexpr MenuOption[]` layouts live with their typed menus under `src/board/menus/`.
 
 **Two-phase debounce** — prevents pieces already on the board from triggering selections when a menu appears:
 1. Phase 1 (empty): the square must read empty for `DEBOUNCE_CYCLES` (5) consecutive sensor polls (~200 ms).
@@ -470,27 +486,28 @@ After confirmed selection, the square blinks once in its own color via `BoardAni
 
 **Orientation** — `setFlipped(true)` mirrors row coordinates (`row' = 7 - row`) so menus face a player on the black side. Applied to bot games where the player chose black, and to the resign confirm dialog on black's turn.
 
-**Confirmation prompts** — `BoardMenu::confirmAction(flipped)` and `BoardMenu::confirmResume(mode, flipped)` and `BoardGameplay::confirmResign(...)` call `MenuPrompt::confirm(...)`, which displays the `CONFIRM_OPTIONS` layout (green d4 = yes, red e4 = no) and blocks until the player selects.
+**Confirmation prompts** — `ConfirmMenu` displays green d4 = yes and red e4 = no. `ResumeConfirmMenu` adds the mode-coloured resume pre-blink before showing the same prompt. Both are run by `Board::runMenuBlocking(menu, flipped)`, including resign confirmation from `BoardGameplay`.
 
-### Menu Options
+### Predefined Menus
 
-All menu option data lives in `src/board/menus/options.h`:
-- `MenuOptionId` namespace: distinct ID ranges per menu level plus confirmation ids.
-- `constexpr MenuOption[]` arrays: `GAME_MENU_OPTIONS`, `BOT_DIFFICULTY_OPTIONS`, `BOT_COLOR_OPTIONS`, `CONFIRM_OPTIONS`.
-- `BoardGameSelection` and `BoardGameSelectionMode`: public-safe result types returned by `BoardMenu`.
+- `GameSelectionMenu` owns the root/difficulty/color menu tree and records a `BoardGameSelection` when a leaf is selected.
+- `ConfirmMenu` records an accepted/rejected answer for green/red prompts.
+- `ResumeConfirmMenu` composes the resume indicator blink with `ConfirmMenu`.
 
 ## External API Integration
 
 ### Stockfish
 
-`StockfishAPI` (in `engine/stockfish/stockfish_api.h/cpp`) handles HTTPS requests to `stockfish.online` using `WiFiClientSecure`:
+`StockfishAPI` (in `engines/stockfish/api.h/cpp`) handles HTTPS requests to `stockfish.online` using `WiFiClientSecure`:
 - Builds request URLs with FEN and depth parameters
 - Parses JSON responses for best move, evaluation, and continuation line
 - Connection uses TLS with `setInsecure()` (no certificate pinning)
 
-Each engine provider defines a static `LEVELS[8]` array mapping difficulty level (1–8) to a label and search depth. `GameMeta.difficulty` stores the level number (1–8), not the raw depth. Providers are constructed with a level and player color, then passed to `BotMode` as an `EngineProvider*`.
+Each engine provider defines a static `LEVELS[8]` array mapping difficulty level (1–8) to a label and search depth. `GameMeta.difficulty` stores the opponent level number (1–8), not the raw depth. Opponent providers are constructed with a level and player color, then passed to `BotMode` as an `EngineProvider*`.
 
-**StockfishProvider** (depths 6–16, matching the stockfish.online API):
+Board assistance is configured separately from the opponent engine. `NONE` and `LEGAL_MOVES` are fixed board providers and never request engine computation. `BEST_MOVE` uses a board-owned `BoardAssistanceProvider`; only LibreChess-backed hints are implemented today, but the board contract is engine-agnostic so future providers can plug in without changing `src/board/`.
+
+**StockfishEngine** (depths 6–16, matching the stockfish.online API):
 
 | Level | Name | Depth |
 |-------|------|-------|
@@ -503,7 +520,7 @@ Each engine provider defines a static `LEVELS[8]` array mapping difficulty level
 | 7 | Expert | 14 |
 | 8 | Master | 16 |
 
-**LibreChessProvider** (depths 1–8, safe for ESP32 stack):
+**LibreChessEngine** (depths 1–8, safe for ESP32 stack):
 
 | Level | Name | Depth |
 |-------|------|-------|
@@ -524,11 +541,11 @@ The on-board engine runs entirely within `lib/core/` — no network, no external
 
 - **`uci`** (`uci.h/cpp`) — Transport-agnostic UCI protocol handler. `UCIState` owns a `Position`, `Engine`, and external stop flag; the `Engine` owns TT, pawn hash, eval hash, and `SearchState`. `loop(state, in, out)` drives the native CLI over `FILE*`; `processLine(state, line, output)` provides pure string-in/string-out dispatch for tests. Standard commands: `uci`, `isready`, `setoption`, `ucinewgame`, `position`, `go`, `stop`, `quit`. `go` applies bounded numeric parsing and delegates clock controls to `time_management::computeTimeLimits()`.
 
-`LibreChessProvider` is constructed with a difficulty level (1–8) and player color, then passed to `BotMode` as an `EngineProvider*`. `SerialUCIStream` enables external UCI GUIs (Arena, CuteChess) to drive the engine over the ESP32's UART.
+`LibreChessEngine` is constructed with a difficulty level (1–8) and player color, then passed to `BotMode` as an `EngineProvider*`. `SerialUCIStream` enables external UCI GUIs (Arena, CuteChess) to drive the engine over the ESP32's UART.
 
 ### Lichess
 
-`LichessAPI` (in `engine/lichess/lichess_api.h/cpp`) handles HTTPS requests to `lichess.org`:
+`LichessAPI` (in `engines/lichess/api.h/cpp`) handles HTTPS requests to `lichess.org`:
 - **Game event polling** — checks for active or incoming games
 - **Game stream polling** — retrieves the current game state (moves, status, clocks)
 - **Move submission** — sends a UCI move to the active game
@@ -536,7 +553,7 @@ The on-board engine runs entirely within `lib/core/` — no network, no external
 
 The Lichess token is stored in NVS (namespace `"lichess"`, key `"token"`). The web UI's Lichess settings page allows entering or clearing the token. API responses to the web UI return only a masked version of the token (first 4 characters + asterisks).
 
-`LichessProvider` spawns a FreeRTOS polling task (via `requestMove()`) that calls `LichessAPI::pollGameStream()` every 500ms. The task compares the server's move list against `lastKnownMoves_` and returns new opponent moves via `EngineResult`. `lastSentMove_` prevents the player's own move echo from being treated as an opponent move. Game-end events from the server are also detected and returned as `EngineResult::Type::GAME_ENDED`.
+`LichessEngine` spawns a FreeRTOS polling task (via `requestMove()`) that calls `LichessAPI::pollGameStream()` every 500ms. The task compares the server's move list against `lastKnownMoves_` and returns new opponent moves via `EngineResult`. `lastSentMove_` prevents the player's own move echo from being treated as an opponent move. Game-end events from the server are also detected and returned as `EngineResult::Type::GAME_ENDED`.
 
 ## Storage
 
@@ -627,7 +644,7 @@ API handlers validate all parameters at system boundaries. Internal functions tr
 The frontend uses a two-file pattern for server communication:
 
 - **`api.js`** — low-level utilities: `getApi(url)`, `postApi(url, body)`, `deleteApi(url)` fetch wrappers with error handling, and `pollHealth(timeoutMs)` for post-OTA reboot polling (polls `GET /health` until the board responds after a reboot).
-- **`provider.js`** — domain-specific `Api` object with a named method for every backend endpoint. Examples: `Api.getNetworks()`, `Api.resign()`, `Api.selectGame(mode, config)`, `Api.getBoardUpdate()`, `Api.getOtaStatus()`, `Api.setOtaPassword(pass)`, `Api.getGames()`, `Api.deleteGame(id)`.
+- **`provider.js`** — domain-specific `Api` object with a named method for every backend endpoint. Examples: `Api.getNetworks()`, `Api.resign()`, `Api.selectGame(...)`, `Api.getBoardUpdate()`, `Api.getOtaStatus()`, `Api.setOtaPassword(pass)`, `Api.getGames()`, `Api.deleteGame(id)`.
 
 All HTML pages include both scripts via `<script>` tags in `<head>`. All server communication goes through `Api.*` methods — no page contains raw `fetch()` calls. When adding a new API endpoint, add a corresponding method to `provider.js`.
 
@@ -637,7 +654,7 @@ All HTML pages include both scripts via `<script>` tags in `<head>`. All server 
 |------|------|---------|
 | Settings | `index.html` | WiFi management, Lichess token, LED settings, calibration trigger, OTA upload, security |
 | Board | `board.html` | Live board view, evaluation bar, move history, board editor, game history browser, review mode, resign button |
-| Game Selection | `game.html` | Game mode cards with bot configuration panel. Redirects to board page after selection. |
+| Game Selection | `game.html` | Game mode cards with independent assistance controls and bot configuration panel. Redirects to board page after selection. |
 
 ### Web Asset Pipeline
 

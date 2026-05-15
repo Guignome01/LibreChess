@@ -96,7 +96,8 @@ The web server runs on the async task context, but game mutations must happen on
 
 ### Configuration getters (public API for main loop)
 - `getSelectedGameMode()` / `resetGameSelection()` — game mode selection
-- `getStockfishSettings()` / `getBotPlayerColor()` — bot configuration
+- `getBotDifficultyLevel()` / `getBotPlayerColor()` / `getBotEngine()` — bot opponent configuration
+- `getAssistanceLevel()` / `getAssistanceEngine()` / `getAssistanceDifficultyLevel()` — independent board assistance configuration from `/gameselect`
 - `getLichessConfig()` / `getLichessToken()` — Lichess configuration
 - `getCurrentFen()` / `getEvaluation()` — cached board state
 - `getWiFiState()` / `isWiFiConnected()` — WiFi status

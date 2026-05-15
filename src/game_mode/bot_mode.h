@@ -1,9 +1,9 @@
 #ifndef GAME_BOT_MODE_H
 #define GAME_BOT_MODE_H
 
+#include "board/core/visual/animations.h"
 #include "game_mode.h"
-#include "engine/engine_provider.h"
-#include "board/gui/animations.h"
+#include "provider.h"
 
 // State machine for the engine turn cycle.
 enum class BotState { PLAYER_TURN, ENGINE_THINKING };
@@ -13,8 +13,8 @@ enum class BotState { PLAYER_TURN, ENGINE_THINKING };
 // The provider runs HTTP in a FreeRTOS task; update() stays non-blocking.
 class BotMode : public GameMode {
  public:
-  BotMode(BoardGameplay* gameplay, WiFiManagerESP32* wm, Game* cg, EngineProvider* provider,
-          ILogger* logger = nullptr);
+  BotMode(BoardGameplay* gameplay, WiFiManagerESP32* wm, Game* cg,
+          EngineProvider* provider, ILogger* logger = nullptr);
   ~BotMode() override;
 
   void begin() override;

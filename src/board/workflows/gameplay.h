@@ -1,14 +1,17 @@
 #ifndef BOARD_WORKFLOWS_GAMEPLAY_H
 #define BOARD_WORKFLOWS_GAMEPLAY_H
 
-#include "board/gui/assistance.h"
-#include "board/gui/animations.h"
-#include "board/gui/feedback.h"
-#include "game.h"
-#include "logger.h"
+#include "board/core/visual/assistance.h"
+#include "board/core/visual/animations.h"
+#include "board/core/visual/feedback.h"
+#include "board/assistance_provider.h"
+#include "board/game_provider.h"
+#include "board/types.h"
 
 #include <stdint.h>
 
+class BoardAnimations;
+class BoardMenuRunner;
 class BoardRuntime;
 
 // ---------------------------------------------------------------------------
@@ -36,31 +39,42 @@ struct BoardGameplayMove {
   int fromCol = -1;
   int toRow = -1;
   int toCol = -1;
-  LibreChess::Color resignColor = LibreChess::Color::WHITE;
+  BoardPieceColor resignColor = BoardPieceColor::WHITE;
 };
 
 class BoardGameplay {
  public:
-  BoardGameplay(BoardRuntime& runtime, BoardAnimations& animations);
+  BoardGameplay(BoardRuntime& runtime, BoardAnimations& animations, BoardMenuRunner& menuRunner);
+
+  /// Configure the active board-owned assistance provider.
+  void setAssistanceProvider(BoardAssistanceProvider* provider);
+  BoardAssistanceLevel assistanceLevel() const { return assistance_.level(); }
+
+  /// Service the active assistance provider. No-op for none/legal providers.
+  void serviceAssistance();
+
+  /// Cancel any provider work and clear assistance visuals.
+  void cancelAssistance();
 
   /// Wait until the physical board matches the in-memory game position.
-  void waitForSetup(const LibreChess::Game& game, LibreChess::Log& logger);
+  void waitForSetup(const BoardGameProvider& gameProvider);
 
   /// Detect a legal player move or resign gesture from current input state.
-  BoardGameplayResult tryPlayerMove(const LibreChess::Game& game, LibreChess::Color playerColor,
-                                    LibreChess::Log& logger, BoardGameplayMove& selection);
+  BoardGameplayResult tryPlayerMove(const BoardGameProvider& gameProvider,
+                                    BoardPieceColor playerColor,
+                                    BoardGameplayMove& selection);
 
   /// Guide physical completion of a move (castling steps, remote-engine
   /// move) and show outcome visuals.
-  void completeAppliedMove(const LibreChess::Game& game, const LibreChess::MoveResult& result,
-                           const LibreChess::CastlingInfo& castling, int fromRow, int fromCol,
-                           int toRow, int toCol, bool isRemoteMove, LibreChess::Log& logger);
+  void completeAppliedMove(const BoardMoveCompletion& completion,
+                           const BoardMoveFeedbackData& feedback, int fromRow, int fromCol,
+                           int toRow, int toCol);
 
   /// Run resign confirmation prompt (blocking; renderer keeps prompt alive).
-  bool confirmResign(LibreChess::Color resignColor, bool flipped, LibreChess::Log& logger);
+  bool confirmResign(BoardPieceColor resignColor, bool flipped);
 
   /// Show the winner feedback for a confirmed resignation.
-  void showResignWinner(LibreChess::Color resignColor);
+  void showResignWinner(BoardPieceColor resignColor);
 
   // -------------------------------------------------------------------------
   // Status animation handles (BoardAnimationHandle replaces the old
@@ -88,10 +102,16 @@ class BoardGameplay {
 
   BoardRuntime& runtime_;
   BoardAnimations& animations_;
+  BoardMenuRunner& menuRunner_;
   BoardFeedback feedback_;
   BoardAssistance assistance_;
+  BoardAssistanceProvider* assistanceProvider_ = nullptr;
 
-  bool continueResignGesture(int row, int col, LibreChess::Color color, LibreChess::Log& logger);
+  BoardGameplayResult handleSourceRestore(int row, int col, BoardPieceColor color,
+                                          bool resignTransitioned,
+                                          unsigned long resignFlagTimestamp,
+                                          BoardGameplayMove& selection);
+  bool continueResignGesture(int row, int col, BoardPieceColor color);
 };
 
 #endif  // BOARD_WORKFLOWS_GAMEPLAY_H

@@ -1,8 +1,7 @@
 #include "wifi_manager_esp32.h"
 #include "board/board.h"
-#include "board/workflows/calibration.h"
 #include "game.h"
-#include "engine/lichess/lichess_config.h"
+#include "engines/lichess/config.h"
 #include "shared/utils.h"
 #include "storage/littrefs.h"
 #include <Arduino.h>
@@ -670,6 +669,37 @@ void WiFiManagerESP32::handleGameSelection(AsyncWebServerRequest* request) {
   if (request->hasArg("gamemode"))
     mode = request->arg("gamemode").toInt();
   gameMode = String(mode);
+
+  if (mode == 1 || mode == 2 || mode == 3) {
+    if (request->hasArg("assistanceLevel")) {
+      String level = request->arg("assistanceLevel");
+      level.toLowerCase();
+      if (level == "none" || level == "off" || level == "0")
+        assistanceLevel_ = 0;
+      else if (level == "best" || level == "best_move" || level == "2")
+        assistanceLevel_ = 2;
+      else
+        assistanceLevel_ = 1;
+    } else {
+      assistanceLevel_ = 1;
+    }
+
+    assistanceEngine = request->hasArg("assistanceEngine") ? request->arg("assistanceEngine")
+                                                            : "librechess";
+    assistanceEngine.toLowerCase();
+    if (request->hasArg("assistanceDifficulty")) {
+      int diffLevel = request->arg("assistanceDifficulty").toInt();
+      if (diffLevel < 1 || diffLevel > 8) diffLevel = 4;
+      assistanceDifficultyLevel_ = diffLevel;
+    } else {
+      assistanceDifficultyLevel_ = 4;
+    }
+
+    if (assistanceLevel_ == 2 && assistanceEngine != "librechess") {
+      sendJsonError(request, 400, "Best-move assistance currently supports LibreChess only");
+      return;
+    }
+  }
   // If bot game mode, also handle bot config
   if (mode == 2) {
     if (request->hasArg("difficulty") && request->hasArg("playerColor")) {
@@ -678,6 +708,7 @@ void WiFiManagerESP32::handleGameSelection(AsyncWebServerRequest* request) {
       botPlayerColor = (request->arg("playerColor") == "white") ? 'w' : 'b';
       botDifficultyLevel_ = diffLevel;
       botEngine = request->hasArg("engine") ? request->arg("engine") : "stockfish";
+      botEngine.toLowerCase();
       Serial.printf("Bot configuration received: Engine=%s, Level=%d, Player is %s\n",
                      botEngine.c_str(), botDifficultyLevel_,
                      botPlayerColor == 'w' ? "White" : "Black");
@@ -693,6 +724,10 @@ void WiFiManagerESP32::handleGameSelection(AsyncWebServerRequest* request) {
       return;
     }
     Serial.println("Lichess mode selected via web");
+  }
+  if (mode == 1 || mode == 2 || mode == 3) {
+    Serial.printf("Assistance configuration received: level=%d, engine=%s, levelIndex=%d\n",
+                  assistanceLevel_, assistanceEngine.c_str(), assistanceDifficultyLevel_);
   }
   Serial.println("Game mode selected via web: " + gameMode);
   sendJsonOk(request);
@@ -779,7 +814,7 @@ void WiFiManagerESP32::handleBoardSettings(AsyncWebServerRequest* request) {
 }
 
 void WiFiManagerESP32::handleBoardCalibration(AsyncWebServerRequest* request) {
-  board_->calibration().trigger();
+  board_->triggerCalibration();
   sendJsonOk(request);
 }
 

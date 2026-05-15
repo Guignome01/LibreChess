@@ -57,12 +57,15 @@ test/
 │   ├── test_all.cpp                    Main entry: setUp/tearDown, register calls
 │   ├── test_game.cpp                    Game: lifecycle, draws, observer, history, undo/redo, getHistory
 │   ├── test_history.cpp                 History: move log with undo/redo, branch-on-undo, compact encode/decode
-│   └── test_history_persistence.cpp     Recording: persistence, header flush, replay, branch-truncation, encode/decode
+│   ├── test_history_persistence.cpp     Recording: persistence, header flush, replay, branch-truncation, encode/decode
+│   └── test_provider.cpp                Provider contract: result defaults, no-op hooks, virtual dispatch
 ├── test_board/                          Arduino-free board primitive tests
 │   ├── test_all.cpp                    Main entry: includes pure board source units once and registers board tests
-│   ├── test_canvas.cpp                  BoardCanvas: ordered-surface composition, dirty flag, bounds, rect/fill/line/ring helpers
+│   ├── test_canvas.cpp                  BoardCanvas + BoardSurface: ordered-surface composition, retained-surface helper lifecycle, dirty flag, bounds, rect/fill/line/ring helpers
 │   ├── test_input.cpp                   BoardInput: baseline sync, edge events, queue consumption, overflow metrics, bounds
-│   └── test_effects.cpp                 BoardScheduler + BoardAnimations: slot lifecycle, stale handles, sibling composition, looping/finite animations
+│   ├── test_effects.cpp                 BoardScheduler + BoardAnimations: slot lifecycle, stale handles, sibling composition, looping/finite animations
+│   ├── test_types.cpp                   Board-owned gameplay DTOs and fixed assistance providers: assistance engine gate, target merge/capture helpers, bounds rejection
+│   └── test_menu.cpp                    Typed menu state machines: game-selection flow, back navigation, confirmation, resume pre-blink
 ├── suites/                              Shared EPD test files (no .cpp — not compiled)
 │   ├── wac.epd                          Win At Chess — 300 positions (Reinfeld/Wilson, CPW verbatim)
 │   ├── bk.epd                           Bratko-Kopec — 24 positions (Bratko/Kopec, CPW verbatim)
@@ -99,6 +102,7 @@ Each library source file has a corresponding test file in the matching test suit
 | `lib/core/src/zobrist.h/cpp` | `test_core/` | `test_zobrist.cpp` |
 | `lib/game/src/game.cpp` | `test_game/` | `test_game.cpp` |
 | `lib/game/src/history.cpp` | `test_game/` | `test_history.cpp` + `test_history_persistence.cpp` |
+| `lib/game/src/provider.h` | `test_game/` | `test_provider.cpp` |
 | `lib/core/src/search.h/cpp` | `test_core/` | `test_search.cpp` |
 | `lib/core/src/uci.h/cpp` | `test_core/` | `test_uci.cpp` |
 | `lib/core/src/epd.h/cpp` | `test_core/` | `test_epd.cpp` |

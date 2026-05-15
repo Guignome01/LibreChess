@@ -1,10 +1,18 @@
 #include "game_mode.h"
 #include "board/workflows/gameplay.h"
+#include "game_mode/board_adapter.h"
 #include "game.h"
 #include "wifi_manager_esp32.h"
 
 GameMode::GameMode(BoardGameplay* gameplay, WiFiManagerESP32* wm, Game* cg, ILogger* logger)
-  : gameplay_(gameplay), wifiManager_(wm), chess_(cg), logger_(logger) {}
+  : gameplay_(gameplay),
+    wifiManager_(wm),
+    chess_(cg),
+    logger_(logger) {}
+
+GameMode::~GameMode() {
+  if (gameplay_) gameplay_->cancelAssistance();
+}
 
 bool GameMode::isGameOver() const { return chess_->isGameOver(); }
 
@@ -17,17 +25,26 @@ bool GameMode::tryResumeGame() {
 }
 
 void GameMode::waitForBoardSetup() {
-  gameplay_->waitForSetup(*chess_, logger_);
+  BoardAdapter::GameProvider gameProvider(*chess_);
+  gameplay_->waitForSetup(gameProvider);
 }
 
-MoveResult GameMode::applyMove(int fromRow, int fromCol, int toRow, int toCol, char promotion, bool isRemoteMove) {
+MoveResult GameMode::applyMove(int fromRow, int fromCol, int toRow, int toCol,
+                               char promotion, bool isRemoteMove) {
   // Compute castling info before the move (piece still at from square)
   auto castleInfo = chess_->checkCastling(fromRow, fromCol, toRow, toCol);
+  BoardCastlingGuide castleGuide = BoardAdapter::castlingGuide(castleInfo);
+
+  cancelAssistance();
 
   MoveResult result = chess_->makeMove(fromRow, fromCol, toRow, toCol, promotion);
   if (!result.valid()) return result;
 
-  gameplay_->completeAppliedMove(*chess_, result, castleInfo, fromRow, fromCol, toRow, toCol, isRemoteMove, logger_);
+  const BoardMoveCompletion completion =
+      BoardAdapter::moveCompletion(result, castleGuide, isRemoteMove);
+  const BoardMoveFeedbackData feedback =
+      BoardAdapter::moveFeedback(*chess_, result, toRow, toCol);
+  gameplay_->completeAppliedMove(completion, feedback, fromRow, fromCol, toRow, toCol);
 
   return result;
 }
@@ -44,9 +61,12 @@ MoveResult GameMode::applyMove(const std::string& move) {
 
 bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int& toRow, int& toCol) {
   BoardGameplayMove selection;
-  BoardGameplayResult result = gameplay_->tryPlayerMove(*chess_, playerColor, logger_, selection);
+  BoardAdapter::GameProvider gameProvider(*chess_);
+  BoardGameplayResult result = gameplay_->tryPlayerMove(gameProvider,
+                                                        BoardAdapter::toBoardColor(playerColor),
+                                                        selection);
   if (result == BoardGameplayResult::RESIGN_REQUESTED) {
-    completeResign(selection.resignColor);
+    completeResign(BoardAdapter::toGameColor(selection.resignColor));
     return false;
   }
 
@@ -60,7 +80,16 @@ bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int&
   return true;
 }
 
+void GameMode::serviceAssistance() {
+  gameplay_->serviceAssistance();
+}
+
+void GameMode::cancelAssistance() {
+  gameplay_->cancelAssistance();
+}
+
 void GameMode::setBoardStateFromFEN(const std::string& fen) {
+  cancelAssistance();
   chess_->loadFEN(fen);
   logger_.infof("Board state set from FEN: %s", fen.c_str());
   logger_.info(chess_->boardToText().c_str());
@@ -78,15 +107,16 @@ bool GameMode::processResign() {
 }
 
 bool GameMode::completeResign(Color resignColor) {
+  cancelAssistance();
   onBeforeResignConfirm();
 
-  if (!gameplay_->confirmResign(resignColor, isFlipped(), logger_)) {
+  if (!gameplay_->confirmResign(BoardAdapter::toBoardColor(resignColor), isFlipped())) {
     onResignCancelled();
     return false;
   }
 
   onResignConfirmed(resignColor);
-  gameplay_->showResignWinner(resignColor);
+  gameplay_->showResignWinner(BoardAdapter::toBoardColor(resignColor));
 
   Color winnerColor = ~resignColor;
   chess_->endGame(GameResult::RESIGNATION, winnerColor == Color::WHITE ? 'w' : 'b');

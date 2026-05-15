@@ -73,6 +73,9 @@ class WiFiManagerESP32 : public IGameObserver {
   int botDifficultyLevel_ = 4; // 1-8 difficulty level (engine resolves to depth)
   char botPlayerColor = 'w'; // 'w' or 'b' — color the local player controls in bot mode
   String botEngine = "stockfish"; // "stockfish" or "librechess"
+  int assistanceLevel_ = 1; // 0=off, 1=legal moves, 2=best move
+  int assistanceDifficultyLevel_ = 4; // 1-8 level for engine-backed hints
+  String assistanceEngine = "librechess"; // BEST_MOVE provider; LibreChess implemented first
 
   LittleFSStorage* storage_;
   Board* board_;
@@ -172,6 +175,9 @@ class WiFiManagerESP32 : public IGameObserver {
   int getBotDifficultyLevel() { return botDifficultyLevel_; }
   char getBotPlayerColor() { return botPlayerColor; }
   String getBotEngine() { return botEngine; }
+  int getAssistanceLevel() const { return assistanceLevel_; }
+  int getAssistanceDifficultyLevel() const { return assistanceDifficultyLevel_; }
+  String getAssistanceEngine() const { return assistanceEngine; }
   // Lichess configuration
   LichessConfig getLichessConfig();
   String getLichessToken() { return lichessToken; }

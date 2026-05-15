@@ -7,8 +7,8 @@
 #include "history.h"
 #include "notation.h"
 #include "position.h"
-#include "engine.h"
 #include "types.h"
+#include "../../core/src/engine.h"
 
 // ---------------------------------------------------------------------------
 // Game — central chess game orchestrator.

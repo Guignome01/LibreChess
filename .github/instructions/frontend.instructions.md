@@ -15,7 +15,7 @@ The ESP32 serves a web interface from LittleFS flash storage. Vanilla HTML, CSS,
 |------|---------|
 | `index.html` | Home / settings: WiFi management, Lichess token, LED brightness/dimming, recalibration, OTA upload, OTA password |
 | `board.html` | Board view: live display, evaluation bar, move history with navigation, board editor (drag-and-drop, FEN, castling/EP controls), game history browser, review mode, settings popup (themes, colors, sounds), focus mode, resign |
-| `game.html` | Mode selection: four mode cards, bot config panel (color, difficulty). Redirects to board page after selection |
+| `game.html` | Mode selection: four mode cards, assistance controls, bot config panel (opponent engine, color, difficulty). Redirects to board page after selection |
 
 ## API Layer (Two-File Pattern)
 

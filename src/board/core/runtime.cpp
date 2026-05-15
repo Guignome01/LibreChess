@@ -5,14 +5,14 @@
 #include <freertos/semphr.h>
 #include <freertos/task.h>
 
-#include "board/workflows/calibration.h"
+#include "board/core/calibration.h"
 
 // ---------------------------------------------------------------------------
 // BoardRuntime — wires driver + canvas + input + scheduler + renderer.
 // ---------------------------------------------------------------------------
 // `begin()` ordering matters:
 //   1. driver_.begin() — initializes hardware.
-//   2. BoardCalibration::load()/run()/save() — writes raw LEDs without a
+//   2. BoardCalibrationRunner::load()/run()/save() — writes raw LEDs without a
 //      mutex; safe because the renderer task isn't running yet.
 //   3. Sync input baseline so workflows don't see false "lifted" events
 //      from board state captured during calibration.
@@ -37,13 +37,8 @@ void BoardRuntime::inputPollTrampoline(void* self) {
 void BoardRuntime::inputPollLoop() {
   for (;;) {
     if (inputStopRequested_.load()) break;
-    driver_.readSensors();
-    bool sensors[8][8];
-    for (int r = 0; r < 8; ++r) {
-      for (int c = 0; c < 8; ++c) {
-        sensors[r][c] = driver_.getSensorState(r, c);
-      }
-    }
+    bool sensors[BoardInput::ROWS][BoardInput::COLS];
+    readDebouncedSensors(sensors);
     takeInputMutex();
     if (!inputStopRequested_.load()) {
       input_.poll(sensors, millis());
@@ -102,7 +97,7 @@ bool BoardRuntime::begin() {
   // Startup calibration: load saved mapping or run a fresh calibration.
   // Calibration drives raw LEDs and raw sensors directly; safe here
   // because the renderer task is not running yet.
-  BoardCalibration calibration(driver_);
+  BoardCalibrationRunner calibration(driver_);
   if (!calibration.load()) {
     const bool wasSkipped = calibration.run();
     if (!wasSkipped) {
@@ -119,13 +114,8 @@ bool BoardRuntime::begin() {
   // Capture the post-calibration sensor state as the input baseline so we
   // don't emit phantom LIFTED events for pieces that were already on the
   // board.
-  driver_.readSensors();
-  bool sensors[8][8];
-  for (int r = 0; r < 8; ++r) {
-    for (int c = 0; c < 8; ++c) {
-      sensors[r][c] = driver_.getSensorState(r, c);
-    }
-  }
+  bool sensors[BoardInput::ROWS][BoardInput::COLS];
+  readDebouncedSensors(sensors);
   takeInputMutex();
   input_.syncBaseline(sensors, millis());
   giveInputMutex();
@@ -281,5 +271,14 @@ void BoardRuntime::giveInputMutex() {
   auto* mtx = static_cast<SemaphoreHandle_t>(inputMutex_);
   if (mtx != nullptr) {
     xSemaphoreGive(mtx);
+  }
+}
+
+void BoardRuntime::readDebouncedSensors(bool (&sensors)[BoardInput::ROWS][BoardInput::COLS]) {
+  driver_.readSensors();
+  for (int row = 0; row < BoardInput::ROWS; ++row) {
+    for (int col = 0; col < BoardInput::COLS; ++col) {
+      sensors[row][col] = driver_.getSensorState(row, col);
+    }
   }
 }

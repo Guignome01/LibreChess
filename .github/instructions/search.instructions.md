@@ -34,7 +34,7 @@ Fail-soft negamax + alpha-beta + quiescence with iterative deepening. Stateless 
 - `TranspositionTable : HashTableBase<TTEntry>` — inherits `resize`/`free`/`clear` from `hash_table.h`, adds `newGeneration`, inline `probe`/`store`
 - `PackedMove` (uint16_t) — lossless `packMove(m)` / `unpackMove(pm)`. Encoding: from(6) | to(6) | type(4) where type encodes the mutually-exclusive special-move class (0=quiet, 1=capture, 2=EP, 3=castling, 4–7=quiet promo+index, 8–11=capture promo+index). All flags including the 2-bit promotion piece index are preserved.
 - Mate scores adjusted per ply (`scoreToTT`/`scoreFromTT` in search.cpp). Size = power-of-two.
-- `DEFAULT_TT_SIZE` — 4096 entries (64 KiB). `LibreChessProvider` may further cap dynamically based on available heap
+- `DEFAULT_TT_SIZE` — 4096 entries (64 KiB). `LibreChessEngine` may further cap dynamically based on available heap
 
 **Constants** (public): `MATE_SCORE=30000`, `MAX_PLY=48`, `MAX_PV_LEN=24`
 **Score helpers** (public, constexpr in search.h): `isMateWin(score)`, `isMateLoss(score)`, `isMateScore(score)`, `mateMovesFromScore(score)` — centralise mate-range detection and mate-to-moves conversion. Used by search.cpp (`scoreToTT`/`scoreFromTT`, NMP clamp, early exit) and uci.cpp (info callbacks).

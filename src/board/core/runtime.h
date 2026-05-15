@@ -10,8 +10,6 @@
 #include <atomic>
 #include <stdint.h>
 
-class BoardCalibration;
-
 // ---------------------------------------------------------------------------
 // BoardRuntime — board-internal runtime owner shared by all board workflows.
 // ---------------------------------------------------------------------------
@@ -28,9 +26,8 @@ class BoardCalibration;
 // destruction. The renderer holds the same mutex for the duration of one
 // frame (microseconds).
 //
-// Calibration runs *before* the renderer task starts, so it can drive raw
-// driver writes without contending for the mutex. `BoardCalibration` is a
-// friend so it can call private `driver()` for raw access.
+// Startup calibration runs *before* the renderer task starts, so it can drive
+// raw driver writes without contending for the mutex.
 // ---------------------------------------------------------------------------
 
 class BoardRuntime;
@@ -113,12 +110,12 @@ class BoardRuntime {
   /// through `lockCanvas()`.
   const BoardCanvas& canvas() const { return canvas_; }
 
-  /// Mutable canvas access for GUI-owned presentation adapters. Callers must
-  /// still mutate through `lockCanvas()` while the renderer is running.
+  /// Mutable canvas access for board-owned visual adapters. Callers must hold
+  /// `lockCanvas()` before scheduling/cancelling painters.
   BoardCanvas& presentationCanvas() { return canvas_; }
 
-  /// Scheduler access for GUI-owned presentation adapters. Callers must hold
-  /// `lockCanvas()` before scheduling/cancelling painters.
+  /// Scheduler access for board-owned visual adapters. Callers must hold `lockCanvas()`
+  /// before scheduling/cancelling painters.
   BoardScheduler& presentationScheduler() { return scheduler_; }
 
   // -------------------------------------------------------------------------
@@ -142,12 +139,7 @@ class BoardRuntime {
   void* mutexHandle();
 
  private:
-  friend class BoardCalibration;
   friend class CanvasGuard;
-
-  /// Friends' raw-driver access. Used during calibration before the
-  /// renderer task is running.
-  BoardDriver& driver() { return driver_; }
 
   BoardDriver driver_;
   BoardCanvas canvas_;
@@ -170,6 +162,7 @@ class BoardRuntime {
   void releaseInputMutex();
   void takeInputMutex();
   void giveInputMutex();
+  void readDebouncedSensors(bool (&sensors)[BoardInput::ROWS][BoardInput::COLS]);
 
   /// Body of the input polling task. Reads driver sensors at sensor
   /// cadence and feeds them into BoardInput until shutdown is requested.

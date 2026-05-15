@@ -11,7 +11,13 @@ description: "Firmware game modes: GameMode base, PlayerMode, BotMode. State mac
 
 ## GameMode (base)
 
-Central fields injected via constructor: `gameplay_` (`BoardGameplay*`, the board-owned physical chess mode), `wifiManager_`, `chess_` (`Game` orchestrator), and `logger_` (`Log` proxy, wraps optional `ILogger*`). Game modes do not hold raw `Board*`. All log output uses `logger_.info/infof/error/errorf(...)` directly — the `Log` proxy handles null internally. No direct `Serial` calls.
+Central fields injected via constructor: `gameplay_` (`BoardGameplay*`, the board-owned physical chess mode), `wifiManager_`, `chess_` (`Game` orchestrator), and `logger_` (`Log` proxy, wraps optional `ILogger*`). Game modes do not hold raw `Board*` and do not own assistance providers; `Board` owns the active `BoardAssistanceProvider` and `BoardGameplay` services it. All log output uses `logger_.info/infof/error/errorf(...)` directly — the `Log` proxy handles null internally. No direct `Serial` calls.
+
+`board_adapter.*` is the only GameMode-side mapper from `LibreChess::Game`,
+`MoveList`, `MoveResult`, `CastlingInfo`, and core `Color`/`Piece` types into
+board-owned DTOs from `board/types.h` plus the `BoardGameProvider` contract in
+`board/game_provider.h`. `src/board/` must not include `game.h`, `move.h`, or
+concrete engine provider headers.
 
 ### Lifecycle
 - `begin()` — pure virtual. Subclasses set up the game (resume or new), then call `waitForBoardSetup()`.
@@ -20,9 +26,19 @@ Central fields injected via constructor: `gameplay_` (`BoardGameplay*`, the boar
 - `isNavigationAllowed()` — virtual, default `true`. BotMode blocks navigation during engine thinking.
 
 ### Core Move Flow
-1. `tryPlayerMove(playerColor, ...)` — delegates physical lift/placement/capture-removal detection to `BoardGameplay::tryPlayerMove()`. It returns `true` with from/to coords when a valid destination is chosen, or bridges a completed physical resign gesture into `completeResign()`.
-2. `applyMove(from, to, promotion, isRemoteMove)` — calls `chess_->makeMove()` exactly once (which handles all move/game-end/check logging), then delegates remote physical completion, castling guidance, and outcome visuals to `BoardGameplay::completeAppliedMove()`.
+1. `tryPlayerMove(playerColor, ...)` — builds a `BoardAdapter::GameProvider`, delegates physical lift/placement/capture-removal detection to `BoardGameplay::tryPlayerMove()`, then maps any board-local resign color back to core `Color` before calling `completeResign()`.
+2. `applyMove(from, to, promotion, isRemoteMove)` — cancels stale assistance, maps pre-move castling info, calls `chess_->makeMove()` exactly once (which handles all move/game-end/check logging), maps `MoveResult` to board completion/feedback DTOs, then delegates physical completion and visuals to `BoardGameplay::completeAppliedMove()`.
 3. `applyMove(string)` — coordinate-string overload, parses then delegates with `isRemoteMove = true`.
+
+### Assistance
+
+`serviceAssistance()` delegates to `BoardGameplay::serviceAssistance()` and is
+called only while a local player can act (`PlayerMode::update()` and
+`BotMode::PLAYER_TURN`). `NONE` and `LEGAL_MOVES` never call an engine-backed
+provider; `BEST_MOVE` requests/polls the board-owned `BoardAssistanceProvider`
+until a hint is ready, then the board displays it. `cancelAssistance()` runs before
+move application, board edits, resign confirmation, mode destruction, and other
+state changes that would make a pending hint stale.
 
 ### Resume Support
 `tryResumeGame()` — checks `chess_->hasActiveGame()`, calls `resumeGame()`. Returns `true` if a live game was resumed from flash.
@@ -38,18 +54,18 @@ Virtual hooks let subclasses customize: `isFlipped()`, `onBeforeResignConfirm()`
 Web resign: `setResignPending(true)` → `processResign()` checks the flag at the start of `update()`.
 
 ### Remote Move Guidance
-`BoardGameplay::completeAppliedMove(...)` handles remote physical completion for already-applied engine moves. It delegates through board-owned GUI/assistance services for LED guidance until the player physically executes the move on the board, then shows the normal move-result feedback. BotMode no longer owns a remote-guidance override.
+`BoardGameplay::completeAppliedMove(...)` handles remote physical completion for already-applied engine moves. It delegates through board-owned visual/assistance services for LED guidance until the player physically executes the move on the board, then shows the normal move-result feedback. BotMode no longer owns a remote-guidance override.
 
 ## PlayerMode
 
-Minimal subclass — `begin()` resumes or starts a `GameModeId::PLAYER` game. `update()` calls `tryPlayerMove(sideToMove)` for alternating colors.
+Minimal subclass — `begin()` resumes or starts a `GameModeId::PLAYER` game. `update()` services assistance, then calls `tryPlayerMove(sideToMove)` for alternating colors.
 
 ## BotMode
 
 Composes an `EngineProvider*` (strategy pattern, owned — deleted in destructor).
 
 ### State Machine (`BotState`)
-- `PLAYER_TURN` — `tryPlayerMove()` polls sensors. On valid move: `applyMove()`, notify provider via `onPlayerMoveApplied()`, then if game continues and it's engine's turn → transition to `ENGINE_THINKING`.
+- `PLAYER_TURN` — services independent assistance, then `tryPlayerMove()` polls sensors. On valid move: `applyMove()`, notify provider via `onPlayerMoveApplied()`, then if game continues and it's engine's turn → transition to `ENGINE_THINKING`.
 - `ENGINE_THINKING` — `provider_->checkResult()` polls the background task. On result: `stopThinking()`, apply engine move or handle remote game-end, transition back to `PLAYER_TURN`.
 
 ### begin() Flow
@@ -75,6 +91,8 @@ Composes an `EngineProvider*` (strategy pattern, owned — deleted in destructor
 - **`applyMove()` is the chess mutation boundary; BoardGameplay owns physical completion** — `GameMode::applyMove()` calls `Game::makeMove()` exactly once, then calls `BoardGameplay::completeAppliedMove()` for remote physical prompts, castling guidance, and move-result visuals. Game-end and check/turn *logging* is handled by `Game` (not duplicated here). Subclasses don't override this. This centralizes the chess flow while keeping board-specific interaction sequences out of BotMode/PlayerMode.
 
 - **Remote moves use shared gameplay guidance** — when BotMode applies an engine move, `BoardGameplay::completeAppliedMove()` delegates to board assistance for LED cues (cyan = pick up, white/red = destination) until the player physically executes the move. This bridges the gap between software state (already applied) and physical board state (player must move the piece) without a BotMode-specific override.
+
+- **Assistance is independent from the opponent engine** — `BotMode` owns only the opponent `EngineProvider*`; `Board` owns the active `BoardAssistanceProvider` used for hints. BEST_MOVE can therefore be backed by LibreChess while the opponent engine is Stockfish, Lichess, or LibreChess. Legal-move-only assistance uses the rules adapter and never calls an engine provider.
 
 - **BotMode owns the provider** — `BotMode` deletes the `EngineProvider*` in its destructor. This makes game mode transitions clean: destroying a `BotMode` automatically cancels any running engine task and frees the provider. The provider is never shared between modes.
 

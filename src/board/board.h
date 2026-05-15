@@ -1,16 +1,15 @@
 #ifndef BOARD_H
 #define BOARD_H
 
-#include "board/gui/animations.h"
-#include "board/menus/options.h"
+#include "board/core/menu/menu.h"
+#include "board/core/visual/animations.h"
+#include "board/assistance_provider.h"
 
 #include <cstdint>
 #include <memory>
 
-class BoardCalibration;
 class BoardDiagnostics;
 class BoardGameplay;
-class BoardMenu;
 
 namespace LibreChess {
 namespace board {
@@ -40,8 +39,8 @@ inline bool operator!=(BoardSquare lhs, BoardSquare rhs) { return !(lhs == rhs);
 // ---------------------------------------------------------------------------
 // Board — public physical-board package root
 // ---------------------------------------------------------------------------
-// Owns one internal BoardRuntime plus the long-lived workflows (gameplay,
-// menu, diagnostics, calibration). External firmware accesses the board
+// Owns one internal BoardRuntime plus the long-lived gameplay/diagnostics
+// workflows and a generic menu runner. External firmware accesses the board
 // only through this class.
 // ---------------------------------------------------------------------------
 
@@ -71,9 +70,34 @@ class Board {
 
   // --- Workflows ---
   BoardGameplay& gameplay();
-  BoardMenu& menu();
   BoardDiagnostics& diagnostics();
-  BoardCalibration& calibration();
+
+  /// Display a typed physical-board menu. Idempotently clears any active menu first.
+  void showMenu(BoardMenu& menu, bool flipped = false);
+
+  /// Poll the active menu once. Returns true when that menu finishes.
+  bool pollMenu();
+
+  /// Run a typed physical-board menu until it finishes.
+  bool runMenuBlocking(BoardMenu& menu, bool flipped = false);
+
+  /// Clear the active menu surface and cancel the menu.
+  void clearMenu();
+
+  /// Start the physical sensor diagnostics workflow.
+  void beginDiagnostics();
+
+  /// Poll the physical sensor diagnostics workflow.
+  void updateDiagnostics();
+
+  /// Return whether the diagnostics workflow has completed.
+  bool diagnosticsComplete() const;
+
+  /// Install the active board assistance provider. Passing nullptr disables it.
+  void setAssistanceProvider(std::unique_ptr<BoardAssistanceProvider> provider);
+
+  /// Clear persisted board calibration and reboot.
+  void triggerCalibration();
 
   /// Clear every canvas surface. The renderer flushes when it next wakes.
   void clearAllSurfaces();

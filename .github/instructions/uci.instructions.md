@@ -50,7 +50,7 @@ bool processLine(UCIState& state, const char* line, std::string& output);
 | Context | Path |
 |---------|------|
 | Native CLI (SPRT) | `stdin → uci::loop() → findBestMove() → stdout` |
-| ESP32 firmware | `LibreChessProvider → Game::calculateMove() → findBestMove()` |
+| ESP32 firmware | `LibreChessEngine → Game::calculateMove() → findBestMove()` |
 | UCI tests | `processLine(line, outputBuf) → verify string` |
 
 ## Testing

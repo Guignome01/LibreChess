@@ -51,7 +51,7 @@ Api.saveBoardSettings(b,d) → POST /board-settings
 Api.calibrate()            → POST /board-calibrate
 Api.getLichessInfo()       → GET  /lichess
 Api.saveLichessToken(t)    → POST /lichess
-Api.selectGame(m, c, d, e)   → POST /gameselect
+Api.selectGame(m, c, d, e, aL, aE, aD) → POST /gameselect
 Api.resign()               → POST /resign
 Api.nav(action)            → POST /nav
 Api.getGames()             → GET  /games
@@ -97,6 +97,13 @@ Returns cached board state (populated by `onBoardStateChanged()`):
 | `playerColor` | Bot only | `"white"` or `"black"` |
 | `difficulty` | Bot only | Difficulty level (1–8) |
 | `engine` | Bot only | `"stockfish"` (default) or `"librechess"` |
+| `assistanceLevel` | Play modes only | `"none"`, `"legal"` (default), or `"best"` |
+| `assistanceEngine` | Optional | Engine for BEST_MOVE assistance. `"librechess"` is currently the only implemented value. |
+| `assistanceDifficulty` | Optional | Difficulty level (1–8) for engine-backed assistance hints. |
+
+`NONE` and `LEGAL_MOVES` assistance must not trigger an engine request. If
+`assistanceLevel=best`, the backend currently rejects any `assistanceEngine`
+other than `librechess` with `400 Bad Request`.
 
 ### `POST /nav`
 | Parameter | Required | Description |

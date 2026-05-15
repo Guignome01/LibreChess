@@ -2,6 +2,7 @@
 #define BOARD_CANVAS_H
 
 #include "board/core/colors.h"
+#include "board/core/helpers.h"
 
 #include <stdint.h>
 
@@ -35,8 +36,8 @@ struct BoardCanvasHandle {
 
 class BoardCanvas {
  public:
-  static constexpr int ROWS = 8;
-  static constexpr int COLS = 8;
+  static constexpr int ROWS = BoardHelpers::ROWS;
+  static constexpr int COLS = BoardHelpers::COLS;
   static constexpr uint8_t SURFACE_COUNT = 16;
 
   BoardCanvas();
@@ -130,9 +131,9 @@ class BoardCanvas {
 
  private:
   static constexpr bool inBounds(int row, int col) {
-    return row >= 0 && row < ROWS && col >= 0 && col < COLS;
+    return BoardHelpers::inBounds(row, col);
   }
-  static constexpr int bitOf(int row, int col) { return row * COLS + col; }
+  static constexpr int bitOf(int row, int col) { return BoardHelpers::bitOf(row, col); }
   static constexpr uint64_t bitMask(int row, int col) {
     return uint64_t{1} << bitOf(row, col);
   }

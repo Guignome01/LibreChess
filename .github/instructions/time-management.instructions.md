@@ -46,7 +46,7 @@ Constants: `MOVE_OVERHEAD = 50ms`, `HARD_TIME_MULTIPLIER = 4`.
 - **Header-only** — single function, no state, no `.cpp` file needed.
 - **Pure function** — no side effects, easy to unit test and reuse.
 - **Saturating/bounded arithmetic** — all public clock inputs are `uint32_t`, internal math uses `uint64_t`, and zero-clock/pathological inputs still produce at least `softTimeMs=1`, `hardTimeMs=1`.
-- **Called from two places**: `uci::cmdGo()` (CLI) and potentially `LibreChessProvider` (firmware, if time-based play is added).
+- **Called from two places**: `uci::cmdGo()` (CLI) and potentially `LibreChessEngine` (firmware, if time-based play is added).
 - **`movestogo = 0` means sudden death** — uses `remaining / 30` as a reasonable default.
 
 ## Related Instruction Files

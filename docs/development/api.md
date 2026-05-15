@@ -98,7 +98,7 @@ Save LED brightness and dimming settings. Persisted to NVS.
 
 ### `POST /board-calibrate`
 
-Triggers board recalibration on the next reboot. Sets an NVS flag that the firmware checks at startup.
+Triggers board recalibration by clearing the saved calibration mapping in NVS and rebooting. The startup calibration runner executes before normal board rendering resumes.
 
 **Response** (JSON): `{ "status": "ok" }`
 
@@ -112,8 +112,14 @@ Select a game mode from the web UI.
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `gamemode` | Yes | Mode ID: `1` (Human vs Human), `2` (Bot), `3` (Lichess), `4` (Sensor Test) |
-| `playerColor` | Bot only | `1` (White) or `2` (Black) |
+| `playerColor` | Bot only | `white` or `black` |
 | `difficulty` | Bot only | Difficulty level (1–8) |
+| `engine` | Bot only | Opponent engine: `stockfish` (default) or `librechess` |
+| `assistanceLevel` | Play modes only | `none`, `legal`, or `best` |
+| `assistanceEngine` | Optional | BEST_MOVE hint engine. `librechess` is currently the only implemented value. |
+| `assistanceDifficulty` | Optional | Difficulty level (1–8) for engine-backed hints |
+
+`none` and `legal` assistance do not call an engine. `best` assistance currently requires `assistanceEngine=librechess`; unsupported engines return `400 Bad Request`.
 
 **Response** (JSON): `{ "status": "ok" }` or error message.
 
@@ -347,7 +353,7 @@ The `Api` object in `provider.js` maps to backend endpoints:
 | `Api.calibrate()` | `POST /board-calibrate` | — |
 | `Api.getLichessInfo()` | `GET /lichess` | — |
 | `Api.saveLichessToken(token)` | `POST /lichess` | Token |
-| `Api.selectGame(mode, color, difficulty)` | `POST /gameselect` | Mode, player color, difficulty |
+| `Api.selectGame(mode, color, difficulty, engine, assistanceLevel, assistanceEngine, assistanceDifficulty)` | `POST /gameselect` | Mode, opponent config, and independent assistance config |
 | `Api.resign()` | `POST /resign` | — |
 | `Api.getGames()` | `GET /games` | — |
 | `Api.getGame(id)` | `GET /games?id=` | Game ID |

@@ -1,12 +1,12 @@
 #include "board/workflows/gameplay.h"
 
 #include "board/core/colors.h"
+#include "board/core/menu/menu.h"
 #include "board/core/runtime.h"
-#include "board/menus/prompt.h"
+#include "board/core/visual/animations.h"
+#include "board/menus/confirm.h"
 
 #include <Arduino.h>
-
-using namespace LibreChess;
 
 namespace {
 
@@ -14,57 +14,38 @@ bool sameSquare(int row, int col, int otherRow, int otherCol) {
   return row == otherRow && col == otherCol;
 }
 
-bool moveTargetsSquare(const Move& move, int row, int col) {
-  return squareToRow(move.to) == row && squareToCol(move.to) == col;
+bool placedOnSquare(const BoardInput::Event& event, int row, int col) {
+  return event.kind == BoardInput::EventKind::PLACED && sameSquare(event.row, event.col, row, col);
 }
 
-bool hasLegalMoveTo(const MoveList& moves, int row, int col) {
-  for (int i = 0; i < moves.count; ++i)
-    if (moveTargetsSquare(moves.moves[i], row, col)) return true;
-  return false;
+bool placedOnQuietTarget(const BoardInput::Event& event, const BoardMoveTargetList& targets) {
+  return event.kind == BoardInput::EventKind::PLACED && targets.hasQuietTarget(event.row, event.col);
 }
 
-bool isQuietLegalPlacement(const Game& game, const MoveList& moves, int fromRow, int fromCol,
-                           int placedRow, int placedCol) {
-  if (!hasLegalMoveTo(moves, placedRow, placedCol)) return false;
-  auto enPassant = game.checkEnPassant(fromRow, fromCol, placedRow, placedCol);
-  return Game::isEmptySquare(game.getSquare(placedRow, placedCol)) && !enPassant.isCapture;
+bool liftedCaptureTarget(const BoardInput::Event& event, const BoardMoveTargetList& targets,
+                         BoardMoveTarget& capture) {
+  return event.kind == BoardInput::EventKind::LIFTED &&
+         targets.captureForLiftedSquare(event.row, event.col, capture);
 }
 
-struct CaptureSelection {
-  int targetRow;
-  int targetCol;
-  int capturedRow;
-  int capturedCol;
-  bool isEnPassant;
-};
-
-bool captureSelectionForLiftedSquare(const Game& game, const MoveList& moves, int fromRow,
-                                     int fromCol, int liftedRow, int liftedCol,
-                                     CaptureSelection& selection) {
-  for (int i = 0; i < moves.count; ++i) {
-    int targetRow = squareToRow(moves.moves[i].to);
-    int targetCol = squareToCol(moves.moves[i].to);
-    auto enPassant = game.checkEnPassant(fromRow, fromCol, targetRow, targetCol);
-
-    bool capturesBoardPiece = !Game::isEmptySquare(game.getSquare(targetRow, targetCol));
-    if (!capturesBoardPiece && !enPassant.isCapture) continue;
-
-    int capturedRow = enPassant.isCapture ? squareToRow(enPassant.capturedPawnSq) : targetRow;
-    int capturedCol = targetCol;
-    if (!sameSquare(liftedRow, liftedCol, capturedRow, capturedCol)) continue;
-
-    selection = {targetRow, targetCol, capturedRow, capturedCol, enPassant.isCapture};
-    return true;
+void waitForCapturePlacement(BoardRuntime& runtime, uint16_t cadence, const BoardMoveTarget& capture,
+                             int sourceRow, int sourceCol, int& targetRow, int& targetCol) {
+  while (!runtime.inputOccupied(capture.row, capture.col)) {
+    if (runtime.inputOccupied(sourceRow, sourceCol)) {
+      Serial.println("Capture cancelled");
+      targetRow = sourceRow;
+      targetCol = sourceCol;
+      return;
+    }
+    delay(cadence);
   }
-  return false;
 }
 
-bool inputOverflowed(const BoardInputEventBatch& batch, BoardFeedback& feedback, Log& logger) {
+bool inputOverflowed(const BoardInputEventBatch& batch, BoardFeedback& feedback) {
   if (!batch.overflowed) return false;
-  logger.infof(
+  Serial.printf(
       "Physical board input queue overflowed; dropped %lu event(s), max depth %u; "
-      "ignoring partial gesture and resyncing.",
+      "ignoring partial gesture and resyncing.\n",
       static_cast<unsigned long>(batch.droppedEventCount), batch.maxQueueDepth);
   feedback.showError();
   return true;
@@ -72,48 +53,77 @@ bool inputOverflowed(const BoardInputEventBatch& batch, BoardFeedback& feedback,
 
 }  // namespace
 
-BoardGameplay::BoardGameplay(BoardRuntime& runtime, BoardAnimations& animations)
+BoardGameplay::BoardGameplay(BoardRuntime& runtime, BoardAnimations& animations,
+                             BoardMenuRunner& menuRunner)
     : runtime_(runtime),
       animations_(animations),
+      menuRunner_(menuRunner),
       feedback_(runtime, animations),
       assistance_(runtime, animations) {}
 
-void BoardGameplay::waitForSetup(const Game& game, Log& logger) {
-  assistance_.waitForSetup(game, logger);
+void BoardGameplay::setAssistanceProvider(BoardAssistanceProvider* provider) {
+  if (assistanceProvider_ == provider) return;
+  cancelAssistance();
+  assistanceProvider_ = provider;
+  assistance_.setLevel(provider ? provider->level() : BoardAssistanceLevel::NONE);
 }
 
-BoardGameplayResult BoardGameplay::tryPlayerMove(const Game& game, Color playerColor, Log& logger,
+void BoardGameplay::serviceAssistance() {
+  if (!assistanceProvider_) return;
+  if (assistance_.level() != assistanceProvider_->level()) {
+    assistance_.setLevel(assistanceProvider_->level());
+  }
+
+  BoardBestMoveHint hint;
+  if (assistanceProvider_->service(hint)) {
+    assistance_.showBestMoveHint(hint);
+  }
+}
+
+void BoardGameplay::cancelAssistance() {
+  if (assistanceProvider_) assistanceProvider_->cancel();
+  assistance_.clear();
+}
+
+void BoardGameplay::waitForSetup(const BoardGameProvider& gameProvider) {
+  BoardSetupSnapshot setup;
+  gameProvider.setupSnapshot(setup);
+  assistance_.waitForSetup(setup);
+}
+
+BoardGameplayResult BoardGameplay::tryPlayerMove(const BoardGameProvider& gameProvider,
+                                                 BoardPieceColor playerColor,
                                                  BoardGameplayMove& selection) {
   const uint16_t cadence = runtime_.cadenceMs();
   BoardInputEventBatch batch = runtime_.drainInputEvents();
-  if (inputOverflowed(batch, feedback_, logger)) return BoardGameplayResult::NONE;
+  if (inputOverflowed(batch, feedback_)) return BoardGameplayResult::NONE;
 
   // Look for a recently-lifted piece of the player's colour.
   for (uint8_t i = 0; i < batch.count; ++i) {
-    BoardInput::Event ev = batch.events[i];
-    if (ev.kind != BoardInput::EventKind::LIFTED) continue;
-    int row = ev.row;
-    int col = ev.col;
+    BoardInput::Event event = batch.events[i];
+    if (event.kind != BoardInput::EventKind::LIFTED) continue;
+    int row = event.row;
+    int col = event.col;
 
-    Piece piece = game.getSquare(row, col);
-    if (Game::isEmptySquare(piece)) continue;
+    BoardPiece piece = gameProvider.pieceAt(row, col);
+    if (!piece.occupied()) continue;
 
-    if (Game::pieceColor(piece) != playerColor) {
-      logger.infof("Wrong turn! It's %s's turn to move.", Game::colorName(playerColor));
+    if (piece.color != playerColor) {
+      Serial.printf("Wrong turn! It's %s's turn to move.\n", boardColorName(playerColor));
       feedback_.showIllegalMoveFeedback(row, col);
       return BoardGameplayResult::NONE;
     }
 
-    logger.infof("Piece pickup from %s", Game::squareName(row, col).c_str());
+    Serial.printf("Piece pickup from %c%c\n", boardFileChar(col), boardRankChar(row));
 
-    MoveList moves;
-    game.getPossibleMoves(row, col, moves);
-    assistance_.showLegalMoveHighlights(row, col, moves, game);
+    BoardMoveTargetList targets;
+    gameProvider.legalTargets(row, col, targets);
+    assistance_.showLegalMoveHighlights(row, col, targets);
 
     int targetRow = -1;
     int targetCol = -1;
     bool piecePlaced = false;
-    bool isKing = (Game::pieceType(piece) == PieceType::KING);
+    bool isKing = (piece.type == BoardPieceType::KING);
     unsigned long liftTimestamp = millis();
     bool resignTransitioned = false;
     unsigned long resignFlagTimestamp = 0;
@@ -123,24 +133,24 @@ BoardGameplayResult BoardGameplay::tryPlayerMove(const Game& game, Color playerC
       if (isKing && !resignTransitioned && (millis() - liftTimestamp >= RESIGN_HOLD_MS)) {
         resignTransitioned = true;
         resignFlagTimestamp = millis();
-        logger.info("King held off square for 3s - resign gesture initiated");
+        Serial.println("King held off square for 3s - resign gesture initiated");
         feedback_.showResignProgress(row, col, 0);
       }
 
       if (eventIndex >= batch.count) {
         batch = runtime_.drainInputEvents();
-        if (inputOverflowed(batch, feedback_, logger)) {
-          feedback_.clearBoard();
+        if (inputOverflowed(batch, feedback_)) {
+          cancelAssistance();
           return BoardGameplayResult::NONE;
         }
         eventIndex = 0;
       }
 
       for (; eventIndex < batch.count; ++eventIndex) {
-        BoardInput::Event e = batch.events[eventIndex];
+        BoardInput::Event event = batch.events[eventIndex];
 
         // Source square placed back: pickup cancelled.
-        if (e.kind == BoardInput::EventKind::PLACED && sameSquare(e.row, e.col, row, col)) {
+        if (placedOnSquare(event, row, col)) {
           targetRow = row;
           targetCol = col;
           piecePlaced = true;
@@ -148,40 +158,28 @@ BoardGameplayResult BoardGameplay::tryPlayerMove(const Game& game, Color playerC
         }
 
         // Quiet placement on a different square.
-        if (e.kind == BoardInput::EventKind::PLACED &&
-            isQuietLegalPlacement(game, moves, row, col, e.row, e.col)) {
-          targetRow = e.row;
-          targetCol = e.col;
+        if (placedOnQuietTarget(event, targets)) {
+          targetRow = event.row;
+          targetCol = event.col;
           piecePlaced = true;
           break;
         }
 
         // Capture: opponent piece lifted.
-        if (e.kind == BoardInput::EventKind::LIFTED) {
-          CaptureSelection capture;
-          if (!captureSelectionForLiftedSquare(game, moves, row, col, e.row, e.col, capture))
-            continue;
-
-          logger.infof("Capture initiated at %s",
-                       Game::squareName(capture.targetRow, capture.targetCol).c_str());
-          targetRow = capture.targetRow;
-          targetCol = capture.targetCol;
+        BoardMoveTarget capture;
+        if (liftedCaptureTarget(event, targets, capture)) {
+          Serial.printf("Capture initiated at %c%c\n", boardFileChar(capture.col),
+                        boardRankChar(capture.row));
+          targetRow = capture.row;
+          targetCol = capture.col;
           piecePlaced = true;
-          if (capture.isEnPassant)
+          if (capture.enPassant)
             feedback_.clearSquare(capture.capturedRow, capture.capturedCol);
-          assistance_.showCapturePlacementPrompt(capture.targetRow, capture.targetCol);
+          assistance_.showCapturePlacementPrompt(capture.row, capture.col);
 
           // Wait for the player to drop the moving piece on the capture square
           // (or restore it to the source = cancel).
-          while (!runtime_.inputOccupied(capture.targetRow, capture.targetCol)) {
-            if (runtime_.inputOccupied(row, col)) {
-              logger.info("Capture cancelled");
-              targetRow = row;
-              targetCol = col;
-              break;
-            }
-            delay(cadence);
-          }
+          waitForCapturePlacement(runtime_, cadence, capture, row, col, targetRow, targetCol);
           break;
         }
       }
@@ -190,27 +188,15 @@ BoardGameplayResult BoardGameplay::tryPlayerMove(const Game& game, Color playerC
 
     runtime_.clearInputEvents();
 
-    if (!(resignTransitioned && targetRow == row && targetCol == col)) feedback_.clearBoard();
+    if (!(resignTransitioned && targetRow == row && targetCol == col)) cancelAssistance();
 
     if (targetRow == row && targetCol == col) {
-      if (resignTransitioned) {
-        if (millis() - resignFlagTimestamp > RESIGN_LIFT_WINDOW_MS) {
-          feedback_.clearBoard();
-        } else {
-          feedback_.showResignProgress(row, col, 1, true);
-          if (continueResignGesture(row, col, Game::pieceColor(piece), logger)) {
-            selection.resignColor = Game::pieceColor(piece);
-            return BoardGameplayResult::RESIGN_REQUESTED;
-          }
-        }
-      } else {
-        logger.info("Pickup cancelled");
-      }
-      return BoardGameplayResult::NONE;
+      return handleSourceRestore(row, col, piece.color, resignTransitioned, resignFlagTimestamp,
+                                 selection);
     }
 
-    if (!hasLegalMoveTo(moves, targetRow, targetCol)) {
-      logger.info("Illegal move, reverting");
+    if (!targets.hasTarget(targetRow, targetCol)) {
+      Serial.println("Illegal move, reverting");
       return BoardGameplayResult::NONE;
     }
 
@@ -224,32 +210,35 @@ BoardGameplayResult BoardGameplay::tryPlayerMove(const Game& game, Color playerC
   return BoardGameplayResult::NONE;
 }
 
-void BoardGameplay::completeAppliedMove(const Game& game, const MoveResult& result,
-                                        const CastlingInfo& castling, int fromRow, int fromCol,
-                                        int toRow, int toCol, bool isRemoteMove, Log& logger) {
-  if (isRemoteMove && !result.isCastling())
-    assistance_.guideRemoteMoveCompletion(
-        fromRow, fromCol, toRow, toCol, result.isCapture(), result.isEnPassant(),
-        result.epCapturedSq == SQ_NONE ? -1 : squareToRow(result.epCapturedSq), logger);
+void BoardGameplay::completeAppliedMove(const BoardMoveCompletion& completion,
+                                        const BoardMoveFeedbackData& feedback, int fromRow,
+                                        int fromCol, int toRow, int toCol) {
+  cancelAssistance();
 
-  if (result.isCastling())
-    assistance_.guideCastling(fromRow, fromCol, toRow, toCol, castling, isRemoteMove, logger);
+  if (completion.isRemoteMove && !completion.castling.isCastling)
+    assistance_.guideRemoteMoveCompletion(fromRow, fromCol, toRow, toCol, completion);
 
-  feedback_.showMoveResultFeedback(result, toRow, toCol, game);
+  if (completion.castling.isCastling)
+    assistance_.guideCastling(fromRow, fromCol, toRow, toCol, completion.castling,
+                              completion.isRemoteMove);
+
+  feedback_.showMoveResultFeedback(feedback);
 }
 
-bool BoardGameplay::confirmResign(Color resignColor, bool flipped, Log& logger) {
-  logger.infof("Resign confirmation for %s...", Game::colorName(resignColor));
+bool BoardGameplay::confirmResign(BoardPieceColor resignColor, bool flipped) {
+  Serial.printf("Resign confirmation for %s...\n", boardColorName(resignColor));
 
-  const bool confirmed = MenuPrompt::confirm(runtime_, animations_, flipped);
+  ConfirmMenu menu;
+  menuRunner_.runBlocking(menu, flipped);
+  const bool confirmed = menu.accepted();
   if (!confirmed) {
-    logger.info("Resign cancelled");
+    Serial.println("Resign cancelled");
   }
   return confirmed;
 }
 
-void BoardGameplay::showResignWinner(Color resignColor) {
-  feedback_.showWinner(~resignColor);
+void BoardGameplay::showResignWinner(BoardPieceColor resignColor) {
+  feedback_.showWinner(oppositeBoardColor(resignColor));
 }
 
 BoardAnimationHandle BoardGameplay::startThinkingStatus() { return feedback_.startThinking(); }
@@ -264,7 +253,29 @@ void BoardGameplay::showRemoteGameEnd(char winnerColor) { feedback_.showRemoteGa
 
 void BoardGameplay::showErrorFeedback() { feedback_.showError(); }
 
-bool BoardGameplay::continueResignGesture(int row, int col, Color color, Log& logger) {
+BoardGameplayResult BoardGameplay::handleSourceRestore(int row, int col, BoardPieceColor color,
+                                                       bool resignTransitioned,
+                                                       unsigned long resignFlagTimestamp,
+                                                       BoardGameplayMove& selection) {
+  if (!resignTransitioned) {
+    Serial.println("Pickup cancelled");
+    return BoardGameplayResult::NONE;
+  }
+
+  if (millis() - resignFlagTimestamp > RESIGN_LIFT_WINDOW_MS) {
+    feedback_.clearBoard();
+    return BoardGameplayResult::NONE;
+  }
+
+  feedback_.showResignProgress(row, col, 1, true);
+  if (continueResignGesture(row, col, color)) {
+    selection.resignColor = color;
+    return BoardGameplayResult::RESIGN_REQUESTED;
+  }
+  return BoardGameplayResult::NONE;
+}
+
+bool BoardGameplay::continueResignGesture(int row, int col, BoardPieceColor color) {
   const uint16_t cadence = runtime_.cadenceMs();
 
   for (int lift = 1; lift <= 2; lift++) {
@@ -301,7 +312,7 @@ bool BoardGameplay::continueResignGesture(int row, int col, Color color, Log& lo
     feedback_.showResignProgress(row, col, lift + 1);
   }
 
-  logger.infof("Resign gesture completed by %s", Game::colorName(color));
+  Serial.printf("Resign gesture completed by %s\n", boardColorName(color));
   delay(500);
   feedback_.clearResignFeedback(row, col);
   runtime_.clearInputEvents();

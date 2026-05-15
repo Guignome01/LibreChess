@@ -2,7 +2,8 @@
 
 #include "board/core/colors.h"
 #include "board/core/runtime.h"
-#include "board/gui/animations.h"
+#include "board/core/helpers.h"
+#include "board/core/visual/animations.h"
 
 #include <Arduino.h>
 
@@ -13,14 +14,6 @@ BoardDiagnostics::BoardDiagnostics(BoardRuntime& runtime, BoardAnimations& anima
       visited_{},
       complete_(false),
       visitedCount_(0) {}
-
-BoardCanvasHandle BoardDiagnostics::writableSurface(BoardCanvas& canvas) {
-  if (!canvas.active(surface_)) {
-    surface_ = canvas.acquireSurface();
-  }
-  canvas.bringToFront(surface_);
-  return surface_;
-}
 
 void BoardDiagnostics::begin() {
   Serial.println("Sensor Test: Visit all squares with a piece to complete the test.");
@@ -40,7 +33,7 @@ void BoardDiagnostics::update() {
     complete_ = true;
     Serial.println("Sensor Test complete! All squares verified.");
     auto g = runtime_.lockCanvas();
-    if (g.canvas.active(surface_)) g.canvas.clearSurface(surface_);
+    BoardSurface::clear(g.canvas, surface_);
     animations_.startFirework(LedColors::Cyan, millis());
   }
 }
@@ -67,7 +60,7 @@ void BoardDiagnostics::recordVisitedSquare(int row, int col) {
 
 void BoardDiagnostics::paintVisited() {
   auto g = runtime_.lockCanvas();
-  BoardCanvasHandle surface = writableSurface(g.canvas);
+  BoardCanvasHandle surface = BoardSurface::writable(g.canvas, surface_);
   g.canvas.clearSurface(surface);
   for (int row = 0; row < ROWS; ++row)
     for (int col = 0; col < COLS; ++col)

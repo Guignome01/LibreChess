@@ -4,6 +4,7 @@
 #include <NeoPixelBusLg.h>
 
 #include "colors.h"
+#include "helpers.h"
 
 // ---------------------------
 // Hardware Configuration
@@ -14,9 +15,9 @@
 // The strip doesn't need to have a specific layout, calibration will map it correctly
 // ---------------------------
 #define LED_PIN 32
-#define NUM_ROWS 8
-#define NUM_COLS 8
-#define LED_COUNT (NUM_ROWS * NUM_COLS)
+inline constexpr int NUM_ROWS = BoardHelpers::ROWS;
+inline constexpr int NUM_COLS = BoardHelpers::COLS;
+inline constexpr int LED_COUNT = BoardHelpers::SQUARES;
 #define BRIGHTNESS 255 // LED brightness: 0-255 (0=off, 255=max). Current: 255 (100% max brightness)
 
 // ---------------------------
@@ -107,7 +108,7 @@ class BoardDriver {
   bool getSensorState(int row, int col) const;
 
   /// Read the physical sensor matrix without debounce or logical mapping.
-  void readRawCalibrationSensors(bool (&rawState)[NUM_ROWS][NUM_COLS]);
+  void readRawSensors(bool (&rawState)[NUM_ROWS][NUM_COLS]);
 
   /// Set one physical LED pixel directly during calibration.
   void setRawCalibrationLED(int pixelIndex, LedRGB color);
