@@ -8,8 +8,8 @@
 
 #include <unity.h>
 
-#include "board/core/canvas.h"
-#include "board/core/helpers.h"
+#include "board/runtime/canvas.h"
+#include "board/runtime/helpers.h"
 
 namespace {
 

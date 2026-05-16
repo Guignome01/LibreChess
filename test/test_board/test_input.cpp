@@ -7,7 +7,7 @@
 
 #include <string.h>
 
-#include "board/core/input.h"
+#include "board/runtime/input.h"
 
 namespace {
 

@@ -58,19 +58,19 @@ BoardPiece toBoardPiece(LibreChess::Piece piece) {
           toBoardColor(LibreChess::Game::pieceColor(piece))};
 }
 
-GameProvider::GameProvider(const LibreChess::Game& game) : game_(game) {}
+GameRules::GameRules(const LibreChess::Game& game) : game_(game) {}
 
-BoardPiece GameProvider::pieceAt(int row, int col) const {
+BoardPiece GameRules::pieceAt(int row, int col) const {
   return toBoardPiece(game_.getSquare(row, col));
 }
 
-void GameProvider::setupSnapshot(BoardSetupSnapshot& snapshot) const {
+void GameRules::setupSnapshot(BoardSetupSnapshot& snapshot) const {
   game_.forEachSquare([&](int row, int col, LibreChess::Piece piece) {
     snapshot.squares[row][col] = toBoardPiece(piece);
   });
 }
 
-void GameProvider::legalTargets(int fromRow, int fromCol, BoardMoveTargetList& targets) const {
+void GameRules::legalTargets(int fromRow, int fromCol, BoardMoveTargetList& targets) const {
   targets.clear();
   LibreChess::MoveList moves;
   game_.getPossibleMoves(fromRow, fromCol, moves);

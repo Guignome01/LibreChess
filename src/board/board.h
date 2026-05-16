@@ -1,51 +1,34 @@
 #ifndef BOARD_H
 #define BOARD_H
 
-#include "board/core/menu/menu.h"
-#include "board/core/visual/animations.h"
+#include "board/services/menu/menu.h"
+#include "board/programs/game/game_program.h"
+#include "board/services/program/program.h"
+#include "board/services/visual/animations.h"
 #include "board/assistance_provider.h"
 
 #include <cstdint>
 #include <memory>
 
-class BoardDiagnostics;
-class BoardGameplay;
-
-namespace LibreChess {
-namespace board {
-
-static constexpr int BOARD_ROWS = 8;
-static constexpr int BOARD_COLS = 8;
-static constexpr int BOARD_SQUARES = BOARD_ROWS * BOARD_COLS;
-
-inline constexpr bool isValidSquare(int row, int col) {
-  return row >= 0 && row < BOARD_ROWS && col >= 0 && col < BOARD_COLS;
-}
-
-struct BoardSquare {
-  int8_t row;
-  int8_t col;
-  bool valid() const { return isValidSquare(row, col); }
-};
-
-inline bool operator==(BoardSquare lhs, BoardSquare rhs) {
-  return lhs.row == rhs.row && lhs.col == rhs.col;
-}
-inline bool operator!=(BoardSquare lhs, BoardSquare rhs) { return !(lhs == rhs); }
-
-}  // namespace board
-}  // namespace LibreChess
-
 // ---------------------------------------------------------------------------
 // Board — public physical-board package root
 // ---------------------------------------------------------------------------
-// Owns one internal BoardRuntime plus the long-lived gameplay/diagnostics
-// workflows and a generic menu runner. External firmware accesses the board
-// only through this class.
+// Owns one internal BoardRuntime plus board services, factories, and runners.
+// External firmware accesses the board only through this class.
 // ---------------------------------------------------------------------------
 
 class Board {
  public:
+  /// Completion events produced by one board service tick.
+  struct UpdateResult {
+    bool menuFinished = false;
+    bool programFinished = false;
+  };
+
+  /// Move-only RAII token for a board-owned animation.
+  /// Auto-cancels on destruction (acquires the canvas lock).
+  using Animation = BoardAnimationToken;
+
   Board();
   ~Board();
 
@@ -68,46 +51,46 @@ class Board {
   /// Sensor poll cadence (ms). Main loop should `delay(cadenceMs())`.
   uint16_t cadenceMs() const;
 
-  // --- Workflows ---
-  BoardGameplay& gameplay();
-  BoardDiagnostics& diagnostics();
+  /// Poll board-managed overlays/programs once and return completion events.
+  UpdateResult update();
+
+  // --- Programs ---
+
+  /// Start (or restart) the board's game program. Returns the persistent
+  /// game program instance for game-mode integration, or nullptr if the
+  /// board failed to initialize.
+  BoardGameProgram* startGame();
+
+  /// Reset the game program to an idle state. The instance stays alive.
+  void stopGame();
+
+  /// Start a polled board program by registered string id (e.g. diagnostics).
+  /// Returns the active program, or nullptr if the id is unknown.
+  BoardProgram* startProgram(const char* programId);
+
+  /// Cancel and detach the active polled board program.
+  void stopProgram();
 
   /// Display a typed physical-board menu. Idempotently clears any active menu first.
   void showMenu(BoardMenu& menu, bool flipped = false);
 
-  /// Poll the active menu once. Returns true when that menu finishes.
-  bool pollMenu();
-
   /// Run a typed physical-board menu until it finishes.
-  bool runMenuBlocking(BoardMenu& menu, bool flipped = false);
+  bool runMenu(BoardMenu& menu, bool flipped = false);
 
-  /// Clear the active menu surface and cancel the menu.
-  void clearMenu();
-
-  /// Start the physical sensor diagnostics workflow.
-  void beginDiagnostics();
-
-  /// Poll the physical sensor diagnostics workflow.
-  void updateDiagnostics();
-
-  /// Return whether the diagnostics workflow has completed.
-  bool diagnosticsComplete() const;
+  /// Cancel and erase the active menu surface.
+  void stopMenu();
 
   /// Install the active board assistance provider. Passing nullptr disables it.
   void setAssistanceProvider(std::unique_ptr<BoardAssistanceProvider> provider);
 
   /// Clear persisted board calibration and reboot.
-  void triggerCalibration();
+  void resetCalibration();
 
   /// Clear every canvas surface. The renderer flushes when it next wakes.
   void clearAllSurfaces();
 
-  /// Start the looping WiFi-connecting animation. Returns a handle the caller
-  /// passes back to `stopConnectingStatus`.
-  BoardAnimationHandle startConnectingStatus();
-
-  /// Cancel a connecting animation previously started.
-  void stopConnectingStatus(BoardAnimationHandle& handle);
+  /// Start a named board animation. The returned token stops it automatically.
+  Animation startAnimation(const char* animationId);
 
  private:
   struct Impl;

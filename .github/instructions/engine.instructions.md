@@ -12,7 +12,7 @@ Firmware integrations under `src/engines/**` derive from `AsyncEngineProvider`
 when they need FreeRTOS task lifecycle helpers. Concrete opponent engines are
 `StockfishEngine`, `LichessEngine`, and `LibreChessEngine`. Each engine handles
 computation/communication and returns data only. Engines never touch board
-workflows, `BoardDriver`, or any hardware; `LibreChessEngine` is the exception
+programs, `BoardDriver`, or any hardware; `LibreChessEngine` is the exception
 that receives a non-owning `Game*` for on-board search through public Game APIs.
 Best-move assistance providers are colocated with the engine they use, such as
 `src/engines/librechess/assistance.*`, and implement the board-owned
@@ -31,7 +31,7 @@ and must not call an engine.
 `lib/game/src/provider.h` owns the firmware-neutral data contract:
 `DifficultyLevel`, `EngineInitResult`, `EngineResult`, and abstract
 `EngineProvider`. It may include game-layer types such as `GameResult`, but it
-must not include Arduino, FreeRTOS, WiFi, board workflows, or firmware metadata
+must not include Arduino, FreeRTOS, WiFi, board programs, or firmware metadata
 types. `EngineInitResult::mode` is an opaque `uint8_t`; firmware maps it to
 `GameModeId`/`GameMeta` at the `src/game_mode/` boundary.
 

@@ -54,6 +54,7 @@ void initializeSelectedMode(AppMode mode);
 void checkForResumableGame();
 BoardAssistanceLevel assistanceLevelFromInt(int value);
 void configureBoardAssistance();
+BoardGameProgram* startBoardGameProgram();
 
 void setup() {
   Serial.begin(115200);
@@ -143,7 +144,7 @@ void checkForResumableGame() {
   Serial.println("  Green = Resume, Red = Discard");
 
   ResumeConfirmMenu resumeMenu(confirmMode);
-  physicalBoard.runMenuBlocking(resumeMenu, flipped);
+  physicalBoard.runMenu(resumeMenu, flipped);
   if (resumeMenu.accepted()) {
     Serial.println("  -> Player chose to RESUME");
     switch (resumeMode) {
@@ -219,14 +220,16 @@ void loop() {
         assistanceEngine = wifiManager.getAssistanceEngine();
       }
       modeInitialized = false;
-      physicalBoard.clearMenu();
+      physicalBoard.stopMenu();
       wifiManager.resetGameSelection();
       physicalBoard.clearAllSurfaces();
     }
   }
 
+  Board::UpdateResult boardUpdate = physicalBoard.update();
+
   if (currentMode == AppMode::SELECTION) {
-    if (physicalBoard.pollMenu() && gameSelectionMenu.hasSelection()) {
+    if (boardUpdate.menuFinished && gameSelectionMenu.hasSelection()) {
       handleGameSelection(gameSelectionMenu.selection());
     }
     delay(physicalBoard.cadenceMs());
@@ -287,10 +290,8 @@ void loop() {
       }
       break;
     case AppMode::BOARD_DIAGNOSTICS:
-      if (physicalBoard.diagnosticsComplete())
+      if (boardUpdate.programFinished)
         enterGameSelection();
-      else
-        physicalBoard.updateDiagnostics();
       break;
     default:
       enterGameSelection();
@@ -317,9 +318,23 @@ void configureBoardAssistance() {
       assistanceLevel, assistanceEngine, assistanceDifficultyLevel, &chess, &logger));
 }
 
+BoardGameProgram* startBoardGameProgram() {
+  BoardGameProgram* gameProgram = physicalBoard.startGame();
+  if (gameProgram == nullptr) {
+    Serial.println("ERROR: Failed to start board game program");
+    return nullptr;
+  }
+  return gameProgram;
+}
+
 void enterGameSelection() {
   currentMode = AppMode::SELECTION;
   modeInitialized = false;
+  delete activeGame;
+  activeGame = nullptr;
+  physicalBoard.stopGame();
+  physicalBoard.stopProgram();
+  physicalBoard.setAssistanceProvider(nullptr);
   physicalBoard.showMenu(gameSelectionMenu);
   Serial.println("=============== Game Selection Mode ===============");
   Serial.println("Four LEDs are lit in the center of the board:");
@@ -372,34 +387,53 @@ void initializeSelectedMode(AppMode mode) {
   // Clean up previous game/test
   delete activeGame;
   activeGame = nullptr;
+  physicalBoard.stopGame();
+  physicalBoard.stopProgram();
   physicalBoard.setAssistanceProvider(nullptr);
 
   switch (mode) {
-    case AppMode::CHESS_MOVES:
+    case AppMode::CHESS_MOVES: {
       Serial.println("Starting 'Chess Moves'...");
       configureBoardAssistance();
-      activeGame = new PlayerMode(&physicalBoard.gameplay(), &wifiManager, &chess, &logger);
-      activeGame->begin();
-      break;
-    case AppMode::BOT: {
-      Serial.printf("Starting 'Chess Bot' (Engine: %s, Level: %d, Player is %s)...\n", botEngine.c_str(), botDifficultyLevel, playerColor == 'w' ? "White" : "Black");
-      configureBoardAssistance();
-      EngineProvider* provider = Engines::createOpponentEngine(
-          botEngine, &chess, botDifficultyLevel, playerColor, &logger);
-      activeGame = new BotMode(&physicalBoard.gameplay(), &wifiManager, &chess, provider, &logger);
+      BoardGameProgram* gameProgram = startBoardGameProgram();
+      if (gameProgram == nullptr) {
+        enterGameSelection();
+        break;
+      }
+      activeGame = new PlayerMode(gameProgram, &wifiManager, &chess, &logger);
       activeGame->begin();
       break;
     }
-    case AppMode::LICHESS:
+    case AppMode::BOT: {
+      Serial.printf("Starting 'Chess Bot' (Engine: %s, Level: %d, Player is %s)...\n", botEngine.c_str(), botDifficultyLevel, playerColor == 'w' ? "White" : "Black");
+      configureBoardAssistance();
+      BoardGameProgram* gameProgram = startBoardGameProgram();
+      if (gameProgram == nullptr) {
+        enterGameSelection();
+        break;
+      }
+      EngineProvider* provider = Engines::createOpponentEngine(
+          botEngine, &chess, botDifficultyLevel, playerColor, &logger);
+      activeGame = new BotMode(gameProgram, &wifiManager, &chess, provider, &logger);
+      activeGame->begin();
+      break;
+    }
+    case AppMode::LICHESS: {
       Serial.println("Starting 'Lichess Mode'...");
       configureBoardAssistance();
-      activeGame = new BotMode(&physicalBoard.gameplay(), &wifiManager, &chess,
+      BoardGameProgram* gameProgram = startBoardGameProgram();
+      if (gameProgram == nullptr) {
+        enterGameSelection();
+        break;
+      }
+      activeGame = new BotMode(gameProgram, &wifiManager, &chess,
                                Engines::createLichessEngine(lichessConfig, &logger), &logger);
       activeGame->begin();
       break;
+    }
     case AppMode::BOARD_DIAGNOSTICS:
       Serial.println("Starting 'Sensor Test'...");
-      physicalBoard.beginDiagnostics();
+      physicalBoard.startProgram("diagnostics");
       break;
     default:
       enterGameSelection();

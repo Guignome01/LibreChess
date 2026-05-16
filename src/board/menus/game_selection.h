@@ -1,7 +1,7 @@
 #ifndef BOARD_MENUS_GAME_SELECTION_H
 #define BOARD_MENUS_GAME_SELECTION_H
 
-#include "board/core/menu/menu.h"
+#include "board/services/menu/menu.h"
 
 #include <stdint.h>
 

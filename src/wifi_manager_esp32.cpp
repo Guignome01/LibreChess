@@ -352,13 +352,13 @@ bool WiFiManagerESP32::connectToNetwork(uint8_t index) {
   WiFi.begin(net.ssid.c_str(), net.password.c_str());
 
   int attempts = 0;
-  BoardAnimationHandle connectingHandle = board_->startConnectingStatus();
+  Board::Animation connecting = board_->startAnimation("connecting");
   while (WiFi.status() != WL_CONNECTED && attempts < 10) {
     delay(board_->cadenceMs() * 4);
     attempts++;
     Serial.printf("  Attempt %d/10 \u2014 status: %d\n", attempts, WiFi.status());
   }
-  board_->stopConnectingStatus(connectingHandle);
+  connecting.stop();
 
   if (WiFi.status() == WL_CONNECTED) {
     connectedNetworkIndex = index;
@@ -814,7 +814,7 @@ void WiFiManagerESP32::handleBoardSettings(AsyncWebServerRequest* request) {
 }
 
 void WiFiManagerESP32::handleBoardCalibration(AsyncWebServerRequest* request) {
-  board_->triggerCalibration();
+  board_->resetCalibration();
   sendJsonOk(request);
 }
 

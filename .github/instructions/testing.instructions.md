@@ -65,7 +65,8 @@ test/
 │   ├── test_input.cpp                   BoardInput: baseline sync, edge events, queue consumption, overflow metrics, bounds
 │   ├── test_effects.cpp                 BoardScheduler + BoardAnimations: slot lifecycle, stale handles, sibling composition, looping/finite animations
 │   ├── test_types.cpp                   Board-owned gameplay DTOs and fixed assistance providers: assistance engine gate, target merge/capture helpers, bounds rejection
-│   └── test_menu.cpp                    Typed menu state machines: game-selection flow, back navigation, confirmation, resume pre-blink
+│   ├── test_menu.cpp                    Typed menu state machines and menu factory registration: game-selection flow, back navigation, confirmation, resume pre-blink, built-in ids
+│   └── test_program.cpp                 BoardProgramRunner + BoardProgramFactory: borrowed/owned start, poll completion, stop cancellation/destruction, replacement cancellation, factory edge cases
 ├── suites/                              Shared EPD test files (no .cpp — not compiled)
 │   ├── wac.epd                          Win At Chess — 300 positions (Reinfeld/Wilson, CPW verbatim)
 │   ├── bk.epd                           Bratko-Kopec — 24 positions (Bratko/Kopec, CPW verbatim)

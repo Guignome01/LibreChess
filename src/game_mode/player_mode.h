@@ -6,7 +6,7 @@
 // Human vs human local game mode
 class PlayerMode : public GameMode {
  public:
-  PlayerMode(BoardGameplay* gameplay, WiFiManagerESP32* wm, Game* cg,
+  PlayerMode(BoardGameProgram* gameplay, WiFiManagerESP32* wm, Game* cg,
              ILogger* logger = nullptr);
   void begin() override;
   void update() override;

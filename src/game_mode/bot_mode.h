@@ -1,7 +1,7 @@
 #ifndef GAME_BOT_MODE_H
 #define GAME_BOT_MODE_H
 
-#include "board/core/visual/animations.h"
+#include "board/services/visual/animations.h"
 #include "game_mode.h"
 #include "provider.h"
 
@@ -13,7 +13,7 @@ enum class BotState { PLAYER_TURN, ENGINE_THINKING };
 // The provider runs HTTP in a FreeRTOS task; update() stays non-blocking.
 class BotMode : public GameMode {
  public:
-  BotMode(BoardGameplay* gameplay, WiFiManagerESP32* wm, Game* cg,
+        BotMode(BoardGameProgram* gameplay, WiFiManagerESP32* wm, Game* cg,
           EngineProvider* provider, ILogger* logger = nullptr);
   ~BotMode() override;
 
@@ -26,7 +26,7 @@ class BotMode : public GameMode {
   char playerColor_ = 'w';
   BotState botState_ = BotState::PLAYER_TURN;
   int engineRetryCount_ = 0;
-  BoardAnimationHandle thinkingAnimation_;
+  BoardAnimationToken thinkingAnimation_;
   bool wasThinkingBeforeResign_ = false;
 
   /// Convert stored char playerColor to Color enum.

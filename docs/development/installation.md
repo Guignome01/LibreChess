@@ -66,7 +66,7 @@ The `data/` directory is committed to the repository, so the build works without
 
 ## GPIO Configuration
 
-If you're using different GPIO pins than the defaults, edit the pin definitions in `src/board/core/driver.h` before flashing. The default pins are documented in the [wiring guide](../hardware/wiring.md).
+If you're using different GPIO pins than the defaults, edit the pin definitions in `src/board/runtime/driver.h` before flashing. The default pins are documented in the [wiring guide](../hardware/wiring.md).
 
 Note that the physical order of row pin connections does not matter — the calibration process maps pins to logical board coordinates.
 

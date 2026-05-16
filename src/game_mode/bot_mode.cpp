@@ -1,11 +1,11 @@
 #include "bot_mode.h"
-#include "board/workflows/gameplay.h"
+#include "board/programs/game/game_program.h"
 #include "game.h"
 #include "wifi_manager_esp32.h"
 
 #include <Arduino.h>
 
-BotMode::BotMode(BoardGameplay* gameplay, WiFiManagerESP32* wm, Game* cg,
+BotMode::BotMode(BoardGameProgram* gameplay, WiFiManagerESP32* wm, Game* cg,
                  EngineProvider* provider, ILogger* logger)
   : GameMode(gameplay, wm, cg, logger), provider_(provider) {}
 
@@ -26,12 +26,12 @@ void BotMode::begin() {
   }
 
   // Provider may block (e.g., Lichess game discovery). Show waiting animation.
-  BoardAnimationHandle waitAnim = gameplay_->startWaitingStatus();
+  BoardAnimationToken waitAnim = gameplay_->startWaitingStatus();
 
   EngineInitResult initResult;
   bool ok = provider_->initialize(initResult);
 
-  gameplay_->stopStatusAnimation(waitAnim);
+  waitAnim.stop();
 
   if (!ok) {
     abortWithError("Engine initialization failed");
@@ -173,7 +173,7 @@ void BotMode::abortWithError(const char* message) {
 // ---------------------------------------------------------------
 
 void BotMode::onBeforeResignConfirm() {
-  wasThinkingBeforeResign_ = thinkingAnimation_.valid();
+  wasThinkingBeforeResign_ = thinkingAnimation_.active();
   if (wasThinkingBeforeResign_) {
     provider_->cancelRequest();
     stopThinking();
@@ -201,7 +201,5 @@ void BotMode::startThinking() {
 }
 
 void BotMode::stopThinking() {
-  if (thinkingAnimation_.valid()) {
-    gameplay_->stopStatusAnimation(thinkingAnimation_);
-  }
+  thinkingAnimation_.stop();
 }

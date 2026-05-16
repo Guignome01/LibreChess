@@ -1,37 +1,52 @@
 #include "board/board.h"
 
-#include "board/core/menu/menu.h"
-#include "board/core/runtime.h"
-#include "board/core/visual/animations.h"
-#include "board/workflows/diagnostics.h"
-#include "board/workflows/gameplay.h"
+#include "board/programs/factory.h"
+#include "board/programs/game/gameplay.h"
+#include "board/programs/ids.h"
+#include "board/runtime/runtime.h"
+#include "board/services/menu/menu.h"
+#include "board/services/program/factory.h"
+#include "board/services/program/program.h"
+#include "board/services/visual/animations.h"
 #include "shared/utils.h"
 
 #include <Arduino.h>
 #include <Preferences.h>
+#include <string.h>
+#include <utility>
 
 struct Board::Impl {
   BoardRuntime runtime;
   BoardAnimations animations;
   BoardMenuRunner menuRunner;
-  BoardGameplay gameplay;
-  BoardDiagnostics diagnostics;
+  BoardProgramFactory programFactory;
+  BoardProgramRunner programRunner;
+  std::unique_ptr<BoardGameProgram> gameProgram;
   std::unique_ptr<BoardAssistanceProvider> assistanceProvider;
 
   Impl()
       : runtime(),
         animations(runtime.presentationScheduler(), runtime.presentationCanvas()),
         menuRunner(runtime, animations),
-        gameplay(runtime, animations, menuRunner),
-        diagnostics(runtime, animations),
+        programFactory(),
+        programRunner(),
+        gameProgram(new BoardGameplay(runtime, animations, menuRunner)),
         assistanceProvider(new BoardLegalMoveAssistanceProvider()) {
-    gameplay.setAssistanceProvider(assistanceProvider.get());
+    registerBoardPrograms(programFactory);
+    gameProgram->setAssistanceProvider(assistanceProvider.get());
+  }
+
+  BoardProgramContext programContext() {
+    return BoardProgramContext{&runtime, &animations, &menuRunner};
   }
 };
 
 Board::Board() : impl_(std::make_unique<Impl>()) {}
 Board::~Board() {
-  if (impl_) impl_->runtime.shutdown();
+  if (impl_) {
+    impl_->programRunner.stop();
+    impl_->runtime.shutdown();
+  }
 }
 
 bool Board::begin() {
@@ -49,28 +64,54 @@ void Board::setDimMultiplier(uint8_t value) { impl_->runtime.setDimMultiplier(va
 void Board::saveLedSettings() { impl_->runtime.saveLedSettings(); }
 uint16_t Board::cadenceMs() const { return impl_->runtime.cadenceMs(); }
 
-BoardGameplay& Board::gameplay() { return impl_->gameplay; }
-BoardDiagnostics& Board::diagnostics() { return impl_->diagnostics; }
+Board::UpdateResult Board::update() {
+  UpdateResult result;
+  result.menuFinished = impl_->menuRunner.poll();
+  result.programFinished = impl_->programRunner.poll();
+  return result;
+}
 
 void Board::showMenu(BoardMenu& menu, bool flipped) { impl_->menuRunner.show(menu, flipped); }
-bool Board::pollMenu() { return impl_->menuRunner.poll(); }
-bool Board::runMenuBlocking(BoardMenu& menu, bool flipped) {
-  return impl_->menuRunner.runBlocking(menu, flipped);
+bool Board::runMenu(BoardMenu& menu, bool flipped) {
+  return impl_->menuRunner.run(menu, flipped);
 }
-void Board::clearMenu() { impl_->menuRunner.clear(); }
-void Board::beginDiagnostics() { impl_->diagnostics.begin(); }
-void Board::updateDiagnostics() { impl_->diagnostics.update(); }
-bool Board::diagnosticsComplete() const { return impl_->diagnostics.isComplete(); }
+void Board::stopMenu() { impl_->menuRunner.stop(); }
+
+BoardGameProgram* Board::startGame() {
+  // The game program is permanent; restart only resets transient state.
+  impl_->programRunner.stop();
+  if (!impl_->gameProgram) return nullptr;
+  impl_->gameProgram->reset();
+  return impl_->gameProgram.get();
+}
+
+void Board::stopGame() {
+  if (impl_->gameProgram) impl_->gameProgram->reset();
+}
+
+BoardProgram* Board::startProgram(const char* programId) {
+  BoardProgramContext context = impl_->programContext();
+  std::unique_ptr<BoardProgram> program = impl_->programFactory.create(programId, context);
+  if (!program) {
+    Serial.printf("Board: unknown program id '%s'\n", programId ? programId : "(null)");
+    return nullptr;
+  }
+  return impl_->programRunner.set(std::move(program));
+}
+
+void Board::stopProgram() { impl_->programRunner.stop(); }
 
 void Board::setAssistanceProvider(std::unique_ptr<BoardAssistanceProvider> provider) {
-  impl_->gameplay.setAssistanceProvider(nullptr);
+  if (impl_->gameProgram) impl_->gameProgram->setAssistanceProvider(nullptr);
   impl_->assistanceProvider = provider ? std::move(provider)
                                       : std::unique_ptr<BoardAssistanceProvider>(
                                             new BoardNoAssistanceProvider());
-  impl_->gameplay.setAssistanceProvider(impl_->assistanceProvider.get());
+  if (impl_->gameProgram) {
+    impl_->gameProgram->setAssistanceProvider(impl_->assistanceProvider.get());
+  }
 }
 
-void Board::triggerCalibration() {
+void Board::resetCalibration() {
   if (!SystemUtils::ensureNvsInitialized()) {
     Serial.println("NVS init failed - cannot trigger calibration");
     return;
@@ -92,12 +133,15 @@ void Board::clearAllSurfaces() {
   impl_->animations.clearAll();
 }
 
-BoardAnimationHandle Board::startConnectingStatus() {
-  auto g = impl_->runtime.lockCanvas();
-  return impl_->animations.startConnecting(millis());
-}
+Board::Animation Board::startAnimation(const char* animationId) {
+  if (animationId == nullptr) return Animation();
 
-void Board::stopConnectingStatus(BoardAnimationHandle& handle) {
   auto g = impl_->runtime.lockCanvas();
-  impl_->animations.cancel(handle);
+  if (strcmp(animationId, "connecting") == 0) {
+    return Animation(&impl_->runtime, &impl_->animations,
+                     impl_->animations.startConnecting(millis()));
+  }
+
+  Serial.printf("Board: unknown animation id '%s'\n", animationId);
+  return Animation();
 }

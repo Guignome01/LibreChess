@@ -1,10 +1,10 @@
 #include "game_mode.h"
-#include "board/workflows/gameplay.h"
+#include "board/programs/game/game_program.h"
 #include "game_mode/board_adapter.h"
 #include "game.h"
 #include "wifi_manager_esp32.h"
 
-GameMode::GameMode(BoardGameplay* gameplay, WiFiManagerESP32* wm, Game* cg, ILogger* logger)
+GameMode::GameMode(BoardGameProgram* gameplay, WiFiManagerESP32* wm, Game* cg, ILogger* logger)
   : gameplay_(gameplay),
     wifiManager_(wm),
     chess_(cg),
@@ -25,8 +25,8 @@ bool GameMode::tryResumeGame() {
 }
 
 void GameMode::waitForBoardSetup() {
-  BoardAdapter::GameProvider gameProvider(*chess_);
-  gameplay_->waitForSetup(gameProvider);
+  BoardAdapter::GameRules gameRules(*chess_);
+  gameplay_->waitForSetup(gameRules);
 }
 
 MoveResult GameMode::applyMove(int fromRow, int fromCol, int toRow, int toCol,
@@ -61,8 +61,8 @@ MoveResult GameMode::applyMove(const std::string& move) {
 
 bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int& toRow, int& toCol) {
   BoardGameplayMove selection;
-  BoardAdapter::GameProvider gameProvider(*chess_);
-  BoardGameplayResult result = gameplay_->tryPlayerMove(gameProvider,
+  BoardAdapter::GameRules gameRules(*chess_);
+  BoardGameplayResult result = gameplay_->tryPlayerMove(gameRules,
                                                         BoardAdapter::toBoardColor(playerColor),
                                                         selection);
   if (result == BoardGameplayResult::RESIGN_REQUESTED) {

@@ -1,7 +1,7 @@
 #ifndef BOARD_TYPES_H
 #define BOARD_TYPES_H
 
-#include "board/core/helpers.h"
+#include "board/runtime/helpers.h"
 
 #include <stdint.h>
 

@@ -6,9 +6,9 @@
 
 #include <unity.h>
 
-#include "board/core/canvas.h"
-#include "board/core/scheduler.h"
-#include "board/core/visual/animations.h"
+#include "board/runtime/canvas.h"
+#include "board/runtime/scheduler.h"
+#include "board/services/visual/animations.h"
 
 namespace {
 

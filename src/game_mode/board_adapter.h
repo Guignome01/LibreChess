@@ -1,7 +1,7 @@
 #ifndef GAME_MODE_BOARD_ADAPTER_H
 #define GAME_MODE_BOARD_ADAPTER_H
 
-#include "board/game_provider.h"
+#include "board/programs/game/game_rules.h"
 #include "board/types.h"
 #include "game.h"
 
@@ -19,9 +19,9 @@ BoardPieceColor toBoardColor(LibreChess::Color color);
 LibreChess::Color toGameColor(BoardPieceColor color);
 BoardPiece toBoardPiece(LibreChess::Piece piece);
 
-class GameProvider final : public BoardGameProvider {
+class GameRules final : public BoardGameRules {
  public:
-  explicit GameProvider(const LibreChess::Game& game);
+  explicit GameRules(const LibreChess::Game& game);
 
   BoardPiece pieceAt(int row, int col) const override;
   void setupSnapshot(BoardSetupSnapshot& snapshot) const override;
