@@ -93,6 +93,8 @@ Return the piece to its origin square (the cyan one) to cancel. All highlights c
 3. Place your piece on the now-empty capture square
 4. A capture animation plays (red/yellow concentric waves)
 
+In Best Move assistance, a capture square keeps its ranked color during the removal prompt. A best capture stays **green**, a worst capture stays **red**, and an unranked legal capture stays **white**.
+
 If you return your piece to the origin square instead of placing it on the capture square, the move is canceled.
 
 ## Castling

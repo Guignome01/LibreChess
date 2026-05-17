@@ -3,6 +3,7 @@
 
 #include "board/runtime/canvas.h"
 #include "board/runtime/helpers.h"
+#include "board/runtime/scheduler.h"
 #include "board/services/menu/types.h"
 
 #include <stdint.h>
@@ -16,8 +17,8 @@ class BoardAnimations;
 // Owns one canvas surface and the full physical menu interaction loop:
 //   - Paints option tiles (plus an optional white back tile) through the
 //     runtime canvas lock.
-//   - Snapshots sensor occupancy once per poll and debounces piece placement
-//     (empty-then-occupied) per square.
+//   - Snapshots sensor occupancy once per poll and debounces deliberate
+//     empty-then-occupied-then-empty selection gestures per square.
 //   - Handles white/black orientation flipping for both painting and polling.
 //   - Returns selected option ids (or `MENU_RESULT_BACK`) without
 //     interpreting them — the runner owns transition semantics.
@@ -28,6 +29,8 @@ class BoardAnimations;
 
 class MenuSelection {
  public:
+  static constexpr uint8_t DEFAULT_DEBOUNCE_CYCLES = 5;
+
   MenuSelection(BoardRuntime& runtime, BoardAnimations& animations);
   ~MenuSelection();
 
@@ -62,24 +65,67 @@ class MenuSelection {
   /// or `MENU_RESULT_NONE`.
   int poll();
 
- private:
-  static constexpr uint8_t SLOT_COUNT = MENU_SELECTION_OPTION_COUNT + 1;
-  static constexpr uint8_t DEFAULT_DEBOUNCE_CYCLES = 5;
+  /// Return true while the selection-confirmation blink is still active.
+  bool confirmationActive();
 
-  /// Debounces one option square through empty-then-occupied phases.
+  /// Debounces one option square through empty, press, and release phases.
   class SelectionDebouncer {
    public:
-    explicit SelectionDebouncer(uint8_t stableCycles = DEFAULT_DEBOUNCE_CYCLES);
-    void reset();
-    bool update(bool occupied);
+    enum class Result : uint8_t { NONE, PRESSED, RELEASED };
+
+    explicit SelectionDebouncer(uint8_t stableCycles = DEFAULT_DEBOUNCE_CYCLES)
+        : stableCycles_(stableCycles == 0 ? 1 : stableCycles),
+          emptyCount_(0),
+          occupiedCount_(0),
+          readyForPress_(false),
+          waitingForRelease_(false) {}
+
+    void reset() {
+      emptyCount_ = 0;
+      occupiedCount_ = 0;
+      readyForPress_ = false;
+      waitingForRelease_ = false;
+    }
+
+    Result update(bool occupied) {
+      if (!occupied) {
+        if (emptyCount_ < stableCycles_) ++emptyCount_;
+        occupiedCount_ = 0;
+        if (waitingForRelease_ && emptyCount_ >= stableCycles_) {
+          waitingForRelease_ = false;
+          readyForPress_ = true;
+          return Result::RELEASED;
+        }
+        if (emptyCount_ >= stableCycles_) readyForPress_ = true;
+        return Result::NONE;
+      }
+
+      emptyCount_ = 0;
+      if (waitingForRelease_) return Result::NONE;
+      if (!readyForPress_) {
+        occupiedCount_ = 0;
+        return Result::NONE;
+      }
+
+      if (occupiedCount_ < stableCycles_) ++occupiedCount_;
+      if (occupiedCount_ >= stableCycles_) {
+        readyForPress_ = false;
+        waitingForRelease_ = true;
+        return Result::PRESSED;
+      }
+      return Result::NONE;
+    }
 
    private:
     uint8_t stableCycles_;
     uint8_t emptyCount_;
     uint8_t occupiedCount_;
-    bool readyForSelection_;
-    bool selectionLatched_;
+    bool readyForPress_;
+    bool waitingForRelease_;
   };
+
+ private:
+  static constexpr uint8_t SLOT_COUNT = MENU_SELECTION_OPTION_COUNT + 1;
 
   struct Square {
     int8_t row;
@@ -95,6 +141,7 @@ class MenuSelection {
   BoardRuntime& runtime_;
   BoardAnimations& animations_;
   BoardCanvasHandle surface_;
+  BoardScheduledHandle confirmation_;
   MenuOption options_[SLOT_COUNT];
   uint8_t optionCount_;
   bool hasBack_;

@@ -12,6 +12,7 @@ BoardMenuRunner::BoardMenuRunner(BoardRuntime& runtime, BoardAnimations& animati
       activeMenu_(nullptr),
       finished_(false),
       pageStackDepth_(0),
+      pendingSelectionResult_(MENU_RESULT_NONE),
       pending_(Pending::NONE),
       pendingNextTarget_(0) {}
 
@@ -21,6 +22,7 @@ void BoardMenuRunner::show(BoardMenu& menu, bool flipped) {
   activeMenu_ = &menu;
   finished_ = false;
   pageStackDepth_ = 0;
+  pendingSelectionResult_ = MENU_RESULT_NONE;
   pending_ = Pending::NONE;
   selection_.setFlipped(flipped);
 
@@ -38,8 +40,24 @@ void BoardMenuRunner::show(BoardMenu& menu, bool flipped) {
 bool BoardMenuRunner::poll() {
   if (!activeMenu_) return false;
 
-  int result = selection_.poll();
+  int result = pendingSelectionResult_;
+  if (result != MENU_RESULT_NONE) {
+    if (selection_.confirmationActive()) return false;
+    pendingSelectionResult_ = MENU_RESULT_NONE;
+  } else {
+    result = selection_.poll();
+    if (result != MENU_RESULT_NONE) {
+      pendingSelectionResult_ = result;
+      return false;
+    }
+  }
   if (result == MENU_RESULT_NONE) return false;
+
+  return processSelectionResult(result);
+}
+
+bool BoardMenuRunner::processSelectionResult(int result) {
+  if (!activeMenu_) return false;
 
   if (result == MENU_RESULT_BACK) {
     // Back tile press is treated as a queued back transition. Hooks may
@@ -95,6 +113,7 @@ void BoardMenuRunner::stop() {
   selection_.erase();
   finished_ = false;
   pageStackDepth_ = 0;
+  pendingSelectionResult_ = MENU_RESULT_NONE;
   pending_ = Pending::NONE;
 }
 
@@ -196,5 +215,6 @@ void BoardMenuRunner::clearActiveMenu() {
   activeMenu_ = nullptr;
   finished_ = false;
   pageStackDepth_ = 0;
+  pendingSelectionResult_ = MENU_RESULT_NONE;
   pending_ = Pending::NONE;
 }

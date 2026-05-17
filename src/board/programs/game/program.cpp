@@ -28,6 +28,15 @@ bool liftedCaptureTarget(const BoardInput::Event& event, const BoardMoveTargetLi
          targets.captureForLiftedSquare(event.row, event.col, capture);
 }
 
+LedRGB assistanceTargetColor(BoardAssistanceLevel level,
+                             const BoardMoveTargetRanking& ranking,
+                             int row, int col) {
+  if (level != BoardAssistanceLevel::BEST_MOVE) return LedColors::Red;
+  if (ranking.isBest(row, col)) return LedColors::Green;
+  if (ranking.isWorst(row, col)) return LedColors::Red;
+  return LedColors::White;
+}
+
 void waitForCapturePlacement(BoardRuntime& runtime, uint16_t cadence, const BoardMoveTarget& capture,
                              int sourceRow, int sourceCol, int& targetRow, int& targetCol) {
   while (!runtime.inputOccupied(capture.row, capture.col)) {
@@ -118,12 +127,16 @@ BoardGameResult BoardGame::tryPlayerMove(const BoardGameProvider& gameRules,
 
     BoardMoveTargetList targets;
     gameRules.legalTargets(row, col, targets);
+    BoardMoveTargetRanking ranking;
+    BoardAssistanceLevel renderedAssistanceLevel = BoardAssistanceLevel::NONE;
     if (assistance_.level() == BoardAssistanceLevel::LEGAL_MOVES) {
       assistance_.showLegalMoveHighlights(row, col, targets);
+      renderedAssistanceLevel = BoardAssistanceLevel::LEGAL_MOVES;
     } else if (assistance_.level() == BoardAssistanceLevel::BEST_MOVE && assistanceProvider_) {
-      BoardMoveTargetRanking ranking;
+      assistance_.showBestMoveHighlights(row, col, targets, ranking);
       assistanceProvider_->rankTargets(row, col, targets, ranking);
       assistance_.showBestMoveHighlights(row, col, targets, ranking);
+      renderedAssistanceLevel = BoardAssistanceLevel::BEST_MOVE;
     } else {
       assistance_.clear();
     }
@@ -183,7 +196,9 @@ BoardGameResult BoardGame::tryPlayerMove(const BoardGameProvider& gameRules,
           piecePlaced = true;
           if (capture.enPassant)
             feedback_.clearSquare(capture.capturedRow, capture.capturedCol);
-          assistance_.showCapturePlacementPrompt(capture.row, capture.col);
+          const LedRGB promptColor = assistanceTargetColor(
+              renderedAssistanceLevel, ranking, capture.row, capture.col);
+          assistance_.showCapturePlacementPrompt(capture.row, capture.col, promptColor);
 
           // Wait for the player to drop the moving piece on the capture square
           // (or restore it to the source = cancel).

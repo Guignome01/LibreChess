@@ -1,11 +1,71 @@
 #include "engines/librechess/assistance.h"
 
 #include <Arduino.h>
+#include <atomic>
+#include <new>
 
 namespace {
 
 static constexpr uint32_t BEST_MOVE_SEARCH_TIME_MS = 1000;
 static constexpr int ASSISTANCE_TT_ENTRIES = 1024;
+static constexpr uint32_t ASSISTANCE_SEARCH_STACK_BYTES = 65536;
+
+struct AssistanceSearchContext {
+  LibreChess::Game* game = nullptr;
+  int fromRow = -1;
+  int fromCol = -1;
+  uint32_t timeLimitMs = 0;
+  LibreChess::Game::CandidateTargetList targets;
+  LibreChess::Game::CandidateTargetScoreList scores;
+  std::atomic<bool> cancel{false};
+  std::atomic<bool> ready{false};
+  bool ok = false;
+};
+
+void assistanceSearchTask(void* param) {
+  auto* ctx = static_cast<AssistanceSearchContext*>(param);
+  ctx->game->setExternalStop(&ctx->cancel);
+  ctx->ok = ctx->game->rankCandidateTargets(ctx->fromRow, ctx->fromCol,
+                                            ctx->targets, ctx->timeLimitMs,
+                                            ctx->scores);
+  ctx->game->setExternalStop(nullptr);
+  ctx->ready.store(true, std::memory_order_release);
+  vTaskDelete(nullptr);
+}
+
+bool runSearchTask(LibreChess::Game* game, int fromRow, int fromCol,
+                   const LibreChess::Game::CandidateTargetList& targets,
+                   uint32_t timeLimitMs,
+                   LibreChess::Game::CandidateTargetScoreList& scores,
+                   LibreChess::ILogger* logger) {
+  scores.clear();
+
+  auto* ctx = new (std::nothrow) AssistanceSearchContext();
+  if (!ctx) {
+    if (logger) logger->error("LibreChess assistance: failed to allocate search task context");
+    return false;
+  }
+
+  ctx->game = game;
+  ctx->fromRow = fromRow;
+  ctx->fromCol = fromCol;
+  ctx->timeLimitMs = timeLimitMs;
+  ctx->targets = targets;
+
+  if (xTaskCreate(assistanceSearchTask, "lcAssist", ASSISTANCE_SEARCH_STACK_BYTES,
+                  ctx, 1, nullptr) != pdPASS) {
+    if (logger) logger->error("LibreChess assistance: xTaskCreate failed");
+    delete ctx;
+    return false;
+  }
+
+  while (!ctx->ready.load(std::memory_order_acquire)) delay(1);
+
+  const bool ok = ctx->ok;
+  if (ok) scores = ctx->scores;
+  delete ctx;
+  return ok;
+}
 
 bool fillRankingFromScores(const LibreChess::Game::CandidateTargetScoreList& scores,
                            BoardMoveTargetRanking& ranking) {
@@ -114,8 +174,8 @@ bool LibreChessAssistanceProvider::rankTargets(int fromRow, int fromCol,
 
   LibreChess::Game::CandidateTargetScoreList searchedScores;
   if (ensureSearchReady() &&
-      game_->rankCandidateTargets(fromRow, fromCol, candidateTargets,
-                                  BEST_MOVE_SEARCH_TIME_MS, searchedScores) &&
+      runSearchTask(game_, fromRow, fromCol, candidateTargets,
+                    BEST_MOVE_SEARCH_TIME_MS, searchedScores, logger_) &&
       fillRankingFromScores(searchedScores, ranking)) {
     return true;
   }

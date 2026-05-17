@@ -1,6 +1,6 @@
 # Menus
 
-The board doubles as an 8×8 pixel display for menu navigation. Menus are shown as colored LEDs at specific positions, and selections are made by placing a piece on a lit square.
+The board doubles as an 8×8 pixel display for menu navigation. Menus are shown as colored LEDs at specific positions, and selections are made by placing a piece on a lit square and lifting it again to confirm.
 
 ## Game Selection Menu
 
@@ -46,16 +46,18 @@ A **white back button** at e4 (row 4, col 4) returns to the difficulty menu.
 
 ## How Selection Works
 
-Menu selection uses a two-phase debounce system to prevent accidental activations:
+Menu selection uses a three-phase debounce system to prevent accidental activations:
 
 1. **Phase 1 (empty)** — the square must be read as empty (no piece) for 5 consecutive sensor polls (~200ms)
 2. **Phase 2 (occupied)** — the square must then be read as occupied (piece placed) for another 5 consecutive polls
+3. **Phase 3 (released)** — the square must be read as empty again for another 5 consecutive polls
 
-This prevents pieces already on the board when the menu appears from triggering a selection. Only a deliberate "place a piece on an empty square" action registers.
+This prevents pieces already on the board when the menu appears from triggering a selection. Only a deliberate "place a piece on an empty square, then lift it" action registers.
 
 On confirmed selection:
-- The square **blinks once** in its own color to provide visual feedback
-- The system waits for the piece to be **removed** from the square before proceeding (prevents input from bleeding into the next menu or game)
+- The square turns **off** once the piece is stably resting on it
+- The square **blinks once** in its own color after the piece is removed
+- The next menu or game starts only after the confirmation blink finishes
 
 ## Menu Navigation
 

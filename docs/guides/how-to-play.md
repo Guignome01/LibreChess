@@ -13,7 +13,7 @@ When the board powers on (or returns from a completed game), the game selection 
 | d4 | Yellow | Lichess |
 | e4 | Red | Sensor Test |
 
-Place any piece on a lit square to select that mode. The square blinks to confirm your selection before proceeding.
+Place any piece on a lit square, then lift it to select that mode. The square blinks after release to confirm your selection before proceeding.
 
 For detailed menu navigation mechanics, see the [menus guide](menus.md).
 

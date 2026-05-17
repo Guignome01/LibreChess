@@ -181,6 +181,7 @@ void LibreChessEngine::taskFunction(void* param) {
   limits.maxDepth = (ctx->depth > 0) ? ctx->depth : 6;
 
   auto result = ctx->game->calculateMove(limits);
+  ctx->game->setExternalStop(nullptr);
 
   // Convert SearchResult → EngineResult
   if (!moveToResult(result.bestMove, ctx->result, result.score)) {

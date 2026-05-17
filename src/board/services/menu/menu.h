@@ -160,6 +160,7 @@ class BoardMenuRunner : private MenuFlow {
   void drawCurrentPage();
   void clearActiveMenu();
   void applyPendingTransitions();
+  bool processSelectionResult(int result);
 
   enum class Pending : uint8_t { NONE, NEXT, BACK, CLOSE };
 
@@ -171,6 +172,7 @@ class BoardMenuRunner : private MenuFlow {
 
   uint8_t pageStack_[MENU_PAGE_STACK_DEPTH];
   uint8_t pageStackDepth_;
+  int pendingSelectionResult_;
 
   Pending pending_;
   uint8_t pendingNextTarget_;

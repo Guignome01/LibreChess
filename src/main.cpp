@@ -48,8 +48,10 @@ GameMode* activeGame = nullptr;
 AppMode currentMode = AppMode::SELECTION;
 bool modeInitialized = false;
 bool resumingGame = false;
+bool selectionPendingAfterAnimations = false;
 
 void enterGameSelection();
+bool enterGameSelectionWhenAnimationsIdle();
 void handleGameSelection(const BoardGameSelection& selection);
 void initializeSelectedMode(AppMode mode);
 void checkForResumableGame();
@@ -185,6 +187,7 @@ void loop() {
   // loop.
   if (wifiManager.getPendingBoardCalibration()) {
     wifiManager.clearPendingBoardCalibration();
+    selectionPendingAfterAnimations = false;
     if (startBoardCalibration()) {
       physicalBoard.update();
     }
@@ -237,6 +240,7 @@ void loop() {
       if (selectedMode == 1 || selectedMode == 2 || selectedMode == 3) {
         syncBoardAssistanceConfig();
       }
+      selectionPendingAfterAnimations = false;
       modeInitialized = false;
       physicalBoard.stopMenu();
       wifiManager.resetGameSelection();
@@ -301,15 +305,16 @@ void loop() {
           activeGame->setResignPending(true);
           wifiManager.clearPendingResign();
         }
-        if (activeGame->isGameOver())
-          enterGameSelection();
-        else
+        if (activeGame->isGameOver()) {
+          enterGameSelectionWhenAnimationsIdle();
+        } else {
           activeGame->update();
+        }
       }
       break;
     case AppMode::BOARD_DIAGNOSTICS:
-      if (boardUpdate.programFinished)
-        enterGameSelection();
+      if (boardUpdate.programFinished) selectionPendingAfterAnimations = true;
+      if (selectionPendingAfterAnimations) enterGameSelectionWhenAnimationsIdle();
       break;
     default:
       enterGameSelection();
@@ -350,6 +355,7 @@ IBoardGame* startBoardGameProgram() {
 bool startBoardCalibration() {
   currentMode = AppMode::SELECTION;
   modeInitialized = false;
+  selectionPendingAfterAnimations = false;
   delete activeGame;
   activeGame = nullptr;
   physicalBoard.stopMenu();
@@ -368,6 +374,7 @@ bool startBoardCalibration() {
 void enterGameSelection() {
   currentMode = AppMode::SELECTION;
   modeInitialized = false;
+  selectionPendingAfterAnimations = false;
   delete activeGame;
   activeGame = nullptr;
   physicalBoard.stopProgram();
@@ -379,11 +386,18 @@ void enterGameSelection() {
   Serial.println("  Green:  Chess Bot (Human vs AI)");
   Serial.println("  Yellow: Lichess (Play online games)");
   Serial.println("  Red:    Sensor Test");
-  Serial.println("Place any chess piece on a LED to select that mode");
+  Serial.println("Place a chess piece on a LED, then lift it to select that mode");
   Serial.println("===================================================");
 }
 
+bool enterGameSelectionWhenAnimationsIdle() {
+  if (physicalBoard.hasActiveAnimations()) return false;
+  enterGameSelection();
+  return true;
+}
+
 void handleGameSelection(const BoardGameSelection& selection) {
+  selectionPendingAfterAnimations = false;
   if (selection.mode == BoardGameSelectionMode::CHESS_MOVES ||
       selection.mode == BoardGameSelectionMode::BOT ||
       selection.mode == BoardGameSelectionMode::LICHESS) {

@@ -10,48 +10,6 @@ constexpr LedRGB BACK_BUTTON_COLOR = LedColors::White;
 }
 
 // ---------------------------------------------------------------------------
-// MenuSelection::SelectionDebouncer
-// ---------------------------------------------------------------------------
-
-MenuSelection::SelectionDebouncer::SelectionDebouncer(uint8_t stableCycles)
-    : stableCycles_(stableCycles == 0 ? 1 : stableCycles),
-      emptyCount_(0),
-      occupiedCount_(0),
-      readyForSelection_(false),
-      selectionLatched_(false) {}
-
-void MenuSelection::SelectionDebouncer::reset() {
-  emptyCount_ = 0;
-  occupiedCount_ = 0;
-  readyForSelection_ = false;
-  selectionLatched_ = false;
-}
-
-bool MenuSelection::SelectionDebouncer::update(bool occupied) {
-  if (!occupied) {
-    if (emptyCount_ < stableCycles_) ++emptyCount_;
-    occupiedCount_ = 0;
-    selectionLatched_ = false;
-    if (emptyCount_ >= stableCycles_) readyForSelection_ = true;
-    return false;
-  }
-
-  emptyCount_ = 0;
-  if (!readyForSelection_ || selectionLatched_) {
-    occupiedCount_ = 0;
-    return false;
-  }
-
-  if (occupiedCount_ < stableCycles_) ++occupiedCount_;
-  if (occupiedCount_ >= stableCycles_) {
-    readyForSelection_ = false;
-    selectionLatched_ = true;
-    return true;
-  }
-  return false;
-}
-
-// ---------------------------------------------------------------------------
 // MenuSelection
 // ---------------------------------------------------------------------------
 
@@ -59,6 +17,7 @@ MenuSelection::MenuSelection(BoardRuntime& runtime, BoardAnimations& animations)
     : runtime_(runtime),
       animations_(animations),
       surface_(),
+      confirmation_(),
       optionCount_(0),
       hasBack_(false),
       backOption_{0, 0, BACK_BUTTON_COLOR, MENU_RESULT_BACK},
@@ -66,6 +25,7 @@ MenuSelection::MenuSelection(BoardRuntime& runtime, BoardAnimations& animations)
 
 MenuSelection::~MenuSelection() {
   auto g = runtime_.lockCanvas();
+  animations_.cancel(confirmation_);
   BoardSurface::release(g.canvas, surface_);
 }
 
@@ -108,11 +68,13 @@ void MenuSelection::draw() {
 
 void MenuSelection::erase() {
   auto g = runtime_.lockCanvas();
+  animations_.cancel(confirmation_);
   BoardSurface::clear(g.canvas, surface_);
 }
 
 void MenuSelection::reset() {
   for (auto& state : states_) state.reset();
+  confirmation_ = BoardScheduledHandle{};
 }
 
 MenuSelection::Square MenuSelection::transformSquare(int8_t row, int8_t col) const {
@@ -125,12 +87,26 @@ int MenuSelection::trySelect(SelectionDebouncer& state,
                              const MenuOption& option) {
   Square sq = transformSquare(option.row, option.col);
   const bool squareOccupied = BoardHelpers::inBounds(sq.row, sq.col) && occupied[sq.row][sq.col];
-  if (state.update(squareOccupied)) {
+  const SelectionDebouncer::Result result = state.update(squareOccupied);
+  if (result == SelectionDebouncer::Result::PRESSED) {
     auto g = runtime_.lockCanvas();
-    animations_.startBlink(sq.row, sq.col, option.color, 1, millis());
+    g.canvas.clearSurfaceSquare(surface_, sq.row, sq.col);
+    return MENU_RESULT_NONE;
+  }
+  if (result == SelectionDebouncer::Result::RELEASED) {
+    auto g = runtime_.lockCanvas();
+    confirmation_ = animations_.startBlink(sq.row, sq.col, option.color, 1, millis());
     return option.id;
   }
   return MENU_RESULT_NONE;
+}
+
+bool MenuSelection::confirmationActive() {
+  if (!confirmation_.valid()) return false;
+  auto g = runtime_.lockCanvas();
+  if (animations_.active(confirmation_)) return true;
+  confirmation_ = BoardScheduledHandle{};
+  return false;
 }
 
 int MenuSelection::poll() {

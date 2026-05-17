@@ -82,6 +82,9 @@ class Board {
   /// Clear every canvas surface. The renderer flushes when it next wakes.
   void clearAllSurfaces();
 
+  /// Return true while any scheduled board animation is still active.
+  bool hasActiveAnimations();
+
   /// Start a named board animation. The returned token stops it automatically.
   Animation startAnimation(const char* animationId);
 

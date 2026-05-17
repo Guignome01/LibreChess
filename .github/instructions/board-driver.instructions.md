@@ -184,7 +184,10 @@ visuals, stop a looping animation by handing the handle back to the helper that
 owns it (e.g. `feedback_.stopAnimation(handle)`). External firmware uses
 `Board::startAnimation(id)` and holds the returned `Board::Animation` token;
 the token stops automatically on destruction and can be stopped early with
-`token.stop()`. **Status animations do not use `std::atomic<bool>*` flags.**
+`token.stop()`. `Board::hasActiveAnimations()` is the public sequencing hook
+for app-level transitions that must wait for finite presentation feedback to
+finish before drawing the next menu/program surface. **Status animations do not
+use `std::atomic<bool>*` flags.**
 
 ## BoardMenuRunner and predefined menus
 
@@ -195,6 +198,13 @@ backCol}` for optional back-tile placement. `BoardMenuRunner` owns the page
 stack (`MENU_PAGE_STACK_DEPTH = 8`), polling, debounce, drawing, blocking
 cadence loop, and lifecycle dispatch. It implements `MenuFlow` privately and
 applies queued transitions after each hook returns.
+
+`MenuSelection` commits a physical tile only after a stable empty square, a
+stable occupied press, and a stable empty release. The selected tile is cleared
+when the stable press is accepted, the confirmation blink starts on release,
+and `BoardMenuRunner` keeps the selected result pending until that blink
+animation finishes, so hooks, auto-advance, and page redraws do not happen under
+a resting selector piece or paint over the confirmation.
 
 `BoardMenu` exposes:
 
@@ -317,7 +327,10 @@ use. Key namespaces:
 - **Menus are typed objects, not programs** — `BoardMenuRunner` owns all menu
   polling/debounce/rendering. Predefined menus under `board/menus/` are small
   state machines that define which page to show and what result to record when
-  a square is selected. This keeps game-selection/resume/resign prompts reusable
+  a square is selected. Physical selection is release-based: empty, press
+  (selected tile turns off), release, confirmation blink, then hook/transition.
+  This keeps
+  game-selection/resume/resign prompts reusable
   without exposing runtime internals or creating another primary program.
 - **Board gameplay is engine-agnostic** — `types.h` defines the board-owned
   DTOs, `programs/game/game_provider.h` defines the board-owned `BoardGameProvider`
@@ -328,7 +341,12 @@ use. Key namespaces:
   `Board` owns the active assistance provider. `NONE` and `LEGAL_MOVES` are
   fixed board providers. BEST_MOVE ranks the already-generated legal targets for
   the lifted piece through `BoardAssistanceProvider::rankTargets()` and renders
-  green/red destination hints without importing chess logic into board code.
+  green/red destination hints without importing chess logic into board code. In
+  BEST_MOVE mode, `BoardGame` first paints neutral white legal destinations
+  before asking the provider to rank them, so the player sees legal move help
+  while the ranking search is running. Capture-placement prompts blink in the
+  already-rendered target color (green/red/white for BEST_MOVE, red for
+  LEGAL_MOVES) so a best capture does not flash red before returning to green.
 - **Status animations are exposed as move-only tokens** —
   `IBoardGame::startThinkingStatus()` / `startWaitingStatus()` return
   `BoardAnimationToken` values. The caller stores the token in a member or

@@ -142,9 +142,9 @@ void BoardAssistance::showBestMoveHighlights(int fromRow, int fromCol,
   }
 }
 
-void BoardAssistance::showCapturePlacementPrompt(int row, int col) {
+void BoardAssistance::showCapturePlacementPrompt(int row, int col, LedRGB color) {
   auto g = runtime_.lockCanvas();
-  animations_.startBlink(row, col, LedColors::Red, 1, millis());
+  animations_.startBlink(row, col, color, 1, millis());
 }
 
 void BoardAssistance::guideCastling(int kingFromRow, int kingFromCol, int kingToRow,

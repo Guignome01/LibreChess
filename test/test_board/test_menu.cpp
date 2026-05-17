@@ -8,6 +8,7 @@
 
 #include "board/menus/confirm.h"
 #include "board/menus/game_selection.h"
+#include "board/services/menu/selection.h"
 
 namespace {
 
@@ -61,6 +62,55 @@ const MenuTile* findTile(const BoardMenu& menu, uint8_t tileId, uint8_t pageId) 
 
 bool menuHasTileOnPage(const BoardMenu& menu, uint8_t tileId, uint8_t pageId) {
   return findTile(menu, tileId, pageId) != nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// MenuSelection debounce
+// ---------------------------------------------------------------------------
+
+void test_menu_selection_confirms_on_release_after_press() {
+  MenuSelection::SelectionDebouncer debouncer(2);
+  using Result = MenuSelection::SelectionDebouncer::Result;
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Result::NONE),
+                          static_cast<uint8_t>(debouncer.update(true)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Result::NONE),
+                          static_cast<uint8_t>(debouncer.update(true)));
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Result::NONE),
+                          static_cast<uint8_t>(debouncer.update(false)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Result::NONE),
+                          static_cast<uint8_t>(debouncer.update(false)));
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Result::NONE),
+                          static_cast<uint8_t>(debouncer.update(true)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Result::PRESSED),
+                          static_cast<uint8_t>(debouncer.update(true)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Result::NONE),
+                          static_cast<uint8_t>(debouncer.update(true)));
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Result::NONE),
+                          static_cast<uint8_t>(debouncer.update(false)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Result::RELEASED),
+                          static_cast<uint8_t>(debouncer.update(false)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Result::NONE),
+                          static_cast<uint8_t>(debouncer.update(false)));
+}
+
+void test_menu_selection_ignores_short_press_before_release() {
+  MenuSelection::SelectionDebouncer debouncer(2);
+  using Result = MenuSelection::SelectionDebouncer::Result;
+
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Result::NONE),
+                          static_cast<uint8_t>(debouncer.update(false)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Result::NONE),
+                          static_cast<uint8_t>(debouncer.update(false)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Result::NONE),
+                          static_cast<uint8_t>(debouncer.update(true)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Result::NONE),
+                          static_cast<uint8_t>(debouncer.update(false)));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Result::NONE),
+                          static_cast<uint8_t>(debouncer.update(false)));
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +270,8 @@ void test_resume_confirm_menu_preblink_then_shows_confirm() {
 }  // namespace
 
 void register_menu_tests() {
+  RUN_TEST(test_menu_selection_confirms_on_release_after_press);
+  RUN_TEST(test_menu_selection_ignores_short_press_before_release);
   RUN_TEST(test_game_selection_root_chess_moves_closes_with_selection);
   RUN_TEST(test_game_selection_bot_difficulty_and_color_flow);
   RUN_TEST(test_game_selection_back_to_root_resets_state);

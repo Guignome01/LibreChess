@@ -117,6 +117,11 @@ void Board::clearAllSurfaces() {
   impl_->animations.clearAll();
 }
 
+bool Board::hasActiveAnimations() {
+  auto g = impl_->runtime.lockCanvas();
+  return impl_->animations.any();
+}
+
 Board::Animation Board::startAnimation(const char* animationId) {
   if (animationId == nullptr) return Animation();
 

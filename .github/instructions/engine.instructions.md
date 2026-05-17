@@ -95,8 +95,11 @@ Each `requestMove()` spawns a FreeRTOS task (64 KiB stack) that:
 `src/engines/librechess/assistance.*` implements `BoardAssistanceProvider` for
 BEST_MOVE board assistance. It receives the lifted source square plus the
 board-generated legal target list, initializes/reuses Game-owned search
-resources, and runs one synchronous root-filtered search with a fixed 1 second
-budget via `Game::rankCandidateTargets()`. It returns a
+resources, and runs one root-filtered search with a fixed 1 second budget via
+`Game::rankCandidateTargets()`. The provider remains synchronous from
+`BoardGame`'s point of view, but the actual search runs inside a short-lived
+`lcAssist` FreeRTOS task with a 64 KiB stack so negamax recursion never runs on
+the Arduino loop stack. It returns a
 `BoardMoveTargetRanking` for the best and worst destinations from the lifted
 piece's legal targets, not a global best move for the whole position. If search
 resources cannot be initialized or no searched scores are produced, it falls
@@ -126,6 +129,11 @@ API modules handle raw HTTP + TLS. Providers handle chess-domain logic and FreeR
 
 Max depth 8 + extensions (~6) + 16 QS plies ≈ 45 KiB (fits in 64 KiB). See `docs/development/additional-topics.md` for the full budget breakdown.
 
+BEST_MOVE assistance uses the same 64 KiB stack budget in its transient
+`lcAssist` task. Do not call `Game::rankCandidateTargets()` directly from the
+main loop or board gesture path: even a 1 second root-filtered search can exceed
+the Arduino loop stack.
+
 ## Design Decisions
 
 - **Providers never touch hardware** — opponent providers return `EngineResult` structs, and assistance providers return board DTOs such as `BoardMoveTargetRanking` through the board assistance interface. All LED, sensor, and animation logic stays in the board subsystem. This means providers can be tested or replaced without any hardware dependency, and game modes control the flow without exposing hardware to providers.
@@ -137,6 +145,13 @@ Max depth 8 + extensions (~6) + 16 QS plies ≈ 45 KiB (fits in 64 KiB). See `do
 - **Local `engine.h` guards must be path-unique** — per-engine folders intentionally use role filenames such as `engine.h`, but header guards must include the folder path (`ENGINES_LIBRECHESS_ENGINE_H`, etc.). Do not reuse core guards such as `LIBRECHESS_ENGINE_H`; that blocks `lib/core/src/engine.h` from defining `LibreChess::Engine` when both headers are included.
 
 - **Cooperative cancellation with timeout** — tasks check `ctx->cancel` periodically and exit early. The 2s timeout in `cancelRequest()` is a safety net for tasks stuck in blocking HTTP calls. If the task doesn't finish in 2s, the context is deleted anyway (the orphaned task will crash on its next context access, but this is preferred over a deadlock).
+
+- **External search stop pointer lifetime** — any provider task that calls
+	`Game::setExternalStop(&ctx->cancel)` must clear it with
+	`Game::setExternalStop(nullptr)` immediately after `calculateMove()` /
+	`rankCandidateTargets()` returns. Task contexts are heap-owned and deleted
+	after completion, so leaving Engine's external stop pointer aimed at a task
+	context creates a dangling pointer for the next search.
 
 - **`peekResult()` vs `pollResult()`** — `pollResult()` deletes the context immediately. `peekResult()` lets the caller read provider-specific fields from the derived `TaskContext` first. Lichess needs this to extract `lastKnownMoveCount` before the context is freed. Stockfish only needs the base `EngineResult`, so it uses `pollResult()`.
 

@@ -46,9 +46,9 @@ class BoardAssistance : private BoardVisual {
   void showBestMoveHighlights(int fromRow, int fromCol, const BoardMoveTargetList& targets,
                               const BoardMoveTargetRanking& ranking);
 
-  /// Single red blink at (row, col) prompting the user to place a captured
-  /// piece off-board.
-  void showCapturePlacementPrompt(int row, int col);
+  /// Single same-color blink at (row, col) prompting the user to place the
+  /// moving piece onto the now-empty capture square.
+  void showCapturePlacementPrompt(int row, int col, LedRGB color = LedColors::Red);
 
   /// Lead the user through a castling move: king first (if requested),
   /// then rook. Blocks until completion.
