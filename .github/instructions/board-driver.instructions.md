@@ -22,18 +22,18 @@ deliberately narrow API consumed by firmware outside the board folder:
 - Animations: `startAnimation(const char* id)` returns a move-only
   `Board::Animation` token that stops automatically on destruction.
 - Typed/named menu facade: `showMenu(BoardMenu&)`, `runMenu(BoardMenu&)`, and `stopMenu()`.
-- Game program facade: `startGame()` returns the persistent `BoardGameProgram*`
-  for game-mode integration (the instance is permanent and only resets transient
-  state); `stopGame()` resets it.
-- Polled program facade: `startProgram(const char* id)` returns `BoardProgram*`
-  for built-in polled programs (e.g. diagnostics); `stopProgram()` cancels it.
-- Facade helpers for external firmware: `resetCalibration()`.
+- Unified program facade: `startProgram(const char* id)` returns `BoardProgram*`
+  for any built-in program registered with the program factory; `stopProgram()`
+  cancels the active program. Stable ids live in `board/programs/ids.h`
+  (`BoardProgramIds::GAME`, `DIAGNOSTICS`, `CALIBRATION`). When the caller
+  needs the typed game contract, it downcasts the returned `BoardProgram*`
+  to `IBoardGame*` (only the `GAME` factory entry produces an `IBoardGame`).
 
 External firmware must not include `BoardDriver`, `BoardRuntime`,
 `BoardCanvas`, `BoardScheduler`, `BoardAnimations`, `BoardInput`,
 `BoardRenderer`, `BoardFeedback`, or `BoardAssistance` directly. The only
 board-facing types it may name are `Board::UpdateResult`,
-`Board::Animation`, `BoardProgram`, `BoardGameProgram`, stable string ids, plus
+`Board::Animation`, `BoardProgram`, `IBoardGame`, stable string ids, plus
 typed menu objects from `board/menus/*` (`GameSelectionMenu`, `ConfirmMenu`,
 `ResumeConfirmMenu`) when the caller needs typed menu result access.
 
@@ -62,26 +62,24 @@ src/board/
 │   │   ├── program.{h,cpp}    BoardProgram + BoardProgramRunner
 │   │   └── factory.{h,cpp}    fixed registry for named program creation
 │   └── menu/                  board-owned typed menu runner primitives
-│   │   ├── factory.{h,cpp}    fixed registry for named menu creation
-│   │   ├── types.h            MenuOption + generic menu result constants
-│   │   ├── panel.{h,cpp}      shared draw/poll/debounce mechanics
-│   │   ├── selection.{h,cpp}  selectable page + optional back button
-│   │   └── menu.{h,cpp}       BoardMenu contract + BoardMenuRunner
+│       ├── types.h            MenuOption + generic menu result constants
+│       ├── selection.{h,cpp}  selectable page + optional back button
+│       └── menu.{h,cpp}       MenuTile/MenuFlow/BoardMenu + BoardMenuRunner
 ├── menus/                     predefined typed menus
-│   ├── ids.h                  stable menu string ids
-│   ├── factory.{h,cpp}        built-in menu registrations
 │   ├── game_selection.{h,cpp} game selection tree + result types
 │   └── confirm.{h,cpp}        green/red and resume confirmation menus
 └── programs/                  primary programs and program-specific visuals
-  ├── ids.h                  stable program string ids
-  ├── factory.{h,cpp}        built-in program registrations
+    ├── ids.h                  stable program string ids
+    ├── factory.{h,cpp}        built-in program registrations
     ├── game/
-  │   ├── game_program.h     BoardGameProgram interface consumed by game modes
-    │   ├── game_rules.h       BoardGameRules contract consumed by gameplay
-    │   ├── gameplay.{h,cpp}   physical chess interactions
+    │   ├── program_provider.h IBoardGame interface (inherits BoardProgram)
+    │   ├── game_provider.h    BoardGameProvider rules contract
+    │   ├── program.{h,cpp}    physical chess interactions
     │   └── visuals/           game-only feedback and assistance visuals
-    └── diagnostics/
-        └── diagnostics_program.{h,cpp} sensor test BoardProgram
+    ├── diagnostics/
+    │   └── program.{h,cpp}    sensor test BoardProgram
+    └── calibration/
+        └── program.{h,cpp}    NVS clear + reboot program
 ```
 
 ## BoardRuntime — the canvas/scheduler/IO boundary
@@ -190,22 +188,42 @@ the token stops automatically on destruction and can be stopped early with
 
 ## BoardMenuRunner and predefined menus
 
-Generic menu mechanics live under `src/board/services/menu/`. `MenuPanel` owns the
-canvas surface, orientation transform, occupancy polling, two-phase debounce,
-and selection blink. `MenuSelection` stores one fixed-size page and optional
-white back button. `BoardMenuRunner` is the only class that polls input for
-menus; it implements `BoardMenuController` and drives typed `BoardMenu` objects
-through `begin()`, `onSelect()`, `onBack()`, and `cancel()` hooks.
+Generic menu mechanics live under `src/board/services/menu/`. Menus declare a
+flat array of `MenuTile{row, col, color, tileId, pageId, autoAdvance,
+autoAdvanceTarget}` entries plus per-page `MenuPageConfig{pageId, backRow,
+backCol}` for optional back-tile placement. `BoardMenuRunner` owns the page
+stack (`MENU_PAGE_STACK_DEPTH = 8`), polling, debounce, drawing, blocking
+cadence loop, and lifecycle dispatch. It implements `MenuFlow` privately and
+applies queued transitions after each hook returns.
 
-Predefined menu flows live under `src/board/menus/` and are passed to `Board` at
-runtime:
+`BoardMenu` exposes:
 
-- `GameSelectionMenu` owns the root/difficulty/color state machine and exposes
-  `BoardGameSelection` / `BoardGameSelectionMode` after completion.
-- `ConfirmMenu` owns the green/red yes/no result.
-- `ResumeConfirmMenu` extends confirmation with the mode-coloured resume blink.
+- `tiles()` / `tileCount()` — declarative tile array.
+- `initialPage()` — page pushed when the menu opens (default 0).
+- `pageConfig(pageId)` — back-tile placement (default: no back tile).
+- Lifecycle hooks: `onOpen`, `onNext`, `onBack`, `onSelect`, `onClose`. Each
+  hook receives a `MenuFlow&` to queue `next(page)` / `back()` / `close()`,
+  inspect `currentPage()`, or issue synchronous UX primitives `blink(row, col,
+  color, times)` / `wait(ms)` (typically only useful in `onOpen`).
 
-Menus define option layouts and semantic transitions only. They must not call
+`MenuAdvance{STAY, NEXT, CLOSE}` on each tile lets the runner advance
+automatically after `onSelect` without writing transition code per tile.
+Explicit hook transitions take priority over a tile's `autoAdvance`. Tile ids
+must not collide with the sentinel `MENU_BACK_TILE_ID = 0xFF` reserved for the
+standard white back tile.
+
+Predefined menu flows live under `src/board/menus/` and are instantiated
+directly by callers (no factory):
+
+- `GameSelectionMenu` declares 15 tiles across pages GAME(0)/DIFFICULTY(1)/
+  COLOR(2) and exposes `BoardGameSelection` / `BoardGameSelectionMode` after
+  completion.
+- `ConfirmMenu` exposes a 2-tile green/red yes-no page that auto-closes on
+  any selection.
+- `ResumeConfirmMenu` extends `ConfirmMenu` with the mode-coloured resume
+  pre-blink in `onOpen`.
+
+Menus define tile layouts and semantic transitions only. They must not call
 `BoardRuntime`, drain `BoardInput`, or run their own polling loops. Use
 `Board::showMenu(menu)`, `Board::runMenu(menu)`, `Board::stopMenu()`, and
 `Board::update()` outside `src/board/`.
@@ -250,9 +268,11 @@ progression.
 
 `BoardCalibrationRunner` lives in `runtime/calibration.{h,cpp}` and is invoked by
 `BoardRuntime::begin()` during startup for `load()` / `run()` / `save()`.
-Runtime recalibration is exposed directly on `Board::resetCalibration()`,
-which clears the calibration NVS namespace and reboots so startup calibration
-runs again.
+Runtime recalibration is exposed as the named `BoardProgramIds::CALIBRATION`
+program: `Board::startProgram(BoardProgramIds::CALIBRATION)` constructs a
+`BoardCalibration` program whose `update()` clears the `"boardCal"` NVS
+namespace and calls `ESP.restart()` so startup calibration runs again on the
+next boot.
 
 NVS namespace `"boardCal"` stores `toLogicalRow[]`, `toLogicalCol[]`,
 `ledIndexMap[8][8]`, and `swapAxes`. `BoardDriver` consults the mapping during
@@ -282,12 +302,14 @@ use. Key namespaces:
   that previously had to be sprinkled through every game-mode update loop.
   Runtime-level synchronized drains keep the producer task and program
   consumers from racing.
-- **Startup calibration is runtime-owned, runtime recalibration is Board-owned** —
+- **Startup calibration is runtime-owned, runtime recalibration is a program** —
   `BoardCalibrationRunner` owns serial-guided raw startup calibration over
-  `BoardDriver`; `Board::resetCalibration()` only clears persisted mapping
-  and reboots. `BoardRuntime` no longer depends on program calibration or
-  exposes friend raw-driver access.
-- **Programs own their visual helpers** — `BoardGameplay` holds a
+  `BoardDriver`; the `CALIBRATION` program only clears persisted mapping and
+  reboots. `BoardRuntime` no longer depends on program calibration or exposes
+  friend raw-driver access. Runtime recalibration is reached through the same
+  `startProgram(id)` facade as diagnostics, so `Board` does not need a
+  dedicated calibration program (`BoardProgramIds::CALIBRATION`).
+- **Programs own their visual helpers** — `BoardGame` holds a
   `BoardFeedback` and a `BoardAssistance` directly (constructed with the
   shared `BoardRuntime&` plus the board-owned `BoardAnimations&`). Visual
   helpers no longer live on a controller facade; they are just objects scoped
@@ -298,16 +320,16 @@ use. Key namespaces:
   a square is selected. This keeps game-selection/resume/resign prompts reusable
   without exposing runtime internals or creating another primary program.
 - **Board gameplay is engine-agnostic** — `types.h` defines the board-owned
-  DTOs, `programs/game/game_rules.h` defines the board-owned `BoardGameRules`
+  DTOs, `programs/game/game_provider.h` defines the board-owned `BoardGameProvider`
   contract, and `assistance_provider.h` defines the board-owned
-  `BoardAssistanceProvider` contract. `BoardGameplay`, `BoardAssistance`, and
+  `BoardAssistanceProvider` contract. `BoardGame`, `BoardAssistance`, and
   `BoardFeedback` consume only these mapped structures; they must not include
   `Game`, `MoveList`, `MoveResult`, concrete engine providers, or search APIs.
   `Board` owns the active assistance provider. `NONE` and `LEGAL_MOVES` are
   fixed board providers that never call an engine. BEST_MOVE is the only
   assistance level allowed to use an engine-backed provider.
 - **Status animations are exposed as move-only tokens** —
-  `BoardGameProgram::startThinkingStatus()` / `startWaitingStatus()` return
+  `IBoardGame::startThinkingStatus()` / `startWaitingStatus()` return
   `BoardAnimationToken` values. The caller stores the token in a member or
   local; destruction or `stop()` cancels the animation by acquiring the
   canvas lock. The renderer is decoupled from the program so cancellation is
@@ -324,5 +346,5 @@ use. Key namespaces:
 
 | File                            | Relationship                              |
 |---------------------------------|-------------------------------------------|
-| `game-mode.instructions.md`     | Game modes consume `BoardGameProgram`, not `Board` directly |
-| `wifi-manager.instructions.md`  | WiFiManager uses `Board::startAnimation("connecting")` and `Board::resetCalibration()` |
+| `game-mode.instructions.md`     | Game modes consume `IBoardGame`, not `Board` directly |
+| `wifi-manager.instructions.md`  | WiFiManager uses `Board::startAnimation("connecting")` and `Board::startProgram(BoardProgramIds::CALIBRATION)` |

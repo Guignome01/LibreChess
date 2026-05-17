@@ -2,7 +2,7 @@
 #define BOARD_H
 
 #include "board/services/menu/menu.h"
-#include "board/programs/game/game_program.h"
+#include "board/programs/game/program_provider.h"
 #include "board/services/program/program.h"
 #include "board/services/visual/animations.h"
 #include "board/assistance_provider.h"
@@ -56,16 +56,12 @@ class Board {
 
   // --- Programs ---
 
-  /// Start (or restart) the board's game program. Returns the persistent
-  /// game program instance for game-mode integration, or nullptr if the
-  /// board failed to initialize.
-  BoardGameProgram* startGame();
-
-  /// Reset the game program to an idle state. The instance stays alive.
-  void stopGame();
-
-  /// Start a polled board program by registered string id (e.g. diagnostics).
-  /// Returns the active program, or nullptr if the id is unknown.
+  /// Start a polled board program by registered string id. Known ids are
+  /// declared in `board/programs/ids.h` (e.g. `GAME`, `DIAGNOSTICS`,
+  /// `CALIBRATION`). Returns the active program, or nullptr if the id is
+  /// unknown or the program failed to start. Callers may `static_cast` the
+  /// result to the program's known typed interface (e.g. `IBoardGame*` for
+  /// `BoardProgramIds::GAME`).
   BoardProgram* startProgram(const char* programId);
 
   /// Cancel and detach the active polled board program.
@@ -82,9 +78,6 @@ class Board {
 
   /// Install the active board assistance provider. Passing nullptr disables it.
   void setAssistanceProvider(std::unique_ptr<BoardAssistanceProvider> provider);
-
-  /// Clear persisted board calibration and reboot.
-  void resetCalibration();
 
   /// Clear every canvas surface. The renderer flushes when it next wakes.
   void clearAllSurfaces();

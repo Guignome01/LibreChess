@@ -6,28 +6,45 @@ namespace {
 
 using namespace GameSelectionMenuOptionId;
 
-static constexpr MenuOption GAME_MENU_OPTIONS[] = {
-    {3, 3, LedColors::Blue, CHESS_MOVES},
-    {3, 4, LedColors::Green, BOT},
-    {4, 3, LedColors::Yellow, LICHESS},
-    {4, 4, LedColors::Red, BOARD_DIAGNOSTICS},
-};
+// Flat tile array spanning all three pages. Authored in white-side
+// orientation (row 7 = rank 1). Auto-advance metadata routes the user
+// through the GAME → DIFFICULTY → COLOR flow without explicit hook code.
+static constexpr MenuTile TILES[] = {
+    // ---- Page 0: GAME ----
+    {3, 3, LedColors::Blue,   CHESS_MOVES,       GAME_SELECTION_PAGE_GAME,
+     MenuAdvance::CLOSE, 0},
+    {3, 4, LedColors::Green,  BOT,               GAME_SELECTION_PAGE_GAME,
+     MenuAdvance::NEXT,  GAME_SELECTION_PAGE_DIFFICULTY},
+    {4, 3, LedColors::Yellow, LICHESS,           GAME_SELECTION_PAGE_GAME,
+     MenuAdvance::CLOSE, 0},
+    {4, 4, LedColors::Red,    BOARD_DIAGNOSTICS, GAME_SELECTION_PAGE_GAME,
+     MenuAdvance::CLOSE, 0},
 
-static constexpr MenuOption BOT_DIFFICULTY_OPTIONS[] = {
-    {3, 0, LedColors::Green, DIFF_1},
-    {3, 1, LedColors::Lime, DIFF_2},
-    {3, 2, LedColors::Yellow, DIFF_3},
-    {3, 3, LedColors::Orange, DIFF_4},
-    {3, 4, LedColors::Red, DIFF_5},
-    {3, 5, LedColors::Crimson, DIFF_6},
-    {3, 6, LedColors::Purple, DIFF_7},
-    {3, 7, LedColors::Blue, DIFF_8},
-};
+    // ---- Page 1: DIFFICULTY ----
+    {3, 0, LedColors::Green,   DIFF_1, GAME_SELECTION_PAGE_DIFFICULTY,
+     MenuAdvance::NEXT, GAME_SELECTION_PAGE_COLOR},
+    {3, 1, LedColors::Lime,    DIFF_2, GAME_SELECTION_PAGE_DIFFICULTY,
+     MenuAdvance::NEXT, GAME_SELECTION_PAGE_COLOR},
+    {3, 2, LedColors::Yellow,  DIFF_3, GAME_SELECTION_PAGE_DIFFICULTY,
+     MenuAdvance::NEXT, GAME_SELECTION_PAGE_COLOR},
+    {3, 3, LedColors::Orange,  DIFF_4, GAME_SELECTION_PAGE_DIFFICULTY,
+     MenuAdvance::NEXT, GAME_SELECTION_PAGE_COLOR},
+    {3, 4, LedColors::Red,     DIFF_5, GAME_SELECTION_PAGE_DIFFICULTY,
+     MenuAdvance::NEXT, GAME_SELECTION_PAGE_COLOR},
+    {3, 5, LedColors::Crimson, DIFF_6, GAME_SELECTION_PAGE_DIFFICULTY,
+     MenuAdvance::NEXT, GAME_SELECTION_PAGE_COLOR},
+    {3, 6, LedColors::Purple,  DIFF_7, GAME_SELECTION_PAGE_DIFFICULTY,
+     MenuAdvance::NEXT, GAME_SELECTION_PAGE_COLOR},
+    {3, 7, LedColors::Blue,    DIFF_8, GAME_SELECTION_PAGE_DIFFICULTY,
+     MenuAdvance::NEXT, GAME_SELECTION_PAGE_COLOR},
 
-static constexpr MenuOption BOT_COLOR_OPTIONS[] = {
-    {3, 3, LedColors::White, PLAY_WHITE},
-    {3, 4, LedColors::scaleColor(LedColors::White, 40.0f / 255.0f), PLAY_BLACK},
-    {3, 5, LedColors::Yellow, PLAY_RANDOM},
+    // ---- Page 2: COLOR ----
+    {3, 3, LedColors::White,
+     PLAY_WHITE, GAME_SELECTION_PAGE_COLOR, MenuAdvance::CLOSE, 0},
+    {3, 4, LedColors::scaleColor(LedColors::White, 40.0f / 255.0f),
+     PLAY_BLACK, GAME_SELECTION_PAGE_COLOR, MenuAdvance::CLOSE, 0},
+    {3, 5, LedColors::Yellow,
+     PLAY_RANDOM, GAME_SELECTION_PAGE_COLOR, MenuAdvance::CLOSE, 0},
 };
 
 }  // namespace
@@ -49,91 +66,97 @@ LedRGB gameSelectionResumeIndicatorColor(BoardGameSelectionMode mode) {
 }
 
 GameSelectionMenu::GameSelectionMenu()
-    : selection_(), pendingBotDifficulty_(4), stage_(Stage::IDLE) {}
+    : selection_(), pendingBotDifficulty_(4) {}
 
-void GameSelectionMenu::begin(BoardMenuController& controller) {
-  reset();
-  showGame(controller);
+const MenuTile* GameSelectionMenu::tiles() const { return TILES; }
+uint8_t GameSelectionMenu::tileCount() const {
+  return sizeof(TILES) / sizeof(TILES[0]);
 }
 
-void GameSelectionMenu::onSelect(int optionId, BoardMenuController& controller) {
-  switch (optionId) {
-    case GameSelectionMenuOptionId::CHESS_MOVES:
-      finish(controller, BoardGameSelection{BoardGameSelectionMode::CHESS_MOVES, 0, ' '});
+MenuPageConfig GameSelectionMenu::pageConfig(uint8_t pageId) const {
+  // The root GAME page exposes no back tile (back == close); deeper pages
+  // always offer the standard white back tile at (4,4).
+  if (pageId == GAME_SELECTION_PAGE_DIFFICULTY ||
+      pageId == GAME_SELECTION_PAGE_COLOR) {
+    return MenuPageConfig{pageId, 4, 4};
+  }
+  return MenuPageConfig{pageId, -1, -1};
+}
+
+void GameSelectionMenu::onOpen(uint8_t pageId, MenuFlow& flow) {
+  (void)flow;
+  if (pageId == GAME_SELECTION_PAGE_GAME) {
+    resetState();
+  }
+}
+
+void GameSelectionMenu::onBack(uint8_t fromPage, uint8_t toPage, MenuFlow& flow) {
+  (void)fromPage;
+  (void)flow;
+  // Going back to a page discards the selections captured on the page
+  // (and all pages) we are leaving.
+  if (toPage == GAME_SELECTION_PAGE_GAME) {
+    resetState();
+  } else if (toPage == GAME_SELECTION_PAGE_DIFFICULTY) {
+    selection_.playerColor = ' ';
+  }
+}
+
+void GameSelectionMenu::onSelect(uint8_t tileId, MenuFlow& flow) {
+  (void)flow;
+  using namespace GameSelectionMenuOptionId;
+  // Difficulty tiles form a contiguous id range (DIFF_1..DIFF_8). Handle
+  // them with a range check instead of an 8-case fall-through cascade so
+  // the dispatch table stays small.
+  if (tileId >= DIFF_1 && tileId <= DIFF_8) {
+    pendingBotDifficulty_ = static_cast<uint8_t>(tileId - DIFF_1 + 1);
+    selection_.botDifficulty = pendingBotDifficulty_;
+    return;
+  }
+  switch (tileId) {
+    case CHESS_MOVES:
+      selection_ = BoardGameSelection{BoardGameSelectionMode::CHESS_MOVES, 0, ' '};
       return;
-    case GameSelectionMenuOptionId::BOT:
-      showDifficulty(controller);
+    case BOT:
+      // Only the mode is fixed at this point; difficulty/color are captured
+      // on the subsequent pages.
+      selection_.mode = BoardGameSelectionMode::BOT;
       return;
-    case GameSelectionMenuOptionId::LICHESS:
-      finish(controller, BoardGameSelection{BoardGameSelectionMode::LICHESS, 0, ' '});
+    case LICHESS:
+      selection_ = BoardGameSelection{BoardGameSelectionMode::LICHESS, 0, ' '};
       return;
-    case GameSelectionMenuOptionId::BOARD_DIAGNOSTICS:
-      finish(controller, BoardGameSelection{BoardGameSelectionMode::BOARD_DIAGNOSTICS, 0, ' '});
+    case BOARD_DIAGNOSTICS:
+      selection_ = BoardGameSelection{BoardGameSelectionMode::BOARD_DIAGNOSTICS, 0, ' '};
       return;
-    case GameSelectionMenuOptionId::DIFF_1:
-    case GameSelectionMenuOptionId::DIFF_2:
-    case GameSelectionMenuOptionId::DIFF_3:
-    case GameSelectionMenuOptionId::DIFF_4:
-    case GameSelectionMenuOptionId::DIFF_5:
-    case GameSelectionMenuOptionId::DIFF_6:
-    case GameSelectionMenuOptionId::DIFF_7:
-    case GameSelectionMenuOptionId::DIFF_8:
-      pendingBotDifficulty_ = static_cast<uint8_t>(optionId - GameSelectionMenuOptionId::DIFF_1 + 1);
-      showColor(controller);
+    case PLAY_WHITE:
+      selection_.playerColor = 'w';
       return;
-    case GameSelectionMenuOptionId::PLAY_WHITE:
-      finish(controller, BoardGameSelection{BoardGameSelectionMode::BOT, pendingBotDifficulty_, 'w'});
+    case PLAY_BLACK:
+      selection_.playerColor = 'b';
       return;
-    case GameSelectionMenuOptionId::PLAY_BLACK:
-      finish(controller, BoardGameSelection{BoardGameSelectionMode::BOT, pendingBotDifficulty_, 'b'});
-      return;
-    case GameSelectionMenuOptionId::PLAY_RANDOM:
-      finish(controller,
-             BoardGameSelection{BoardGameSelectionMode::BOT, pendingBotDifficulty_, randomPlayerColor()});
+    case PLAY_RANDOM:
+      selection_.playerColor = randomPlayerColor();
       return;
     default:
       return;
   }
 }
 
-void GameSelectionMenu::onBack(BoardMenuController& controller) {
-  if (stage_ == Stage::COLOR) {
-    showDifficulty(controller);
-  } else if (stage_ == Stage::DIFFICULTY) {
-    showGame(controller);
+void GameSelectionMenu::onClose(MenuFlow& flow) {
+  (void)flow;
+  // A final selection is one whose mode is set AND, for BOT, has
+  // difficulty + player color resolved. Other modes (CHESS_MOVES, LICHESS,
+  // BOARD_DIAGNOSTICS) close from page 0 with the mode already set.
+  if (!selection_.hasSelection()) return;
+  if (selection_.mode == BoardGameSelectionMode::BOT) {
+    if (selection_.botDifficulty == 0 || selection_.playerColor == ' ') return;
   }
+  if (callback_) callback_(selection_);
 }
 
-void GameSelectionMenu::cancel(BoardMenuController& controller) {
-  reset();
-  controller.erase();
-}
-
-void GameSelectionMenu::reset() {
-  selection_ = {};
+void GameSelectionMenu::resetState() {
+  selection_ = BoardGameSelection{};
   pendingBotDifficulty_ = 4;
-  stage_ = Stage::IDLE;
-}
-
-void GameSelectionMenu::showGame(BoardMenuController& controller) {
-  stage_ = Stage::GAME;
-  controller.show(GAME_MENU_OPTIONS);
-}
-
-void GameSelectionMenu::showDifficulty(BoardMenuController& controller) {
-  stage_ = Stage::DIFFICULTY;
-  controller.showWithBack(BOT_DIFFICULTY_OPTIONS, 4, 4);
-}
-
-void GameSelectionMenu::showColor(BoardMenuController& controller) {
-  stage_ = Stage::COLOR;
-  controller.showWithBack(BOT_COLOR_OPTIONS, 4, 4);
-}
-
-void GameSelectionMenu::finish(BoardMenuController& controller, BoardGameSelection selection) {
-  selection_ = selection;
-  stage_ = Stage::IDLE;
-  controller.finish();
 }
 
 char GameSelectionMenu::randomPlayerColor() const {

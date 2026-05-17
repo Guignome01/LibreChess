@@ -11,7 +11,7 @@
 using namespace LibreChess;
 
 // Forward declaration to avoid circular dependency
-class BoardGameProgram;
+class IBoardGame;
 class WiFiManagerESP32;
 
 // ---------------------------------------------------------------------------
@@ -53,7 +53,7 @@ inline GameMeta readMeta(const uint8_t* raw) {
 // which atomically updates the board, records moves, and notifies observers.
 class GameMode {
  protected:
-  BoardGameProgram* gameplay_;
+  IBoardGame* gameplay_;
   WiFiManagerESP32* wifiManager_;
   Game* chess_;
   Log logger_;
@@ -61,7 +61,7 @@ class GameMode {
   bool resignPending_ = false;    // Set by web resign endpoint
 
   // Constructor
-  GameMode(BoardGameProgram* gameplay, WiFiManagerESP32* wm, Game* cg,
+  GameMode(IBoardGame* gameplay, WiFiManagerESP32* wm, Game* cg,
            ILogger* logger = nullptr);
 
   // Common initialization and game flow methods

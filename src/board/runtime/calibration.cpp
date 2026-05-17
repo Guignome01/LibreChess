@@ -10,11 +10,23 @@ namespace {
 
 // 74HC595 shift register pin mapping: bits are sent MSB first.
 int shiftRegPin(int col) {
-  const int pins[] = {15, 1, 2, 3, 4, 5, 6, 7};
+  static constexpr int pins[] = {15, 1, 2, 3, 4, 5, 6, 7};
   return (col >= 0 && col < 8) ? pins[col] : -1;
 }
 
 char shiftRegOutput(int col) { return (col >= 0 && col < 8) ? static_cast<char>('A' + col) : '?'; }
+
+// Print one row per currently-pressed sensor in raw coordinates. Used to
+// surface unexpected board occupancy during calibration prompts. The format
+// string is shared with the single-sensor diagnostics below so the rodata
+// entry is deduplicated.
+void printPressedSensors(const bool (&rawState)[NUM_ROWS][NUM_COLS]) {
+  for (int row = 0; row < NUM_ROWS; row++)
+    for (int col = 0; col < NUM_COLS; col++)
+      if (rawState[row][col])
+        Serial.printf("  GPIO %d + 74HC595 Q%c (pin %d)\n", rowPins[row],
+                      shiftRegOutput(col), shiftRegPin(col));
+}
 
 char calibrationRankChar(int row) { return static_cast<char>('1' + (7 - row)); }
 
@@ -270,11 +282,7 @@ bool BoardCalibrationRunner::waitForBoardEmpty(unsigned long stableMs) {
       if (now - lastWarningTime >= CALIBRATION_WARNING_INTERVAL_MS) {
         lastWarningTime = now;
         Serial.printf("Board not empty - %d sensor(s) still detecting a magnet:\n", pressedCount);
-        for (int row = 0; row < NUM_ROWS; row++)
-          for (int col = 0; col < NUM_COLS; col++)
-            if (rawState[row][col])
-              Serial.printf("  GPIO %d + 74HC595 Q%c (pin %d)\n", rowPins[row],
-                            shiftRegOutput(col), shiftRegPin(col));
+        printPressedSensors(rawState);
       }
     }
     delay(SENSOR_READ_DELAY_MS);
@@ -331,11 +339,7 @@ bool BoardCalibrationRunner::waitForSingleRawPress(int& rawRow, int& rawCol, uns
           Serial.println("No sensor detecting a magnet - place a piece on the requested square");
         } else {
           Serial.printf("Multiple sensors (%d) detected simultaneously but need exactly 1:\n", count);
-          for (int row = 0; row < NUM_ROWS; row++)
-            for (int col = 0; col < NUM_COLS; col++)
-              if (rawState[row][col])
-                Serial.printf("  GPIO %d + 74HC595 Q%c (pin %d)\n", rowPins[row],
-                              shiftRegOutput(col), shiftRegPin(col));
+          printPressedSensors(rawState);
         }
       }
       stableStart = 0;

@@ -1,5 +1,6 @@
 #include "wifi_manager_esp32.h"
 #include "board/board.h"
+#include "board/programs/ids.h"
 #include "game.h"
 #include "engines/lichess/config.h"
 #include "shared/utils.h"
@@ -814,7 +815,7 @@ void WiFiManagerESP32::handleBoardSettings(AsyncWebServerRequest* request) {
 }
 
 void WiFiManagerESP32::handleBoardCalibration(AsyncWebServerRequest* request) {
-  board_->resetCalibration();
+  hasPendingBoardCalibration_ = true;
   sendJsonOk(request);
 }
 

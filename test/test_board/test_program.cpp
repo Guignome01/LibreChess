@@ -138,7 +138,7 @@ void test_program_runner_stop_destroys_owned_program() {
 
 void test_program_factory_registers_and_creates_program() {
   BoardProgramFactory factory;
-  BoardProgramContext context{nullptr, nullptr, nullptr};
+  BoardProgramContext context{nullptr, nullptr, nullptr, nullptr};
 
   TEST_ASSERT_TRUE(factory.registerCreator("fake", createFactoryProgram));
   TEST_ASSERT_TRUE(factory.has("fake"));
@@ -159,7 +159,7 @@ void test_program_factory_rejects_invalid_and_duplicate_entries() {
 
 void test_program_factory_returns_null_for_unknown_id() {
   BoardProgramFactory factory;
-  BoardProgramContext context{nullptr, nullptr, nullptr};
+  BoardProgramContext context{nullptr, nullptr, nullptr, nullptr};
 
   std::unique_ptr<BoardProgram> program = factory.create("missing", context);
 

@@ -8,17 +8,23 @@
 #include <stdint.h>
 
 class BoardAnimations;
+class BoardAssistanceProvider;
 class BoardMenuRunner;
 class BoardRuntime;
 
 // ---------------------------------------------------------------------------
 // BoardProgramContext — construction inputs for board program factories.
 // ---------------------------------------------------------------------------
+// `assistanceProvider` is the board-owned active assistance provider. The
+// factory passes it to the game program at construction so the program can
+// service hints from the engine and surface them on the assistance surface.
+// ---------------------------------------------------------------------------
 
 struct BoardProgramContext {
   BoardRuntime* runtime;
   BoardAnimations* animations;
   BoardMenuRunner* menuRunner;
+  BoardAssistanceProvider* assistanceProvider;
 };
 
 // ---------------------------------------------------------------------------

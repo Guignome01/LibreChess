@@ -1,31 +1,37 @@
 #ifndef BOARD_MENUS_CONFIRM_H
 #define BOARD_MENUS_CONFIRM_H
 
-#include "board/services/menu/menu.h"
 #include "board/menus/game_selection.h"
+#include "board/services/menu/menu.h"
 
 namespace ConfirmMenuOptionId {
-constexpr int8_t CONFIRM_NO = 30;
-constexpr int8_t CONFIRM_YES = 31;
+constexpr uint8_t CONFIRM_NO = 30;
+constexpr uint8_t CONFIRM_YES = 31;
 }  // namespace ConfirmMenuOptionId
 
 // ---------------------------------------------------------------------------
 // ConfirmMenu — predefined green/red confirmation prompt.
+// ---------------------------------------------------------------------------
+// Single-page menu with two tiles. Both tiles auto-close so a press
+// immediately terminates the prompt; the caller then queries `answered()`
+// and `accepted()`.
 // ---------------------------------------------------------------------------
 
 class ConfirmMenu : public BoardMenu {
  public:
   ConfirmMenu();
 
-  void begin(BoardMenuController& controller) override;
-  void onSelect(int optionId, BoardMenuController& controller) override;
-  void cancel(BoardMenuController& controller) override;
+  const MenuTile* tiles() const override;
+  uint8_t tileCount() const override;
+
+  void onOpen(uint8_t pageId, MenuFlow& flow) override;
+  void onSelect(uint8_t tileId, MenuFlow& flow) override;
 
   bool answered() const { return answered_; }
   bool accepted() const { return answered_ && accepted_; }
 
  protected:
-  void reset();
+  void resetAnswers();
 
  private:
   bool answered_;
@@ -40,7 +46,7 @@ class ResumeConfirmMenu final : public ConfirmMenu {
  public:
   explicit ResumeConfirmMenu(BoardGameSelectionMode mode);
 
-  void begin(BoardMenuController& controller) override;
+  void onOpen(uint8_t pageId, MenuFlow& flow) override;
 
  private:
   BoardGameSelectionMode mode_;

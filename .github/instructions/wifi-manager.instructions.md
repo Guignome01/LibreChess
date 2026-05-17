@@ -67,6 +67,7 @@ The web server runs on the async task context, but game mutations must happen on
 | Board edit | `pendingFenEdit` + `hasPendingEdit` | `getPendingBoardEdit(fenOut)` | `clearPendingEdit()` |
 | Resign | `hasPendingResign` | `getPendingResign()` | `clearPendingResign()` |
 | Navigation | `pendingNavAction_` | `getPendingNavAction()` | `clearPendingNav()` |
+| Board calibration | `hasPendingBoardCalibration_` | `getPendingBoardCalibration()` | `clearPendingBoardCalibration()` |
 
 **Important**: Never call `Game` mutation methods from a web handler. Always set a flag and let the main loop consume it.
 

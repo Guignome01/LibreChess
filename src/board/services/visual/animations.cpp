@@ -157,16 +157,21 @@ void paintThinking(BoardCanvas& canvas, BoardCanvasHandle surface, uint32_t elap
   const float v = brightness;
   const float q = v * (1.0f - f);
   const float t = v * f;
-  uint8_t r = 0, g = 0, b = 0;
-  switch (hi) {
-    case 0: r = scaleByte(v); g = scaleByte(t); b = 0; break;
-    case 1: r = scaleByte(q); g = scaleByte(v); b = 0; break;
-    case 2: r = 0; g = scaleByte(v); b = scaleByte(t); break;
-    case 3: r = 0; g = scaleByte(q); b = scaleByte(v); break;
-    case 4: r = scaleByte(t); g = 0; b = scaleByte(v); break;
-    default: r = scaleByte(v); g = 0; b = scaleByte(q); break;
-  }
-  const LedRGB color{r, g, b};
+  // HSV→RGB sector table. Each row is the (r, g, b) channel selector for one
+  // 60° sector, where 0=zero, 1=v, 2=q, 3=t. Replaces a 6-case switch.
+  static constexpr uint8_t HSV_SECTORS[6][3] = {
+      {1, 3, 0},  // [  0, 60)°: r=v, g=t, b=0
+      {2, 1, 0},  // [ 60,120)°: r=q, g=v, b=0
+      {0, 1, 3},  // [120,180)°: r=0, g=v, b=t
+      {0, 2, 1},  // [180,240)°: r=0, g=q, b=v
+      {3, 0, 1},  // [240,300)°: r=t, g=0, b=v
+      {1, 0, 2},  // [300,360)°: r=v, g=0, b=q
+  };
+  const int sector = (hi < 0 || hi > 5) ? 5 : hi;
+  const float chans[4] = {0.0f, v, q, t};
+  const LedRGB color{scaleByte(chans[HSV_SECTORS[sector][0]]),
+                     scaleByte(chans[HSV_SECTORS[sector][1]]),
+                     scaleByte(chans[HSV_SECTORS[sector][2]])};
   for (auto& corner : corners) {
     canvas.setPixel(surface, corner[0], corner[1], color);
   }
@@ -247,64 +252,57 @@ bool BoardAnimations::any() const { return scheduler_.any(); }
 
 void BoardAnimations::clearAll() { scheduler_.clearAll(canvas_); }
 
+// ---------------------------------------------------------------------------
+// Per-kind start helpers
+// ---------------------------------------------------------------------------
+// Each helper builds a spec and forwards to the master `start()` overload.
+// The body is intentionally a single brace-init expression so all eight
+// helpers share the same instruction sequence shape and the compiler can
+// merge the trailing tail-call to `start()`.
+// ---------------------------------------------------------------------------
+
 BoardAnimationHandle BoardAnimations::startBlink(int row, int col, LedRGB color, int times,
                                                  uint32_t nowMs) {
-  BoardAnimationSpec spec{};
-  spec.kind = BoardAnimationKind::BLINK;
-  spec.loop = false;
+  BoardAnimationSpec spec{BoardAnimationKind::BLINK, 0u, false, {}};
   spec.params.blink = {row, col, color, times};
   return start(spec, nowMs);
 }
 
 BoardAnimationHandle BoardAnimations::startFlash(LedRGB color, int times, uint32_t nowMs) {
-  BoardAnimationSpec spec{};
-  spec.kind = BoardAnimationKind::FLASH;
-  spec.loop = false;
+  BoardAnimationSpec spec{BoardAnimationKind::FLASH, 0u, false, {}};
   spec.params.flash = {color, times};
   return start(spec, nowMs);
 }
 
 BoardAnimationHandle BoardAnimations::startFirework(LedRGB color, uint32_t nowMs) {
-  BoardAnimationSpec spec{};
-  spec.kind = BoardAnimationKind::FIREWORK;
-  spec.loop = false;
+  BoardAnimationSpec spec{BoardAnimationKind::FIREWORK, 0u, false, {}};
   spec.params.firework = {color};
   return start(spec, nowMs);
 }
 
 BoardAnimationHandle BoardAnimations::startCapture(int row, int col, uint32_t nowMs) {
-  BoardAnimationSpec spec{};
-  spec.kind = BoardAnimationKind::CAPTURE;
-  spec.loop = false;
+  BoardAnimationSpec spec{BoardAnimationKind::CAPTURE, 0u, false, {}};
   spec.params.capture = {row, col};
   return start(spec, nowMs);
 }
 
 BoardAnimationHandle BoardAnimations::startPromotion(int col, uint32_t nowMs) {
-  BoardAnimationSpec spec{};
-  spec.kind = BoardAnimationKind::PROMOTION;
-  spec.loop = false;
+  BoardAnimationSpec spec{BoardAnimationKind::PROMOTION, 0u, false, {}};
   spec.params.promotion = {col};
   return start(spec, nowMs);
 }
 
 BoardAnimationHandle BoardAnimations::startThinking(uint32_t nowMs) {
-  BoardAnimationSpec spec{};
-  spec.kind = BoardAnimationKind::THINKING;
-  spec.loop = true;
+  BoardAnimationSpec spec{BoardAnimationKind::THINKING, 0u, true, {}};
   return start(spec, nowMs);
 }
 
 BoardAnimationHandle BoardAnimations::startWaiting(uint32_t nowMs) {
-  BoardAnimationSpec spec{};
-  spec.kind = BoardAnimationKind::WAITING;
-  spec.loop = true;
+  BoardAnimationSpec spec{BoardAnimationKind::WAITING, 0u, true, {}};
   return start(spec, nowMs);
 }
 
 BoardAnimationHandle BoardAnimations::startConnecting(uint32_t nowMs) {
-  BoardAnimationSpec spec{};
-  spec.kind = BoardAnimationKind::CONNECTING;
-  spec.loop = true;
+  BoardAnimationSpec spec{BoardAnimationKind::CONNECTING, 0u, true, {}};
   return start(spec, nowMs);
 }

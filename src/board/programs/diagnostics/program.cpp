@@ -1,4 +1,4 @@
-#include "board/programs/diagnostics/diagnostics_program.h"
+#include "board/programs/diagnostics/program.h"
 
 #include "board/runtime/colors.h"
 #include "board/runtime/runtime.h"
@@ -7,14 +7,14 @@
 
 #include <Arduino.h>
 
-BoardDiagnosticsProgram::BoardDiagnosticsProgram(BoardRuntime& runtime, BoardAnimations& animations)
+BoardDiagnostics::BoardDiagnostics(BoardRuntime& runtime, BoardAnimations& animations)
     : BoardVisual(runtime),
       animations_(animations),
       visited_{},
       complete_(false),
       visitedCount_(0) {}
 
-void BoardDiagnosticsProgram::begin() {
+void BoardDiagnostics::begin() {
   Serial.println("Sensor Test: Visit all squares with a piece to complete the test.");
   complete_ = false;
   clearVisited();
@@ -22,7 +22,7 @@ void BoardDiagnosticsProgram::begin() {
   paintVisited();
 }
 
-void BoardDiagnosticsProgram::update() {
+void BoardDiagnostics::update() {
   if (complete_) return;
 
   recordCurrentOccupancy();
@@ -37,18 +37,18 @@ void BoardDiagnosticsProgram::update() {
   }
 }
 
-void BoardDiagnosticsProgram::cancel() {
+void BoardDiagnostics::cancel() {
   complete_ = true;
   clearSurface();
 }
 
-void BoardDiagnosticsProgram::clearVisited() {
+void BoardDiagnostics::clearVisited() {
   visitedCount_ = 0;
   for (int row = 0; row < ROWS; ++row)
     for (int col = 0; col < COLS; ++col) visited_[row][col] = false;
 }
 
-void BoardDiagnosticsProgram::recordCurrentOccupancy() {
+void BoardDiagnostics::recordCurrentOccupancy() {
   bool occupied[ROWS][COLS];
   runtime_.copyInputOccupancy(occupied);
   for (int row = 0; row < ROWS; ++row)
@@ -56,13 +56,13 @@ void BoardDiagnosticsProgram::recordCurrentOccupancy() {
       if (occupied[row][col]) recordVisitedSquare(row, col);
 }
 
-void BoardDiagnosticsProgram::recordVisitedSquare(int row, int col) {
+void BoardDiagnostics::recordVisitedSquare(int row, int col) {
   if (visited_[row][col]) return;
   visited_[row][col] = true;
   ++visitedCount_;
 }
 
-void BoardDiagnosticsProgram::paintVisited() {
+void BoardDiagnostics::paintVisited() {
   auto g = runtime_.lockCanvas();
   BoardCanvasHandle surface = writableSurface(g.canvas);
   g.canvas.clearSurface(surface);

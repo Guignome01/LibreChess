@@ -16,7 +16,7 @@ REST-like HTTP API served by `WiFiManagerESP32` (`AsyncWebServer` on port 80). F
 | `POST` | `/board-update` | Submit a FEN-based board edit |
 | `GET` | `/board-settings` | LED brightness and dimming settings |
 | `POST` | `/board-settings` | Save LED settings (persisted to NVS) |
-| `POST` | `/board-calibrate` | Trigger recalibration on next reboot |
+| `POST` | `/board-calibrate` | Queue recalibration on the main loop |
 | `POST` | `/gameselect` | Select a game mode |
 | `POST` | `/resign` | Submit a resign request |
 | `POST` | `/nav` | Navigate move history (undo/redo/first/last) |

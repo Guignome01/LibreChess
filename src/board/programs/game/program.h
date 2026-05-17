@@ -1,7 +1,7 @@
-#ifndef BOARD_PROGRAMS_GAME_GAMEPLAY_H
-#define BOARD_PROGRAMS_GAME_GAMEPLAY_H
+#ifndef BOARD_PROGRAMS_GAME_PROGRAM_H
+#define BOARD_PROGRAMS_GAME_PROGRAM_H
 
-#include "board/programs/game/game_program.h"
+#include "board/programs/game/program_provider.h"
 #include "board/programs/game/visuals/assistance.h"
 #include "board/programs/game/visuals/feedback.h"
 
@@ -12,7 +12,7 @@ class BoardMenuRunner;
 class BoardRuntime;
 
 // ---------------------------------------------------------------------------
-// BoardGameplay — physical chess interaction component for the game program.
+// BoardGame — physical chess interaction component for the game program.
 // ---------------------------------------------------------------------------
 // Owns its own BoardFeedback + BoardAssistance instances (programs are no
 // longer composed by the controller). Drains synchronized input-event batches
@@ -23,9 +23,9 @@ class BoardRuntime;
 // resignation gesture (king held off-board for 3 s).
 // ---------------------------------------------------------------------------
 
-class BoardGameplay final : public BoardGameProgram {
+class BoardGame final : public IBoardGame {
  public:
-  BoardGameplay(BoardRuntime& runtime, BoardAnimations& animations, BoardMenuRunner& menuRunner);
+  BoardGame(BoardRuntime& runtime, BoardAnimations& animations, BoardMenuRunner& menuRunner);
 
   /// Reset internal state for a fresh game.
   void reset() override;
@@ -41,12 +41,12 @@ class BoardGameplay final : public BoardGameProgram {
   void cancelAssistance() override;
 
   /// Wait until the physical board matches the in-memory game position.
-  void waitForSetup(const BoardGameRules& gameRules) override;
+  void waitForSetup(const BoardGameProvider& gameRules) override;
 
   /// Detect a legal player move or resign gesture from current input state.
-  BoardGameplayResult tryPlayerMove(const BoardGameRules& gameRules,
+  BoardGameResult tryPlayerMove(const BoardGameProvider& gameRules,
                                     BoardPieceColor playerColor,
-                                    BoardGameplayMove& selection) override;
+                                    BoardGameMove& selection) override;
 
   /// Guide physical completion of a move (castling steps, remote-engine
   /// move) and show outcome visuals.
@@ -87,11 +87,11 @@ class BoardGameplay final : public BoardGameProgram {
   BoardAssistance assistance_;
   BoardAssistanceProvider* assistanceProvider_ = nullptr;
 
-  BoardGameplayResult handleSourceRestore(int row, int col, BoardPieceColor color,
+  BoardGameResult handleSourceRestore(int row, int col, BoardPieceColor color,
                                           bool resignTransitioned,
                                           unsigned long resignFlagTimestamp,
-                                          BoardGameplayMove& selection);
+                                          BoardGameMove& selection);
   bool continueResignGesture(int row, int col, BoardPieceColor color);
 };
 
-#endif  // BOARD_PROGRAMS_GAME_GAMEPLAY_H
+#endif  // BOARD_PROGRAMS_GAME_PROGRAM_H

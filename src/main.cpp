@@ -1,6 +1,7 @@
 #include "board/board.h"
 #include "board/menus/confirm.h"
 #include "board/menus/game_selection.h"
+#include "board/programs/ids.h"
 #include "engines/factory.h"
 #include "game_mode/player_mode.h"
 #include "game_mode/bot_mode.h"
@@ -54,7 +55,8 @@ void initializeSelectedMode(AppMode mode);
 void checkForResumableGame();
 BoardAssistanceLevel assistanceLevelFromInt(int value);
 void configureBoardAssistance();
-BoardGameProgram* startBoardGameProgram();
+IBoardGame* startBoardGameProgram();
+bool startBoardCalibration();
 
 void setup() {
   Serial.begin(115200);
@@ -93,6 +95,10 @@ void setup() {
 
   // Kick off NTP time sync (non-blocking, will resolve in background)
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
+  // Wire the game-selection menu callback once; the menu invokes it from
+  // `onClose` when a complete selection has been captured, removing the
+  // need to poll `hasSelection()` after each board update.
+  gameSelectionMenu.setOnSelected(&handleGameSelection);
   // Check for a live game that can be resumed
   checkForResumableGame();
   if (currentMode != AppMode::SELECTION)
@@ -172,6 +178,18 @@ void loop() {
   // WiFi reconnection state machine
   wifiManager.update();
 
+  // Web handlers run on the async server task; consume calibration requests
+  // here so board program lifetime and active game teardown stay on the main
+  // loop.
+  if (wifiManager.getPendingBoardCalibration()) {
+    wifiManager.clearPendingBoardCalibration();
+    if (startBoardCalibration()) {
+      physicalBoard.update();
+    }
+    delay(physicalBoard.cadenceMs());
+    return;
+  }
+
   // Check for pending board edits from WiFi (FEN-based)
   String editFen;
   if (wifiManager.getPendingBoardEdit(editFen)) {
@@ -229,9 +247,9 @@ void loop() {
   Board::UpdateResult boardUpdate = physicalBoard.update();
 
   if (currentMode == AppMode::SELECTION) {
-    if (boardUpdate.menuFinished && gameSelectionMenu.hasSelection()) {
-      handleGameSelection(gameSelectionMenu.selection());
-    }
+    // Selection finalization is delivered through the menu callback wired
+    // in `setup()`; nothing to poll here.
+    (void)boardUpdate;
     delay(physicalBoard.cadenceMs());
     return;
   }
@@ -318,13 +336,33 @@ void configureBoardAssistance() {
       assistanceLevel, assistanceEngine, assistanceDifficultyLevel, &chess, &logger));
 }
 
-BoardGameProgram* startBoardGameProgram() {
-  BoardGameProgram* gameProgram = physicalBoard.startGame();
-  if (gameProgram == nullptr) {
+IBoardGame* startBoardGameProgram() {
+  BoardProgram* program = physicalBoard.startProgram(BoardProgramIds::GAME);
+  if (program == nullptr) {
     Serial.println("ERROR: Failed to start board game program");
     return nullptr;
   }
-  return gameProgram;
+  // The game program is the only program that implements IBoardGame, so the
+  // downcast is safe by construction (registered factory creates a BoardGame).
+  return static_cast<IBoardGame*>(program);
+}
+
+bool startBoardCalibration() {
+  currentMode = AppMode::SELECTION;
+  modeInitialized = false;
+  delete activeGame;
+  activeGame = nullptr;
+  physicalBoard.stopMenu();
+  physicalBoard.setAssistanceProvider(nullptr);
+
+  BoardProgram* program = physicalBoard.startProgram(BoardProgramIds::CALIBRATION);
+  if (program == nullptr) {
+    Serial.println("ERROR: Failed to start board calibration program");
+    enterGameSelection();
+    return false;
+  }
+  Serial.println("Board calibration requested via web interface");
+  return true;
 }
 
 void enterGameSelection() {
@@ -332,7 +370,6 @@ void enterGameSelection() {
   modeInitialized = false;
   delete activeGame;
   activeGame = nullptr;
-  physicalBoard.stopGame();
   physicalBoard.stopProgram();
   physicalBoard.setAssistanceProvider(nullptr);
   physicalBoard.showMenu(gameSelectionMenu);
@@ -387,7 +424,6 @@ void initializeSelectedMode(AppMode mode) {
   // Clean up previous game/test
   delete activeGame;
   activeGame = nullptr;
-  physicalBoard.stopGame();
   physicalBoard.stopProgram();
   physicalBoard.setAssistanceProvider(nullptr);
 
@@ -395,7 +431,7 @@ void initializeSelectedMode(AppMode mode) {
     case AppMode::CHESS_MOVES: {
       Serial.println("Starting 'Chess Moves'...");
       configureBoardAssistance();
-      BoardGameProgram* gameProgram = startBoardGameProgram();
+      IBoardGame* gameProgram = startBoardGameProgram();
       if (gameProgram == nullptr) {
         enterGameSelection();
         break;
@@ -407,7 +443,7 @@ void initializeSelectedMode(AppMode mode) {
     case AppMode::BOT: {
       Serial.printf("Starting 'Chess Bot' (Engine: %s, Level: %d, Player is %s)...\n", botEngine.c_str(), botDifficultyLevel, playerColor == 'w' ? "White" : "Black");
       configureBoardAssistance();
-      BoardGameProgram* gameProgram = startBoardGameProgram();
+      IBoardGame* gameProgram = startBoardGameProgram();
       if (gameProgram == nullptr) {
         enterGameSelection();
         break;
@@ -421,7 +457,7 @@ void initializeSelectedMode(AppMode mode) {
     case AppMode::LICHESS: {
       Serial.println("Starting 'Lichess Mode'...");
       configureBoardAssistance();
-      BoardGameProgram* gameProgram = startBoardGameProgram();
+      IBoardGame* gameProgram = startBoardGameProgram();
       if (gameProgram == nullptr) {
         enterGameSelection();
         break;
@@ -433,7 +469,7 @@ void initializeSelectedMode(AppMode mode) {
     }
     case AppMode::BOARD_DIAGNOSTICS:
       Serial.println("Starting 'Sensor Test'...");
-      physicalBoard.startProgram("diagnostics");
+      physicalBoard.startProgram(BoardProgramIds::DIAGNOSTICS);
       break;
     default:
       enterGameSelection();

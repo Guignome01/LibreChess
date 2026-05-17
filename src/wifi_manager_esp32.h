@@ -89,6 +89,9 @@ class WiFiManagerESP32 : public IGameObserver {
   // Resign flag (set from web interface)
   bool hasPendingResign = false;
 
+  // Board calibration request (set from web interface, consumed by main loop)
+  bool hasPendingBoardCalibration_ = false;
+
   // Navigation (set from web interface, consumed by main loop)
   const Game* game_ = nullptr;
   uint8_t pendingNavAction_ = 0;  // NavAction value
@@ -190,6 +193,9 @@ class WiFiManagerESP32 : public IGameObserver {
   // Web resign
   bool getPendingResign() const { return hasPendingResign; }
   void clearPendingResign() { hasPendingResign = false; }
+  // Board calibration (from web interface)
+  bool getPendingBoardCalibration() const { return hasPendingBoardCalibration_; }
+  void clearPendingBoardCalibration() { hasPendingBoardCalibration_ = false; }
   // Move navigation (from web interface)
   void setGameRef(const Game* game) { game_ = game; }
   uint8_t getPendingNavAction() const { return pendingNavAction_; }

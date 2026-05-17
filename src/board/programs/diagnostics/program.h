@@ -11,20 +11,20 @@ class BoardRuntime;
 class BoardAnimations;
 
 // ---------------------------------------------------------------------------
-// BoardDiagnosticsProgram — physical sensor coverage program.
+// BoardDiagnostics — physical sensor coverage program.
 // ---------------------------------------------------------------------------
 // Lights every square on an owned surface as the user places pieces.
 // When all 64 squares have been visited, the surface is cleared and a
 // firework animation plays.
 // ---------------------------------------------------------------------------
 
-class BoardDiagnosticsProgram final : public BoardProgram, private BoardVisual {
+class BoardDiagnostics final : public BoardProgram, private BoardVisual {
  public:
   static constexpr int ROWS = BoardHelpers::ROWS;
   static constexpr int COLS = BoardHelpers::COLS;
   static constexpr int SQUARES = BoardHelpers::SQUARES;
 
-  BoardDiagnosticsProgram(BoardRuntime& runtime, BoardAnimations& animations);
+  BoardDiagnostics(BoardRuntime& runtime, BoardAnimations& animations);
 
   void begin() override;
   void update() override;

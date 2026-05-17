@@ -1,7 +1,6 @@
 #include "board/board.h"
 
 #include "board/programs/factory.h"
-#include "board/programs/game/gameplay.h"
 #include "board/programs/ids.h"
 #include "board/runtime/runtime.h"
 #include "board/services/menu/menu.h"
@@ -11,7 +10,6 @@
 #include "shared/utils.h"
 
 #include <Arduino.h>
-#include <Preferences.h>
 #include <string.h>
 #include <utility>
 
@@ -21,8 +19,12 @@ struct Board::Impl {
   BoardMenuRunner menuRunner;
   BoardProgramFactory programFactory;
   BoardProgramRunner programRunner;
-  std::unique_ptr<BoardGameProgram> gameProgram;
   std::unique_ptr<BoardAssistanceProvider> assistanceProvider;
+  // Observer pointer to the active game program, owned by `programRunner`.
+  // Tracked separately so `setAssistanceProvider()` can re-bind the live
+  // provider without scanning the runner. Cleared on `stopProgram()` and on
+  // every `startProgram()` that does not start the game program.
+  IBoardGame* activeGameProgram = nullptr;
 
   Impl()
       : runtime(),
@@ -30,14 +32,12 @@ struct Board::Impl {
         menuRunner(runtime, animations),
         programFactory(),
         programRunner(),
-        gameProgram(new BoardGameplay(runtime, animations, menuRunner)),
         assistanceProvider(new BoardLegalMoveAssistanceProvider()) {
     registerBoardPrograms(programFactory);
-    gameProgram->setAssistanceProvider(assistanceProvider.get());
   }
 
   BoardProgramContext programContext() {
-    return BoardProgramContext{&runtime, &animations, &menuRunner};
+    return BoardProgramContext{&runtime, &animations, &menuRunner, assistanceProvider.get()};
   }
 };
 
@@ -77,54 +77,38 @@ bool Board::runMenu(BoardMenu& menu, bool flipped) {
 }
 void Board::stopMenu() { impl_->menuRunner.stop(); }
 
-BoardGameProgram* Board::startGame() {
-  // The game program is permanent; restart only resets transient state.
-  impl_->programRunner.stop();
-  if (!impl_->gameProgram) return nullptr;
-  impl_->gameProgram->reset();
-  return impl_->gameProgram.get();
-}
-
-void Board::stopGame() {
-  if (impl_->gameProgram) impl_->gameProgram->reset();
-}
-
 BoardProgram* Board::startProgram(const char* programId) {
   BoardProgramContext context = impl_->programContext();
   std::unique_ptr<BoardProgram> program = impl_->programFactory.create(programId, context);
   if (!program) {
     Serial.printf("Board: unknown program id '%s'\n", programId ? programId : "(null)");
+    impl_->activeGameProgram = nullptr;
     return nullptr;
   }
-  return impl_->programRunner.set(std::move(program));
+  BoardProgram* active = impl_->programRunner.set(std::move(program));
+  // Track the game program (if any) for live assistance-provider re-binding.
+  if (active != nullptr && programId != nullptr &&
+      strcmp(programId, BoardProgramIds::GAME) == 0) {
+    impl_->activeGameProgram = static_cast<IBoardGame*>(active);
+  } else {
+    impl_->activeGameProgram = nullptr;
+  }
+  return active;
 }
 
-void Board::stopProgram() { impl_->programRunner.stop(); }
+void Board::stopProgram() {
+  impl_->programRunner.stop();
+  impl_->activeGameProgram = nullptr;
+}
 
 void Board::setAssistanceProvider(std::unique_ptr<BoardAssistanceProvider> provider) {
-  if (impl_->gameProgram) impl_->gameProgram->setAssistanceProvider(nullptr);
+  if (impl_->activeGameProgram) impl_->activeGameProgram->setAssistanceProvider(nullptr);
   impl_->assistanceProvider = provider ? std::move(provider)
                                       : std::unique_ptr<BoardAssistanceProvider>(
                                             new BoardNoAssistanceProvider());
-  if (impl_->gameProgram) {
-    impl_->gameProgram->setAssistanceProvider(impl_->assistanceProvider.get());
+  if (impl_->activeGameProgram) {
+    impl_->activeGameProgram->setAssistanceProvider(impl_->assistanceProvider.get());
   }
-}
-
-void Board::resetCalibration() {
-  if (!SystemUtils::ensureNvsInitialized()) {
-    Serial.println("NVS init failed - cannot trigger calibration");
-    return;
-  }
-  Preferences prefs;
-  if (prefs.begin("boardCal", false)) {
-    prefs.clear();
-    prefs.end();
-  } else {
-    Serial.println("Board calibration namespace could not be opened for reset");
-  }
-  Serial.println("Board calibration cleared - rebooting ...");
-  ESP.restart();
 }
 
 void Board::clearAllSurfaces() {

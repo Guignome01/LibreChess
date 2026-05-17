@@ -1,11 +1,11 @@
 #include "bot_mode.h"
-#include "board/programs/game/game_program.h"
+#include "board/programs/game/program_provider.h"
 #include "game.h"
 #include "wifi_manager_esp32.h"
 
 #include <Arduino.h>
 
-BotMode::BotMode(BoardGameProgram* gameplay, WiFiManagerESP32* wm, Game* cg,
+BotMode::BotMode(IBoardGame* gameplay, WiFiManagerESP32* wm, Game* cg,
                  EngineProvider* provider, ILogger* logger)
   : GameMode(gameplay, wm, cg, logger), provider_(provider) {}
 

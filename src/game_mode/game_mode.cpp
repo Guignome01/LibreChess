@@ -1,10 +1,10 @@
 #include "game_mode.h"
-#include "board/programs/game/game_program.h"
+#include "board/programs/game/program_provider.h"
 #include "game_mode/board_adapter.h"
 #include "game.h"
 #include "wifi_manager_esp32.h"
 
-GameMode::GameMode(BoardGameProgram* gameplay, WiFiManagerESP32* wm, Game* cg, ILogger* logger)
+GameMode::GameMode(IBoardGame* gameplay, WiFiManagerESP32* wm, Game* cg, ILogger* logger)
   : gameplay_(gameplay),
     wifiManager_(wm),
     chess_(cg),
@@ -60,17 +60,17 @@ MoveResult GameMode::applyMove(const std::string& move) {
 }
 
 bool GameMode::tryPlayerMove(Color playerColor, int& fromRow, int& fromCol, int& toRow, int& toCol) {
-  BoardGameplayMove selection;
+  BoardGameMove selection;
   BoardAdapter::GameRules gameRules(*chess_);
-  BoardGameplayResult result = gameplay_->tryPlayerMove(gameRules,
+  BoardGameResult result = gameplay_->tryPlayerMove(gameRules,
                                                         BoardAdapter::toBoardColor(playerColor),
                                                         selection);
-  if (result == BoardGameplayResult::RESIGN_REQUESTED) {
+  if (result == BoardGameResult::RESIGN_REQUESTED) {
     completeResign(BoardAdapter::toGameColor(selection.resignColor));
     return false;
   }
 
-  if (result != BoardGameplayResult::MOVE)
+  if (result != BoardGameResult::MOVE)
     return false;
 
   fromRow = selection.fromRow;

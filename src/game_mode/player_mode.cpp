@@ -1,9 +1,9 @@
 #include "player_mode.h"
-#include "board/programs/game/game_program.h"
+#include "board/programs/game/program_provider.h"
 #include "game.h"
 #include <Arduino.h>
 
-PlayerMode::PlayerMode(BoardGameProgram* gameplay, WiFiManagerESP32* wm, Game* cg,
+PlayerMode::PlayerMode(IBoardGame* gameplay, WiFiManagerESP32* wm, Game* cg,
                        ILogger* logger)
   : GameMode(gameplay, wm, cg, logger) {}
 

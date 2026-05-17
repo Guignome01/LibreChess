@@ -43,9 +43,9 @@ Firmware (src/):
       └─ LibreChessEngine (src/engines/librechess/engine.*)
 ```
 
-`GameMode` defines the shared game infrastructure and common logic: `applyMove()` (delegates to `Game::makeMove()`; the string overload parses coordinate notation via `Game::parseCoordinate()`), `waitForBoardSetup()`, independent assistance service/cancel, `tryResumeGame()`, and resign lifecycle hooks. Each `GameMode` consumes a `BoardGameProgram*` returned by the active board game program after `Board::startProgram("game")`. That contract performs physical move detection, capture-removal handling, remote-move physical completion, setup guidance, and the king-based resign gesture through board-owned services. `board_adapter.*` maps `LibreChess::Game` state and move metadata into board-owned DTOs/callbacks so `src/board/` does not import `Game`, `MoveList`, `MoveResult`, or engine providers. Each `GameMode` instance holds a `Game*` (`chess_`) which orchestrates board state, recording, and observer notification. All chess mutations flow through `Game`; the firmware never modifies the board or turn directly. Each subclass overrides `begin()` and `update()` to implement mode-specific behavior.
+`GameMode` defines the shared game infrastructure and common logic: `applyMove()` (delegates to `Game::makeMove()`; the string overload parses coordinate notation via `Game::parseCoordinate()`), `waitForBoardSetup()`, independent assistance service/cancel, `tryResumeGame()`, and resign lifecycle hooks. Each `GameMode` consumes a `IBoardGame*` returned by the active board game program after `Board::startProgram("game")`. That contract performs physical move detection, capture-removal handling, remote-move physical completion, setup guidance, and the king-based resign gesture through board-owned services. `board_adapter.*` maps `LibreChess::Game` state and move metadata into board-owned DTOs/callbacks so `src/board/` does not import `Game`, `MoveList`, `MoveResult`, or engine providers. Each `GameMode` instance holds a `Game*` (`chess_`) which orchestrates board state, recording, and observer notification. All chess mutations flow through `Game`; the firmware never modifies the board or turn directly. Each subclass overrides `begin()` and `update()` to implement mode-specific behavior.
 
-`BotMode` is a concrete class that composes an opponent `EngineProvider*` (strategy pattern). Its `update()` implements a non-blocking state machine (`BotState::PLAYER_TURN` / `ENGINE_THINKING`): on the player's turn it services independent assistance, then calls `tryPlayerMove()` → `applyMove()` → `provider_->onPlayerMoveApplied()`; when the turn flips to the engine it calls `provider_->requestMove()` (spawns a FreeRTOS task) and transitions to `ENGINE_THINKING`. In the thinking state, it polls `provider_->checkResult()` each tick — sensors, resign gestures, and web UI remain responsive while the engine computes. `BotMode` owns opponent engine-specific infrastructure: thinking/waiting animation start/stop, remote game-end handling, error abort, and resign hooks. Physical move, hint, and remote-move guidance remain shared through `BoardGameProgram`.
+`BotMode` is a concrete class that composes an opponent `EngineProvider*` (strategy pattern). Its `update()` implements a non-blocking state machine (`BotState::PLAYER_TURN` / `ENGINE_THINKING`): on the player's turn it services independent assistance, then calls `tryPlayerMove()` → `applyMove()` → `provider_->onPlayerMoveApplied()`; when the turn flips to the engine it calls `provider_->requestMove()` (spawns a FreeRTOS task) and transitions to `ENGINE_THINKING`. In the thinking state, it polls `provider_->checkResult()` each tick — sensors, resign gestures, and web UI remain responsive while the engine computes. `BotMode` owns opponent engine-specific infrastructure: thinking/waiting animation start/stop, remote game-end handling, error abort, and resign hooks. Physical move, hint, and remote-move guidance remain shared through `IBoardGame`.
 
 `EngineProvider` is the pure contract in `lib/game/src/provider.h`. It defines engine-domain data (`DifficultyLevel`, `EngineInitResult`, `EngineResult`) and the virtual contract for all chess engines: `initialize()` (blocking setup, returns player color, FEN, opaque mode byte, engine ID, difficulty, and resume capability), `requestMove()` / `checkResult()` (async move computation), plus optional hooks `onPlayerMoveApplied()` (Lichess sends the move to the server), `onResignConfirmed()` (Lichess resigns on the server), and `getEvaluation()` (engines with an evaluation can expose it). It does not include Arduino, FreeRTOS, board programs, or firmware-specific metadata types.
 
@@ -59,7 +59,7 @@ Firmware (src/):
 
 `LibreChessAssistanceProvider` under `src/engines/librechess/assistance.*` implements the board-owned `BoardAssistanceProvider` contract for BEST_MOVE assistance. It is installed on `Board`, separate from `BotMode`'s opponent provider, so assistance can be configured independently from the engine currently playing. It wraps an independent `LibreChessEngine`, lazily initializes or reuses `Game` search resources, requests a move for the current FEN, discards stale results when the FEN changes, and maps the coordinate result into `BoardBestMoveHint`.
 
-`BoardDiagnosticsProgram` implements the board-owned `BoardProgram` lifecycle for the sensor-test mode. It is registered under the `"diagnostics"` program id and created by the board program factory rather than stored directly in `Board`. It does not inherit `GameMode` because it needs only physical sensor coverage and LED feedback, not chess logic, FEN state, or move history.
+`BoardDiagnostics` implements the board-owned `BoardProgram` lifecycle for the sensor-test mode. It is registered under the `"diagnostics"` program id and created by the board program factory rather than stored directly in `Board`. It does not inherit `GameMode` because it needs only physical sensor coverage and LED feedback, not chess logic, FEN state, or move history.
 
 ### Dependency Injection
 
@@ -74,7 +74,8 @@ Game chess(&storage, &wifiManager, &logger);
 auto* provider = Engines::createOpponentEngine(chess, gameSelection, &logger);
 physicalBoard.setAssistanceProvider(
   Engines::createAssistanceProvider(chess, gameSelection.assistance, &logger));
-BoardGameProgram* program = physicalBoard.startGame();
+IBoardGame* program = static_cast<IBoardGame*>(
+    physicalBoard.startProgram(BoardProgramIds::GAME));
 BotMode botGame(program, &wifiManager, &chess, provider);
 ```
 
@@ -90,7 +91,7 @@ The LED strip is wired in a serpentine (zigzag) pattern across the physical boar
 
 ### Board Public Surface
 
-`src/board/board.*` is the public physical-board package root. `Board` exposes lifecycle (`begin()` returns `bool`), LED settings (brightness/dim multiplier getters/setters and `saveLedSettings()`), sensor cadence (`cadenceMs()`), a single service tick (`update()` returning menu/program completion flags), `clearAllSurfaces()`, move-only external animation tokens (`startAnimation(id)`), typed and named menu facade methods (`showMenu`, `runMenu`, `stopMenu`), the dedicated game facade (`startGame()` returning the persistent `BoardGameProgram*`, `stopGame()`), the polled program facade (`startProgram(id)` returning `BoardProgram*` for diagnostics, `stopProgram()`), assistance provider installation, and calibration trigger. The game program is permanent and owned by `Board`; `startGame()` only resets transient state and is independent of the polled program runner. External firmware may consume `Board`, `Board::UpdateResult`, `Board::Animation`, `BoardProgram`, `BoardGameProgram`, stable ids from `board/programs/ids.h`, and typed predefined menu classes from `board/menus/*` such as `GameSelectionMenu`, `ConfirmMenu`, and `ResumeConfirmMenu` when typed result access is needed. It must never include `BoardDriver`, `BoardRuntime`, `BoardCanvas`, `BoardScheduler`, `BoardAnimations`, `BoardInput`, `BoardRenderer`, `BoardFeedback`, or `BoardAssistance` directly.
+`src/board/board.*` is the public physical-board package root. `Board` exposes lifecycle (`begin()` returns `bool`), LED settings (brightness/dim multiplier getters/setters and `saveLedSettings()`), sensor cadence (`cadenceMs()`), a single service tick (`update()` returning menu/program completion flags), `clearAllSurfaces()`, move-only external animation tokens (`startAnimation(id)`), typed and named menu facade methods (`showMenu`, `runMenu`, `stopMenu`), and a single program facade (`startProgram(id)` returning `BoardProgram*`, `stopProgram()`) used uniformly for game, diagnostics, and calibration. Stable ids live in `board/programs/ids.h` (`BoardProgramIds::GAME`, `DIAGNOSTICS`, `CALIBRATION`); the `GAME` factory entry is the only one that produces an `IBoardGame` (which inherits `BoardProgram`), so game-mode integration is a `static_cast<IBoardGame*>` of the returned pointer. External firmware may consume `Board`, `Board::UpdateResult`, `Board::Animation`, `BoardProgram`, `IBoardGame`, stable ids from `board/programs/ids.h`, and typed predefined menu classes from `board/menus/*` such as `GameSelectionMenu`, `ConfirmMenu`, and `ResumeConfirmMenu` when typed result access is needed. It must never include `BoardDriver`, `BoardRuntime`, `BoardCanvas`, `BoardScheduler`, `BoardAnimations`, `BoardInput`, `BoardRenderer`, `BoardFeedback`, or `BoardAssistance` directly.
 
 Logical 8×8 board helpers live in `src/board/runtime/helpers.h` (`BoardHelpers::ROWS`, `COLS`, `SQUARES`, `LAST_ROW`, `LAST_COL`, `inBounds()`). Board DTOs, canvas, input, menus, diagnostics, and tests use that shared source instead of parallel local 8/64 constants.
 
@@ -134,11 +135,10 @@ Game-specific visuals live beside the board game program in `src/board/programs/
 Generic menu mechanics live in `src/board/services/menu/*` and are owned by the board:
 
 - `types.h` defines `MenuOption`, `MENU_RESULT_NONE`, `MENU_RESULT_BACK`, and fixed option-count constants.
-- `panel.{h,cpp}` defines `MenuPanel`, the shared physical-board draw/poll/debounce primitive. It owns one canvas surface, snapshots occupancy once per poll via `BoardRuntime::copyInputOccupancy()`, supports flipping for black-on-bottom orientation, and returns selected option ids without interpreting them.
-- `selection.{h,cpp}` defines `MenuSelection`, a thin page wrapper over `MenuPanel` that stores one selectable menu page and appends the standard white back button when needed.
-- `menu.{h,cpp}` defines the typed `BoardMenu` contract, `BoardMenuController`, and `BoardMenuRunner`. The runner owns polling, debounce, drawing, and blocking cadence loops.
+- `selection.{h,cpp}` defines `MenuSelection`, the shared physical-board draw/poll/debounce primitive: it owns one canvas surface, snapshots occupancy once per poll via `BoardRuntime::copyInputOccupancy()`, supports flipping for black-on-bottom orientation, stores one selectable page plus optional white back button, and returns selected option ids without interpreting them.
+- `menu.{h,cpp}` defines the declarative `MenuTile` / `MenuPageConfig` types, the `MenuAdvance{STAY, NEXT, CLOSE}` auto-advance enum, the `MenuFlow` virtual interface (`next(page)` / `back()` / `close()` / `currentPage()` / `blink(...)` / `wait(...)`), the typed `BoardMenu` contract (`tiles()` / `tileCount()` / `initialPage()` / `pageConfig(pageId)` plus `onOpen`/`onNext`/`onBack`/`onSelect`/`onClose` hooks), and `BoardMenuRunner`. The runner owns a fixed page stack (`MENU_PAGE_STACK_DEPTH = 8`), polling, debounce, drawing, blocking cadence loops, and implements `MenuFlow` privately. Hooks queue transitions through the flow; the runner applies them after each hook returns. Explicit hook transitions take priority over a tile's `autoAdvance`.
 
-Predefined semantic menus live in `src/board/menus/*`, are registered in `board/menus/factory.*`, and may be passed to `Board` directly when typed result access is needed:
+Predefined semantic menus live in `src/board/menus/*` and are instantiated directly by callers (no factory layer):
 
 - `game_selection.{h,cpp}` defines `GameSelectionMenu`, `BoardGameSelection`, and `BoardGameSelectionMode`.
 - `confirm.{h,cpp}` defines `ConfirmMenu` and `ResumeConfirmMenu`.
@@ -150,11 +150,11 @@ Typed menus define option layouts and what logic to execute when a square is sel
 Primary board programs live under `src/board/programs/*` and are registered in `board/programs/factory.*` under stable ids from `board/programs/ids.h`. The board supports one active primary `BoardProgram` through `BoardProgramRunner`; factory-created programs are owned by the runner, while externally supplied programs can still be borrowed. Typed menus remain overlay interactions and can run while a program is active.
 
 - `board/types.h` — engine-agnostic board DTOs (setup snapshots, target lists, move feedback/completion, best-move hints).
-- `board/programs/game/game_rules.h` — board-owned game rules contract (`BoardGameRules`) consumed by gameplay for setup, lifted-piece lookup, and physical move validation.
+- `board/programs/game/game_provider.h` — board-owned game rules contract (`BoardGameProvider`) consumed by gameplay for setup, lifted-piece lookup, and physical move validation.
 - `board/assistance_provider.h` — board-owned assistance provider contract plus fixed NONE and LEGAL_MOVES providers. Engine-backed implementations live outside `src/board/` and only feed `BoardBestMoveHint` data back to gameplay.
-- `game/game_program.h` — `BoardGameProgram`, the board-facing game-program contract consumed by `GameMode` instead of the concrete gameplay implementation.
-- `game/gameplay.*` — `BoardGameplay` implements `BoardGameProgram` and owns game-specific `BoardFeedback` and `BoardAssistance` visuals. It drains short `BoardInputEventBatch` snapshots from `BoardRuntime` to detect player intent (lift / placement / capture / en passant / castling), validates physical selections against mapped legal targets, services BEST_MOVE hint callbacks only when configured, and runs the king-held resign gesture (3 s hold + two re-lifts within 1 s). Status helpers (`startThinkingStatus`, `startWaitingStatus`) return a `BoardAnimationHandle`; `stopStatusAnimation(handle&)` cancels and invalidates.
-- `diagnostics/diagnostics_program.*` — `BoardDiagnosticsProgram` implements `BoardProgram`. Each update it scans current occupancy, paints visited squares to its owned `BoardVisual` surface, and on completion clears that surface before triggering a cyan firework.
+- `game/program_provider.h` — `IBoardGame`, the board-facing game-program contract consumed by `GameMode` instead of the concrete gameplay implementation.
+- `game/program.*` — `BoardGame` implements `IBoardGame` and owns game-specific `BoardFeedback` and `BoardAssistance` visuals. It drains short `BoardInputEventBatch` snapshots from `BoardRuntime` to detect player intent (lift / placement / capture / en passant / castling), validates physical selections against mapped legal targets, services BEST_MOVE hint callbacks only when configured, and runs the king-held resign gesture (3 s hold + two re-lifts within 1 s). Status helpers (`startThinkingStatus`, `startWaitingStatus`) return a `BoardAnimationHandle`; `stopStatusAnimation(handle&)` cancels and invalidates.
+- `diagnostics/program.*` — `BoardDiagnostics` implements `BoardProgram`. Each update it scans current occupancy, paints visited squares to its owned `BoardVisual` surface, and on completion clears that surface before triggering a cyan firework.
 
 ### BoardDriver
 
@@ -174,7 +174,7 @@ GPIO pin definitions are `#define`d at the top of `src/board/runtime/driver.h`:
 
 The physical order of pin connections **does not matter** — calibration maps physical pins to logical board coordinates.
 
-**Calibration** — `BoardCalibrationRunner` (in `core/calibration.*`) runs the interactive serial-guided process at startup before the renderer starts. `Board::resetCalibration()` clears the calibration NVS namespace and reboots for runtime recalibration via the web UI. The mapping tables (`toLogicalRow[]`, `toLogicalCol[]`, `ledIndexMap[8][8]`, `swapAxes`) are persisted in NVS namespace `"boardCal"`.
+**Calibration** — `BoardCalibrationRunner` (in `core/calibration.*`) runs the interactive serial-guided process at startup before the renderer starts. Runtime recalibration is exposed as the `BoardProgramIds::CALIBRATION` program: `Board::startProgram(BoardProgramIds::CALIBRATION)` runs `BoardCalibration` which clears the calibration NVS namespace and calls `ESP.restart()` so startup calibration runs again on the next boot. The mapping tables (`toLogicalRow[]`, `toLogicalCol[]`, `ledIndexMap[8][8]`, `swapAxes`) are persisted in NVS namespace `"boardCal"`.
 
 **Sensor polling parameters**: `SENSOR_READ_DELAY_MS` = 40 ms (polling interval), `DEBOUNCE_MS` = 125 ms (state change debounce window). External timing comes from `Board::cadenceMs()`.
 
@@ -310,12 +310,12 @@ The `GameHeader` struct (exactly 16 bytes, `#pragma pack(push, 1)`) contains:
 
 ### Game Mode Interaction with Core
 
-The `GameMode` base class coordinates between the active `BoardGameProgram` (physical chess board interaction) and `Game` (chess state + recording + notification):
+The `GameMode` base class coordinates between the active `IBoardGame` (physical chess board interaction) and `Game` (chess state + recording + notification):
 
-1. `GameMode` constructs `BoardAdapter::GameRules`, which maps `Game` queries into `BoardGameRules` callbacks and `BoardMoveTargetList` values.
-2. `BoardGameProgram::tryPlayerMove()` — consumes gameplay-owned changed-square entries for piece lift, placement, and capture-removal detection, optionally shows legal targets, validates the physical selection against mapped legal targets, and returns a display-coordinate move to `GameMode`.
+1. `GameMode` constructs `BoardAdapter::GameRules`, which maps `Game` queries into `BoardGameProvider` callbacks and `BoardMoveTargetList` values.
+2. `IBoardGame::tryPlayerMove()` — consumes gameplay-owned changed-square entries for piece lift, placement, and capture-removal detection, optionally shows legal targets, validates the physical selection against mapped legal targets, and returns a display-coordinate move to `GameMode`.
 3. `GameMode::applyMove()` — cancels stale assistance, maps pre-move castling data, calls `chess_->makeMove()` which atomically updates the board, records the move in history, persists via History's recording, and notifies the observer. It then maps `MoveResult` into board completion/feedback DTOs.
-4. `BoardGameProgram::completeAppliedMove()` — consumes board-owned completion/feedback DTOs after `Game` has mutated state, then drives remote-move physical guidance, castling prompts, LED feedback, and game-end animations through board-owned GUI services.
+4. `IBoardGame::completeAppliedMove()` — consumes board-owned completion/feedback DTOs after `Game` has mutated state, then drives remote-move physical guidance, castling prompts, LED feedback, and game-end animations through board-owned GUI services.
 5. Turn advancement, castling rights, and game-end detection are all handled internally by `Position::makeMove()` — the firmware never modifies the board or turn directly.
 
 ## Game Mode Lifecycle
@@ -352,7 +352,7 @@ Every iteration of `loop()`:
 
 1. If not resuming, discard any leftover live game file
 2. `delete` the previous `activeGame` object
-3. For chess modes, configure assistance, call `BoardGameProgram* program = physicalBoard.startGame()`, pass it to the new game object, and create that object via `new` (the only heap allocation for game modes)
+3. For chess modes, configure assistance, call `IBoardGame* program = static_cast<IBoardGame*>(physicalBoard.startProgram(BoardProgramIds::GAME))`, pass it to the new game object, and create that object via `new` (the only heap allocation for game modes)
 4. For Sensor Test, start `physicalBoard.startProgram("diagnostics")`; otherwise call `begin()` on the newly created game mode — which typically calls `waitForBoardSetup()` to wait for correct piece placement, then `chess_->startNewGame(playerColor, metaBytes(meta))` to begin recording
 
 For game resume: `begin()` detects the `resumingGame` flag, skips piece setup, calls `chess_->resumeGame()` which delegates to `History::replayInto()` to restore the full game state directly into the `Position`, then continues with normal `update()` calls.
@@ -373,13 +373,13 @@ The web UI can also trigger game selection via `POST /game/select`. The main loo
 
 ### Physical Resign Gesture
 
-The physical gesture runs inline inside `BoardGameProgram::tryPlayerMove()` — no separate state machine. The flow:
+The physical gesture runs inline inside `IBoardGame::tryPlayerMove()` — no separate state machine. The flow:
 
-1. Player lifts their king on their own turn. `BoardGameProgram::tryPlayerMove()` detects the lift and starts a timer.
+1. Player lifts their king on their own turn. `IBoardGame::tryPlayerMove()` detects the lift and starts a timer.
 2. If the king stays off the board for `RESIGN_HOLD_MS` (3000ms), the resign sequence begins. The origin square shows orange at 25% brightness via `showResignProgress(row, col, 0)`.
 3. Player returns the king. Orange increases to 50% (`showResignProgress(row, col, 1, clearFirst=true)`). All other LEDs are cleared.
-4. `BoardGameplay::continueResignGesture()` takes over — a blocking loop that waits for 2 more quick lift-and-return cycles, each within `RESIGN_LIFT_WINDOW_MS` (1000ms). Orange progresses to 75% then 100%.
-5. If all lifts complete in time, `BoardGameProgram::confirmResign()` asks the board-owned menu runner to show a yes/no dialog (green/red squares).
+4. `BoardGame::continueResignGesture()` takes over — a blocking loop that waits for 2 more quick lift-and-return cycles, each within `RESIGN_LIFT_WINDOW_MS` (1000ms). Orange progresses to 75% then 100%.
+5. If all lifts complete in time, `IBoardGame::confirmResign()` asks the board-owned menu runner to show a yes/no dialog (green/red squares).
 6. On confirm, `GameMode::completeResign(resignColor)` runs mode hooks, asks the active game program to show the winner firework, and ends the game with `GameResult::RESIGNATION`. In bot mode, `BotMode::onResignConfirmed()` delegates to `EngineProvider::onResignConfirmed()` — `LichessEngine` sends a resign request to the Lichess server.
 
 If any step times out (king not returned within the window), the gesture is silently canceled — no error feedback, just a return to normal play. The progressive orange brightness (25% → 50% → 75% → 100%) uses `LedColors::scaleColor(LedColors::Orange, factor)` with factors from `RESIGN_BRIGHTNESS_LEVELS`.
@@ -439,7 +439,7 @@ Animations are exposed by the board-owned `BoardAnimations` instance in `Board::
 
 - **One-shot** (`startBlink`, `startFlash`, `startCapture`, `startPromotion`, `startFirework`) — auto-clear when their duration expires.
 - **Looping** (`startThinking`, `startWaiting`, `startConnecting`) — keep running until cancelled by handing the handle back to the helper that owns it inside board/game visuals (e.g. `feedback_.stopAnimation(handle)`). External firmware starts named looping animations through `Board::startAnimation(id)` and owns the returned `Board::Animation` token. The generation counter prevents stale handles from cancelling a recycled slot.
-- **Status helpers exposed by the game program** — `BoardGameProgram::startThinkingStatus()` / `startWaitingStatus()` return a handle, cancelled via `stopStatusAnimation(handle&)`. There are no `std::atomic<bool>*` flags anywhere.
+- **Status helpers exposed by the game program** — `IBoardGame::startThinkingStatus()` / `startWaitingStatus()` return a handle, cancelled via `stopStatusAnimation(handle&)`. There are no `std::atomic<bool>*` flags anywhere.
 
 Frame painting lives in `services/visual/animations.*`; scheduler infrastructure lives in `runtime/scheduler.*` and knows only about `BoardPainter` callbacks. Full-surface animations clear only their own scheduled surface before each frame, so sibling animations do not erase each other.
 
@@ -481,9 +481,11 @@ Colors in the `LedColors` namespace (`src/board/runtime/colors.h`) have fixed me
 
 ### Menu Primitives
 
-`MenuPanel` (`src/board/services/menu/panel.*`) is the reusable physical-board primitive for the 8×8 LED grid. It takes a `BoardRuntime&` plus the board-owned `BoardAnimations&`, paints to an owned canvas surface via `runtime.lockCanvas()`, snapshots board occupancy once per poll for selections, blinks confirmed selections through `BoardAnimations`, and returns option ids without interpreting them. `MenuSelection` (`src/board/services/menu/selection.*`) wraps one selectable menu page around `MenuPanel` and optionally appends the standard back button. `BoardMenuRunner` (`src/board/services/menu/menu.*`) owns the active menu instance, polling, debounce, blocking cadence loops, and the `BoardMenuController` passed to typed menus. State is fixed-size and stack/member allocated; no heap use in the runner.
+`MenuSelection` (`src/board/services/menu/selection.*`) is the reusable physical-board primitive for the 8×8 LED grid. It takes a `BoardRuntime&` plus the board-owned `BoardAnimations&`, paints to an owned canvas surface via `runtime.lockCanvas()`, snapshots board occupancy once per poll, debounces empty-then-occupied placements, blinks confirmed selections through `BoardAnimations`, stores one selectable page plus optional white back button, and returns option ids without interpreting them. `BoardMenuRunner` (`src/board/services/menu/menu.*`) owns the active typed `BoardMenu`, the fixed page stack (`MENU_PAGE_STACK_DEPTH = 8`), polling, debounce, blocking cadence loops, and implements `MenuFlow` privately so it can apply queued transitions after each hook returns. State is fixed-size and stack/member allocated; no heap use in the runner.
 
-**Option definition** — `MenuOption` struct: `{row, col, color, id}`. Coordinates are authored in white-side orientation (row 7 = rank 1). Generic constants live in `src/board/services/menu/types.h`; predefined option ids and `constexpr MenuOption[]` layouts live with their typed menus under `src/board/menus/`.
+**Tile definition** — `MenuTile` struct: `{row, col, color, tileId, pageId, autoAdvance, autoAdvanceTarget}`. Coordinates are authored in white-side orientation (row 7 = rank 1). Tile ids are author-chosen; the sentinel `MENU_BACK_TILE_ID = 0xFF` is reserved for the standard white back tile. Per-page back-tile placement comes from `BoardMenu::pageConfig(pageId)` (`MenuPageConfig{pageId, backRow, backCol}`; `backRow = -1` omits the back tile). The runner derives the active page's `MenuOption[]` for `MenuSelection` from the tile array before each draw.
+
+**Auto-advance metadata** — `MenuAdvance{STAY, NEXT, CLOSE}` on each tile lets the runner advance automatically after `onSelect` without writing transition code per tile. `NEXT` uses the tile's `autoAdvanceTarget` page id; `CLOSE` ends the menu. Explicit transitions queued through `MenuFlow` (`flow.next(p)`, `flow.back()`, `flow.close()`) take priority over a tile's auto-advance.
 
 **Two-phase debounce** — prevents pieces already on the board from triggering selections when a menu appears:
 1. Phase 1 (empty): the square must read empty for `DEBOUNCE_CYCLES` (5) consecutive sensor polls (~200 ms).
@@ -491,11 +493,11 @@ Colors in the `LedColors` namespace (`src/board/runtime/colors.h`) have fixed me
 
 After confirmed selection, the square blinks once in its own color via `BoardAnimations::startBlink` for visual feedback.
 
-**Back button** — set via `MenuSelection::setBackButton(row, col)`, lit in `LedColors::White`. `MenuSelection::poll()` returns `MENU_RESULT_BACK` (= -2) when the back square is occupied; the caller decides whether to pop. `MENU_RESULT_NONE` (= -1) means no selection yet.
+**Back tile** — placed via `MenuPageConfig{pageId, backRow, backCol}` and lit in `LedColors::White`. The runner converts a back-tile selection into `MenuFlow::back()`, which pops the page stack (closing the menu when popping the root page).
 
 **Orientation** — `setFlipped(true)` mirrors row coordinates (`row' = 7 - row`) so menus face a player on the black side. Applied to bot games where the player chose black, and to the resign confirm dialog on black's turn.
 
-**Confirmation prompts** — `ConfirmMenu` displays green d4 = yes and red e4 = no. `ResumeConfirmMenu` adds the mode-coloured resume pre-blink before showing the same prompt. Both are run by `Board::runMenu(menu, flipped)`, including resign confirmation from the active game program.
+**Confirmation prompts** — `ConfirmMenu` displays green d4 = yes and red e4 = no (both tiles `autoAdvance = CLOSE`). `ResumeConfirmMenu` extends `ConfirmMenu` with the mode-coloured resume pre-blink inside `onOpen` (`flow.blink(...)` + `flow.wait(...)`). Both are run by `Board::runMenu(menu, flipped)`, including resign confirmation from the active game program.
 
 ### Predefined Menus
 

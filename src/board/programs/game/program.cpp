@@ -1,4 +1,4 @@
-#include "board/programs/game/gameplay.h"
+#include "board/programs/game/program.h"
 
 #include "board/runtime/colors.h"
 #include "board/services/menu/menu.h"
@@ -56,7 +56,7 @@ bool handleInputOverflow(const BoardInputEventBatch& batch, BoardFeedback& feedb
 
 }  // namespace
 
-BoardGameplay::BoardGameplay(BoardRuntime& runtime, BoardAnimations& animations,
+BoardGame::BoardGame(BoardRuntime& runtime, BoardAnimations& animations,
                              BoardMenuRunner& menuRunner)
     : runtime_(runtime),
       animations_(animations),
@@ -64,16 +64,16 @@ BoardGameplay::BoardGameplay(BoardRuntime& runtime, BoardAnimations& animations,
       feedback_(runtime, animations),
       assistance_(runtime, animations) {}
 
-void BoardGameplay::reset() { cancelAssistance(); }
+void BoardGame::reset() { cancelAssistance(); }
 
-void BoardGameplay::setAssistanceProvider(BoardAssistanceProvider* provider) {
+void BoardGame::setAssistanceProvider(BoardAssistanceProvider* provider) {
   if (assistanceProvider_ == provider) return;
   cancelAssistance();
   assistanceProvider_ = provider;
   assistance_.setLevel(provider ? provider->level() : BoardAssistanceLevel::NONE);
 }
 
-void BoardGameplay::serviceAssistance() {
+void BoardGame::serviceAssistance() {
   if (!assistanceProvider_) return;
   if (assistance_.level() != assistanceProvider_->level()) {
     assistance_.setLevel(assistanceProvider_->level());
@@ -85,23 +85,23 @@ void BoardGameplay::serviceAssistance() {
   }
 }
 
-void BoardGameplay::cancelAssistance() {
+void BoardGame::cancelAssistance() {
   if (assistanceProvider_) assistanceProvider_->cancel();
   assistance_.clear();
 }
 
-void BoardGameplay::waitForSetup(const BoardGameRules& gameRules) {
+void BoardGame::waitForSetup(const BoardGameProvider& gameRules) {
   BoardSetupSnapshot setup;
   gameRules.setupSnapshot(setup);
   assistance_.waitForSetup(setup);
 }
 
-BoardGameplayResult BoardGameplay::tryPlayerMove(const BoardGameRules& gameRules,
+BoardGameResult BoardGame::tryPlayerMove(const BoardGameProvider& gameRules,
                                                  BoardPieceColor playerColor,
-                                                 BoardGameplayMove& selection) {
+                                                 BoardGameMove& selection) {
   const uint16_t cadence = runtime_.cadenceMs();
   BoardInputEventBatch batch = runtime_.drainInputEvents();
-  if (handleInputOverflow(batch, feedback_)) return BoardGameplayResult::NONE;
+  if (handleInputOverflow(batch, feedback_)) return BoardGameResult::NONE;
 
   // Look for a recently-lifted piece of the player's colour.
   for (uint8_t i = 0; i < batch.count; ++i) {
@@ -116,7 +116,7 @@ BoardGameplayResult BoardGameplay::tryPlayerMove(const BoardGameRules& gameRules
     if (piece.color != playerColor) {
       Serial.printf("Wrong turn! It's %s's turn to move.\n", boardColorName(playerColor));
       feedback_.showIllegalMoveFeedback(row, col);
-      return BoardGameplayResult::NONE;
+      return BoardGameResult::NONE;
     }
 
     Serial.printf("Piece pickup from %c%c\n", boardFileChar(col), boardRankChar(row));
@@ -146,7 +146,7 @@ BoardGameplayResult BoardGameplay::tryPlayerMove(const BoardGameRules& gameRules
         batch = runtime_.drainInputEvents();
         if (handleInputOverflow(batch, feedback_)) {
           cancelAssistance();
-          return BoardGameplayResult::NONE;
+          return BoardGameResult::NONE;
         }
         eventIndex = 0;
       }
@@ -202,20 +202,20 @@ BoardGameplayResult BoardGameplay::tryPlayerMove(const BoardGameRules& gameRules
 
     if (!targets.hasTarget(targetRow, targetCol)) {
       Serial.println("Illegal move, reverting");
-      return BoardGameplayResult::NONE;
+      return BoardGameResult::NONE;
     }
 
     selection.fromRow = row;
     selection.fromCol = col;
     selection.toRow = targetRow;
     selection.toCol = targetCol;
-    return BoardGameplayResult::MOVE;
+    return BoardGameResult::MOVE;
   }
 
-  return BoardGameplayResult::NONE;
+  return BoardGameResult::NONE;
 }
 
-void BoardGameplay::completeAppliedMove(const BoardMoveCompletion& completion,
+void BoardGame::completeAppliedMove(const BoardMoveCompletion& completion,
                                         const BoardMoveFeedbackData& feedback, int fromRow,
                                         int fromCol, int toRow, int toCol) {
   cancelAssistance();
@@ -230,7 +230,7 @@ void BoardGameplay::completeAppliedMove(const BoardMoveCompletion& completion,
   feedback_.showMoveResultFeedback(feedback);
 }
 
-bool BoardGameplay::confirmResign(BoardPieceColor resignColor, bool flipped) {
+bool BoardGame::confirmResign(BoardPieceColor resignColor, bool flipped) {
   Serial.printf("Resign confirmation for %s...\n", boardColorName(resignColor));
 
   ConfirmMenu menu;
@@ -242,45 +242,45 @@ bool BoardGameplay::confirmResign(BoardPieceColor resignColor, bool flipped) {
   return confirmed;
 }
 
-void BoardGameplay::showResignWinner(BoardPieceColor resignColor) {
+void BoardGame::showResignWinner(BoardPieceColor resignColor) {
   feedback_.showWinner(oppositeBoardColor(resignColor));
 }
 
-BoardAnimationToken BoardGameplay::startThinkingStatus() {
+BoardAnimationToken BoardGame::startThinkingStatus() {
   return BoardAnimationToken(&runtime_, &animations_, feedback_.startThinking());
 }
 
-BoardAnimationToken BoardGameplay::startWaitingStatus() {
+BoardAnimationToken BoardGame::startWaitingStatus() {
   return BoardAnimationToken(&runtime_, &animations_, feedback_.startWaiting());
 }
 
-void BoardGameplay::showRemoteGameEnd(char winnerColor) { feedback_.showRemoteGameEnd(winnerColor); }
+void BoardGame::showRemoteGameEnd(char winnerColor) { feedback_.showRemoteGameEnd(winnerColor); }
 
-void BoardGameplay::showErrorFeedback() { feedback_.showError(); }
+void BoardGame::showErrorFeedback() { feedback_.showError(); }
 
-BoardGameplayResult BoardGameplay::handleSourceRestore(int row, int col, BoardPieceColor color,
+BoardGameResult BoardGame::handleSourceRestore(int row, int col, BoardPieceColor color,
                                                        bool resignTransitioned,
                                                        unsigned long resignFlagTimestamp,
-                                                       BoardGameplayMove& selection) {
+                                                       BoardGameMove& selection) {
   if (!resignTransitioned) {
     Serial.println("Pickup cancelled");
-    return BoardGameplayResult::NONE;
+    return BoardGameResult::NONE;
   }
 
   if (millis() - resignFlagTimestamp > RESIGN_LIFT_WINDOW_MS) {
     feedback_.clearBoard();
-    return BoardGameplayResult::NONE;
+    return BoardGameResult::NONE;
   }
 
   feedback_.showResignProgress(row, col, 1, true);
   if (continueResignGesture(row, col, color)) {
     selection.resignColor = color;
-    return BoardGameplayResult::RESIGN_REQUESTED;
+    return BoardGameResult::RESIGN_REQUESTED;
   }
-  return BoardGameplayResult::NONE;
+  return BoardGameResult::NONE;
 }
 
-bool BoardGameplay::continueResignGesture(int row, int col, BoardPieceColor color) {
+bool BoardGame::continueResignGesture(int row, int col, BoardPieceColor color) {
   const uint16_t cadence = runtime_.cadenceMs();
 
   for (int lift = 1; lift <= 2; lift++) {

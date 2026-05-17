@@ -7,7 +7,7 @@
 // Board assistance providers.
 // ---------------------------------------------------------------------------
 // Providers decide whether assistance is disabled, legal-move-only, or backed
-// by an engine hint. They return data only; BoardGameplay owns when to service
+// by an engine hint. They return data only; BoardGame owns when to service
 // them and BoardAssistance owns all LED presentation.
 // ---------------------------------------------------------------------------
 

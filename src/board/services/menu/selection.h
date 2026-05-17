@@ -1,7 +1,8 @@
 #ifndef BOARD_SERVICES_MENU_SELECTION_H
 #define BOARD_SERVICES_MENU_SELECTION_H
 
-#include "board/services/menu/panel.h"
+#include "board/runtime/canvas.h"
+#include "board/runtime/helpers.h"
 #include "board/services/menu/types.h"
 
 #include <stdint.h>
@@ -10,56 +11,96 @@ class BoardRuntime;
 class BoardAnimations;
 
 // ---------------------------------------------------------------------------
-// MenuSelection — selectable physical menu page
+// MenuSelection — shared physical-board menu primitive.
 // ---------------------------------------------------------------------------
-// Thin page wrapper over MenuPanel. It stores one page of options and
-// optionally appends the standard white back button.
+// Owns one canvas surface and the full physical menu interaction loop:
+//   - Paints option tiles (plus an optional white back tile) through the
+//     runtime canvas lock.
+//   - Snapshots sensor occupancy once per poll and debounces piece placement
+//     (empty-then-occupied) per square.
+//   - Handles white/black orientation flipping for both painting and polling.
+//   - Returns selected option ids (or `MENU_RESULT_BACK`) without
+//     interpreting them — the runner owns transition semantics.
+//   - Blinks the confirmed square through the injected `BoardAnimations&`.
+// Capacity: up to `MENU_SELECTION_OPTION_COUNT` selectable options plus one
+// reserved slot for the back tile.
 // ---------------------------------------------------------------------------
 
 class MenuSelection {
  public:
   MenuSelection(BoardRuntime& runtime, BoardAnimations& animations);
+  ~MenuSelection();
 
   MenuSelection(const MenuSelection&) = delete;
   MenuSelection& operator=(const MenuSelection&) = delete;
 
-  /// Configure menu options. Options are copied into fixed internal storage.
+  /// Replace the selectable option set. Options are copied into fixed
+  /// internal storage; excess entries are silently truncated.
   void setOptions(const MenuOption* options, uint8_t count);
 
-  template <uint8_t N>
-  void setOptions(const MenuOption (&options)[N]) {
-    setOptions(options, N);
-  }
-
-  /// Designate a square as the standard white back button.
+  /// Designate a square as the standard white back tile.
   void setBackButton(int8_t row, int8_t col);
 
-  /// Clear back button.
+  /// Remove the back tile.
   void clearBackButton();
 
-  /// Set orientation for this menu page.
+  /// Set orientation. When true, coordinates are vertically mirrored on both
+  /// rendering and occupancy lookup.
   void setFlipped(bool flipped);
 
-  /// Paint the options and optional back button.
+  /// Paint the current options (plus the optional back tile) onto the
+  /// owned canvas surface.
   void draw();
 
-  /// Clear this page's surface.
+  /// Clear the owned canvas surface.
   void erase();
 
   /// Reset all debounce counters for a fresh selection cycle.
   void reset();
 
-  /// Non-blocking poll. Returns a selected option id, MENU_RESULT_BACK, or MENU_RESULT_NONE.
+  /// Non-blocking poll. Returns a selected option id, `MENU_RESULT_BACK`,
+  /// or `MENU_RESULT_NONE`.
   int poll();
 
  private:
-  MenuPanel panel_;
-  MenuOption options_[MENU_PANEL_OPTION_COUNT];
+  static constexpr uint8_t SLOT_COUNT = MENU_SELECTION_OPTION_COUNT + 1;
+  static constexpr uint8_t DEFAULT_DEBOUNCE_CYCLES = 5;
+
+  /// Debounces one option square through empty-then-occupied phases.
+  class SelectionDebouncer {
+   public:
+    explicit SelectionDebouncer(uint8_t stableCycles = DEFAULT_DEBOUNCE_CYCLES);
+    void reset();
+    bool update(bool occupied);
+
+   private:
+    uint8_t stableCycles_;
+    uint8_t emptyCount_;
+    uint8_t occupiedCount_;
+    bool readyForSelection_;
+    bool selectionLatched_;
+  };
+
+  struct Square {
+    int8_t row;
+    int8_t col;
+  };
+
+  Square transformSquare(int8_t row, int8_t col) const;
+  uint8_t effectiveOptionCount();
+  int trySelect(SelectionDebouncer& state,
+                const bool (&occupied)[BoardHelpers::ROWS][BoardHelpers::COLS],
+                const MenuOption& option);
+
+  BoardRuntime& runtime_;
+  BoardAnimations& animations_;
+  BoardCanvasHandle surface_;
+  MenuOption options_[SLOT_COUNT];
   uint8_t optionCount_;
   bool hasBack_;
   MenuOption backOption_;
-
-  uint8_t effectiveOptionCount();
+  bool flipped_;
+  SelectionDebouncer states_[SLOT_COUNT];
 };
 
 #endif  // BOARD_SERVICES_MENU_SELECTION_H

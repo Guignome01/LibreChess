@@ -1,4 +1,8 @@
 // Tests for typed physical-board menu state machines.
+//
+// These tests exercise menu hooks directly using a FakeMenuFlow stub. They
+// do not depend on BoardMenuRunner, BoardRuntime, FreeRTOS, or Arduino —
+// keeping the suite native-host compatible.
 
 #include <unity.h>
 
@@ -7,164 +11,219 @@
 
 namespace {
 
-class FakeMenuController final : public BoardMenuController {
+// ---------------------------------------------------------------------------
+// FakeMenuFlow — records hook invocations and lets tests script the current
+// page id between calls.
+// ---------------------------------------------------------------------------
+
+class FakeMenuFlow final : public MenuFlow {
  public:
-  void show(const MenuOption* options, uint8_t count) override {
-    copyOptions(options, count);
-    hasBack = false;
-    finished = false;
+  void next(uint8_t pageId) override {
+    ++nextCalls;
+    lastNextPage = pageId;
   }
-
-  void showWithBack(const MenuOption* options, uint8_t count, int8_t row, int8_t col) override {
-    copyOptions(options, count);
-    hasBack = true;
-    backRow = row;
-    backCol = col;
-    finished = false;
-  }
-
-  void erase() override {
-    count = 0;
-    hasBack = false;
-  }
-
-  void finish() override { finished = true; }
-
+  void back() override { ++backCalls; }
+  void close() override { ++closeCalls; }
+  uint8_t currentPage() const override { return currentPage_; }
   void blink(int8_t row, int8_t col, LedRGB color, int times) override {
+    ++blinkCount;
     blinkRow = row;
     blinkCol = col;
     blinkColor = color;
     blinkTimes = times;
-    ++blinkCount;
   }
-
   void wait(uint32_t durationMs) override { waitedMs += durationMs; }
 
-  bool hasOption(int id) const {
-    for (uint8_t i = 0; i < count; ++i) {
-      if (options[i].id == id) return true;
-    }
-    return false;
-  }
-
-  MenuOption options[MENU_PANEL_OPTION_COUNT] = {};
-  uint8_t count = 0;
-  bool hasBack = false;
-  int8_t backRow = -1;
-  int8_t backCol = -1;
-  bool finished = false;
+  uint8_t currentPage_ = 0;
+  int nextCalls = 0;
+  uint8_t lastNextPage = 0;
+  int backCalls = 0;
+  int closeCalls = 0;
+  int blinkCount = 0;
   int8_t blinkRow = -1;
   int8_t blinkCol = -1;
   LedRGB blinkColor = LedColors::Off;
   int blinkTimes = 0;
-  int blinkCount = 0;
   uint32_t waitedMs = 0;
-
- private:
-  void copyOptions(const MenuOption* source, uint8_t optionCount) {
-    count = optionCount;
-    for (uint8_t i = 0; i < count; ++i) options[i] = source[i];
-  }
 };
 
 bool sameColor(LedRGB a, LedRGB b) {
   return a.r == b.r && a.g == b.g && a.b == b.b;
 }
 
-void test_game_selection_root_leaf_finishes() {
+const MenuTile* findTile(const BoardMenu& menu, uint8_t tileId, uint8_t pageId) {
+  const MenuTile* tiles = menu.tiles();
+  for (uint8_t i = 0; i < menu.tileCount(); ++i) {
+    if (tiles[i].pageId == pageId && tiles[i].tileId == tileId) return &tiles[i];
+  }
+  return nullptr;
+}
+
+bool menuHasTileOnPage(const BoardMenu& menu, uint8_t tileId, uint8_t pageId) {
+  return findTile(menu, tileId, pageId) != nullptr;
+}
+
+// ---------------------------------------------------------------------------
+// GameSelectionMenu
+// ---------------------------------------------------------------------------
+
+void test_game_selection_root_chess_moves_closes_with_selection() {
   GameSelectionMenu menu;
-  FakeMenuController controller;
+  FakeMenuFlow flow;
+  flow.currentPage_ = GAME_SELECTION_PAGE_GAME;
 
-  menu.begin(controller);
-  TEST_ASSERT_TRUE(controller.hasOption(GameSelectionMenuOptionId::CHESS_MOVES));
-  TEST_ASSERT_TRUE(controller.hasOption(GameSelectionMenuOptionId::BOT));
+  menu.onOpen(GAME_SELECTION_PAGE_GAME, flow);
+  TEST_ASSERT_TRUE(menuHasTileOnPage(menu, GameSelectionMenuOptionId::CHESS_MOVES,
+                                     GAME_SELECTION_PAGE_GAME));
+  TEST_ASSERT_TRUE(menuHasTileOnPage(menu, GameSelectionMenuOptionId::BOT,
+                                     GAME_SELECTION_PAGE_GAME));
 
-  menu.onSelect(GameSelectionMenuOptionId::CHESS_MOVES, controller);
-  TEST_ASSERT_TRUE(controller.finished);
+  menu.onSelect(GameSelectionMenuOptionId::CHESS_MOVES, flow);
   TEST_ASSERT_TRUE(menu.hasSelection());
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(BoardGameSelectionMode::CHESS_MOVES),
                           static_cast<uint8_t>(menu.selection().mode));
+
+  // CHESS_MOVES tile carries autoAdvance CLOSE.
+  const MenuTile* tile = findTile(menu, GameSelectionMenuOptionId::CHESS_MOVES,
+                                  GAME_SELECTION_PAGE_GAME);
+  TEST_ASSERT_NOT_NULL(tile);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(MenuAdvance::CLOSE),
+                          static_cast<uint8_t>(tile->autoAdvance));
 }
 
 void test_game_selection_bot_difficulty_and_color_flow() {
   GameSelectionMenu menu;
-  FakeMenuController controller;
+  FakeMenuFlow flow;
+  flow.currentPage_ = GAME_SELECTION_PAGE_GAME;
+  menu.onOpen(GAME_SELECTION_PAGE_GAME, flow);
 
-  menu.begin(controller);
-  menu.onSelect(GameSelectionMenuOptionId::BOT, controller);
-  TEST_ASSERT_FALSE(controller.finished);
-  TEST_ASSERT_TRUE(controller.hasBack);
-  TEST_ASSERT_TRUE(controller.hasOption(GameSelectionMenuOptionId::DIFF_6));
+  // ---- Root → DIFFICULTY ----
+  menu.onSelect(GameSelectionMenuOptionId::BOT, flow);
+  const MenuTile* bot = findTile(menu, GameSelectionMenuOptionId::BOT,
+                                 GAME_SELECTION_PAGE_GAME);
+  TEST_ASSERT_NOT_NULL(bot);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(MenuAdvance::NEXT),
+                          static_cast<uint8_t>(bot->autoAdvance));
+  TEST_ASSERT_EQUAL_UINT8(GAME_SELECTION_PAGE_DIFFICULTY, bot->autoAdvanceTarget);
 
-  menu.onSelect(GameSelectionMenuOptionId::DIFF_6, controller);
-  TEST_ASSERT_FALSE(controller.finished);
-  TEST_ASSERT_TRUE(controller.hasBack);
-  TEST_ASSERT_TRUE(controller.hasOption(GameSelectionMenuOptionId::PLAY_BLACK));
+  TEST_ASSERT_TRUE(menuHasTileOnPage(menu, GameSelectionMenuOptionId::DIFF_6,
+                                     GAME_SELECTION_PAGE_DIFFICULTY));
 
-  menu.onSelect(GameSelectionMenuOptionId::PLAY_BLACK, controller);
-  TEST_ASSERT_TRUE(controller.finished);
+  // ---- DIFFICULTY → COLOR ----
+  flow.currentPage_ = GAME_SELECTION_PAGE_DIFFICULTY;
+  menu.onSelect(GameSelectionMenuOptionId::DIFF_6, flow);
+  const MenuTile* diff6 = findTile(menu, GameSelectionMenuOptionId::DIFF_6,
+                                   GAME_SELECTION_PAGE_DIFFICULTY);
+  TEST_ASSERT_NOT_NULL(diff6);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(MenuAdvance::NEXT),
+                          static_cast<uint8_t>(diff6->autoAdvance));
+  TEST_ASSERT_EQUAL_UINT8(GAME_SELECTION_PAGE_COLOR, diff6->autoAdvanceTarget);
+
+  // ---- COLOR → CLOSE ----
+  flow.currentPage_ = GAME_SELECTION_PAGE_COLOR;
+  TEST_ASSERT_TRUE(menuHasTileOnPage(menu, GameSelectionMenuOptionId::PLAY_BLACK,
+                                     GAME_SELECTION_PAGE_COLOR));
+  menu.onSelect(GameSelectionMenuOptionId::PLAY_BLACK, flow);
+  const MenuTile* playBlack = findTile(menu, GameSelectionMenuOptionId::PLAY_BLACK,
+                                       GAME_SELECTION_PAGE_COLOR);
+  TEST_ASSERT_NOT_NULL(playBlack);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(MenuAdvance::CLOSE),
+                          static_cast<uint8_t>(playBlack->autoAdvance));
+
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(BoardGameSelectionMode::BOT),
                           static_cast<uint8_t>(menu.selection().mode));
   TEST_ASSERT_EQUAL_UINT8(6, menu.selection().botDifficulty);
   TEST_ASSERT_EQUAL_CHAR('b', menu.selection().playerColor);
 }
 
-void test_game_selection_back_navigation_returns_to_previous_page() {
+void test_game_selection_back_to_root_resets_state() {
   GameSelectionMenu menu;
-  FakeMenuController controller;
+  FakeMenuFlow flow;
+  menu.onOpen(GAME_SELECTION_PAGE_GAME, flow);
+  menu.onSelect(GameSelectionMenuOptionId::BOT, flow);
+  menu.onSelect(GameSelectionMenuOptionId::DIFF_4, flow);
+  TEST_ASSERT_EQUAL_UINT8(4, menu.selection().botDifficulty);
 
-  menu.begin(controller);
-  menu.onSelect(GameSelectionMenuOptionId::BOT, controller);
-  menu.onSelect(GameSelectionMenuOptionId::DIFF_4, controller);
-  TEST_ASSERT_TRUE(controller.hasOption(GameSelectionMenuOptionId::PLAY_WHITE));
+  // Back COLOR → DIFFICULTY: clears player color but keeps difficulty.
+  menu.onBack(GAME_SELECTION_PAGE_COLOR, GAME_SELECTION_PAGE_DIFFICULTY, flow);
+  TEST_ASSERT_EQUAL_CHAR(' ', menu.selection().playerColor);
 
-  menu.onBack(controller);
-  TEST_ASSERT_TRUE(controller.hasOption(GameSelectionMenuOptionId::DIFF_4));
-
-  menu.onBack(controller);
-  TEST_ASSERT_TRUE(controller.hasOption(GameSelectionMenuOptionId::CHESS_MOVES));
-  TEST_ASSERT_FALSE(controller.finished);
+  // Back DIFFICULTY → GAME: clears the entire selection.
+  menu.onBack(GAME_SELECTION_PAGE_DIFFICULTY, GAME_SELECTION_PAGE_GAME, flow);
+  TEST_ASSERT_FALSE(menu.hasSelection());
 }
+
+void test_game_selection_page_config_back_tiles() {
+  GameSelectionMenu menu;
+  MenuPageConfig rootCfg = menu.pageConfig(GAME_SELECTION_PAGE_GAME);
+  MenuPageConfig diffCfg = menu.pageConfig(GAME_SELECTION_PAGE_DIFFICULTY);
+  MenuPageConfig colorCfg = menu.pageConfig(GAME_SELECTION_PAGE_COLOR);
+
+  // Root page has no back tile; nested pages do (at (4,4)).
+  TEST_ASSERT_EQUAL_INT(-1, rootCfg.backRow);
+  TEST_ASSERT_EQUAL_INT(-1, rootCfg.backCol);
+  TEST_ASSERT_EQUAL_INT(4, diffCfg.backRow);
+  TEST_ASSERT_EQUAL_INT(4, diffCfg.backCol);
+  TEST_ASSERT_EQUAL_INT(4, colorCfg.backRow);
+  TEST_ASSERT_EQUAL_INT(4, colorCfg.backCol);
+}
+
+// ---------------------------------------------------------------------------
+// ConfirmMenu / ResumeConfirmMenu
+// ---------------------------------------------------------------------------
 
 void test_confirm_menu_yes_and_no_results() {
   ConfirmMenu menu;
-  FakeMenuController controller;
+  FakeMenuFlow flow;
 
-  menu.begin(controller);
-  TEST_ASSERT_TRUE(controller.hasOption(ConfirmMenuOptionId::CONFIRM_YES));
-  TEST_ASSERT_TRUE(controller.hasOption(ConfirmMenuOptionId::CONFIRM_NO));
+  menu.onOpen(0, flow);
+  TEST_ASSERT_TRUE(menuHasTileOnPage(menu, ConfirmMenuOptionId::CONFIRM_YES, 0));
+  TEST_ASSERT_TRUE(menuHasTileOnPage(menu, ConfirmMenuOptionId::CONFIRM_NO, 0));
 
-  menu.onSelect(ConfirmMenuOptionId::CONFIRM_YES, controller);
-  TEST_ASSERT_TRUE(controller.finished);
+  menu.onSelect(ConfirmMenuOptionId::CONFIRM_YES, flow);
+  TEST_ASSERT_TRUE(menu.answered());
   TEST_ASSERT_TRUE(menu.accepted());
 
-  menu.begin(controller);
-  menu.onSelect(ConfirmMenuOptionId::CONFIRM_NO, controller);
-  TEST_ASSERT_TRUE(controller.finished);
+  // Re-opening resets the recorded answers.
+  menu.onOpen(0, flow);
+  TEST_ASSERT_FALSE(menu.answered());
+
+  menu.onSelect(ConfirmMenuOptionId::CONFIRM_NO, flow);
   TEST_ASSERT_TRUE(menu.answered());
   TEST_ASSERT_FALSE(menu.accepted());
+
+  // Both confirm tiles carry autoAdvance CLOSE.
+  const MenuTile* yes = findTile(menu, ConfirmMenuOptionId::CONFIRM_YES, 0);
+  const MenuTile* no = findTile(menu, ConfirmMenuOptionId::CONFIRM_NO, 0);
+  TEST_ASSERT_NOT_NULL(yes);
+  TEST_ASSERT_NOT_NULL(no);
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(MenuAdvance::CLOSE),
+                          static_cast<uint8_t>(yes->autoAdvance));
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(MenuAdvance::CLOSE),
+                          static_cast<uint8_t>(no->autoAdvance));
 }
 
 void test_resume_confirm_menu_preblink_then_shows_confirm() {
   ResumeConfirmMenu menu(BoardGameSelectionMode::BOT);
-  FakeMenuController controller;
+  FakeMenuFlow flow;
 
-  menu.begin(controller);
-  TEST_ASSERT_EQUAL_INT(1, controller.blinkCount);
-  TEST_ASSERT_EQUAL_INT(3, controller.blinkRow);
-  TEST_ASSERT_EQUAL_INT(3, controller.blinkCol);
-  TEST_ASSERT_EQUAL_INT(2, controller.blinkTimes);
-  TEST_ASSERT_TRUE(sameColor(controller.blinkColor, LedColors::Green));
-  TEST_ASSERT_EQUAL_UINT32(900, controller.waitedMs);
-  TEST_ASSERT_TRUE(controller.hasOption(ConfirmMenuOptionId::CONFIRM_YES));
+  menu.onOpen(0, flow);
+  TEST_ASSERT_EQUAL_INT(1, flow.blinkCount);
+  TEST_ASSERT_EQUAL_INT(3, flow.blinkRow);
+  TEST_ASSERT_EQUAL_INT(3, flow.blinkCol);
+  TEST_ASSERT_EQUAL_INT(2, flow.blinkTimes);
+  TEST_ASSERT_TRUE(sameColor(flow.blinkColor, LedColors::Green));
+  TEST_ASSERT_EQUAL_UINT32(900, flow.waitedMs);
+  TEST_ASSERT_TRUE(menuHasTileOnPage(menu, ConfirmMenuOptionId::CONFIRM_YES, 0));
 }
 
 }  // namespace
 
 void register_menu_tests() {
-  RUN_TEST(test_game_selection_root_leaf_finishes);
+  RUN_TEST(test_game_selection_root_chess_moves_closes_with_selection);
   RUN_TEST(test_game_selection_bot_difficulty_and_color_flow);
-  RUN_TEST(test_game_selection_back_navigation_returns_to_previous_page);
+  RUN_TEST(test_game_selection_back_to_root_resets_state);
+  RUN_TEST(test_game_selection_page_config_back_tiles);
   RUN_TEST(test_confirm_menu_yes_and_no_results);
   RUN_TEST(test_resume_confirm_menu_preblink_then_shows_confirm);
 }

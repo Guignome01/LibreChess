@@ -5,6 +5,17 @@
 
 #include <stdint.h>
 
+// ---------------------------------------------------------------------------
+// GameSelectionMenu — predefined game-selection tree.
+// ---------------------------------------------------------------------------
+// Three pages organized as a single declarative tile array:
+//   - Page 0 (GAME): pick a game mode. CHESS_MOVES / LICHESS /
+//     BOARD_DIAGNOSTICS auto-close; BOT auto-advances to DIFFICULTY.
+//   - Page 1 (DIFFICULTY): DIFF_1..DIFF_8 each auto-advance to COLOR.
+//   - Page 2 (COLOR): PLAY_WHITE / PLAY_BLACK / PLAY_RANDOM auto-close.
+// Back tiles are present on the DIFFICULTY and COLOR pages.
+// ---------------------------------------------------------------------------
+
 /// Public game mode selected through the physical board menu.
 enum class BoardGameSelectionMode : uint8_t {
   NONE = 0,
@@ -23,63 +34,63 @@ struct BoardGameSelection {
   bool hasSelection() const { return mode != BoardGameSelectionMode::NONE; }
 };
 
-/// Identifiers returned when a game-selection menu option is selected.
+/// Stable tile ids returned through `BoardMenu::onSelect`.
 namespace GameSelectionMenuOptionId {
-constexpr int8_t CHESS_MOVES = 0;
-constexpr int8_t BOT = 1;
-constexpr int8_t LICHESS = 2;
-constexpr int8_t BOARD_DIAGNOSTICS = 3;
+constexpr uint8_t CHESS_MOVES = 0;
+constexpr uint8_t BOT = 1;
+constexpr uint8_t LICHESS = 2;
+constexpr uint8_t BOARD_DIAGNOSTICS = 3;
 
-constexpr int8_t DIFF_1 = 10;
-constexpr int8_t DIFF_2 = 11;
-constexpr int8_t DIFF_3 = 12;
-constexpr int8_t DIFF_4 = 13;
-constexpr int8_t DIFF_5 = 14;
-constexpr int8_t DIFF_6 = 15;
-constexpr int8_t DIFF_7 = 16;
-constexpr int8_t DIFF_8 = 17;
+constexpr uint8_t DIFF_1 = 10;
+constexpr uint8_t DIFF_2 = 11;
+constexpr uint8_t DIFF_3 = 12;
+constexpr uint8_t DIFF_4 = 13;
+constexpr uint8_t DIFF_5 = 14;
+constexpr uint8_t DIFF_6 = 15;
+constexpr uint8_t DIFF_7 = 16;
+constexpr uint8_t DIFF_8 = 17;
 
-constexpr int8_t PLAY_WHITE = 20;
-constexpr int8_t PLAY_BLACK = 21;
-constexpr int8_t PLAY_RANDOM = 22;
+constexpr uint8_t PLAY_WHITE = 20;
+constexpr uint8_t PLAY_BLACK = 21;
+constexpr uint8_t PLAY_RANDOM = 22;
 }  // namespace GameSelectionMenuOptionId
+
+/// Page ids for the game-selection menu.
+constexpr uint8_t GAME_SELECTION_PAGE_GAME = 0;
+constexpr uint8_t GAME_SELECTION_PAGE_DIFFICULTY = 1;
+constexpr uint8_t GAME_SELECTION_PAGE_COLOR = 2;
 
 /// Return the mode-coloured indicator used before resume confirmation.
 LedRGB gameSelectionResumeIndicatorColor(BoardGameSelectionMode mode);
-
-// ---------------------------------------------------------------------------
-// GameSelectionMenu — predefined game-selection tree.
-// ---------------------------------------------------------------------------
 
 class GameSelectionMenu final : public BoardMenu {
  public:
   GameSelectionMenu();
 
-  void begin(BoardMenuController& controller) override;
-  void onSelect(int optionId, BoardMenuController& controller) override;
-  void onBack(BoardMenuController& controller) override;
-  void cancel(BoardMenuController& controller) override;
+  const MenuTile* tiles() const override;
+  uint8_t tileCount() const override;
+  MenuPageConfig pageConfig(uint8_t pageId) const override;
 
+  void onOpen(uint8_t pageId, MenuFlow& flow) override;
+  void onBack(uint8_t fromPage, uint8_t toPage, MenuFlow& flow) override;
+  void onSelect(uint8_t tileId, MenuFlow& flow) override;
+  void onClose(MenuFlow& flow) override;
+
+  /// Final selection (valid once the menu closes via auto-advance CLOSE).
   const BoardGameSelection& selection() const { return selection_; }
   bool hasSelection() const { return selection_.hasSelection(); }
 
- private:
-  enum class Stage : uint8_t {
-    IDLE,
-    GAME,
-    DIFFICULTY,
-    COLOR,
-  };
+  /// Callback invoked from `onClose` when a complete selection was made.
+  /// Wired once at setup; replaces external polling of `hasSelection()`.
+  using SelectionCallback = void (*)(const BoardGameSelection&);
+  void setOnSelected(SelectionCallback callback) { callback_ = callback; }
 
+ private:
   BoardGameSelection selection_;
   uint8_t pendingBotDifficulty_;
-  Stage stage_;
+  SelectionCallback callback_ = nullptr;
 
-  void reset();
-  void showGame(BoardMenuController& controller);
-  void showDifficulty(BoardMenuController& controller);
-  void showColor(BoardMenuController& controller);
-  void finish(BoardMenuController& controller, BoardGameSelection selection);
+  void resetState();
   char randomPlayerColor() const;
 };
 

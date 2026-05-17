@@ -81,7 +81,7 @@ The calibration produces three mappings stored in NVS:
 - **Row/column mapping tables** — physical pin/output → logical row/column index
 - **LED index map** — logical (row, col) coordinate → physical pixel index
 
-`BoardCalibrationRunner` owns the serial-guided startup flow and writes the mapping to NVS before the renderer starts. External callers use `Board::resetCalibration()`, which clears the saved mapping and reboots so the startup runner executes again. `BoardDriver` applies that mapping for every sensor read and LED write operation throughout normal operation.
+`BoardCalibrationRunner` owns the serial-guided startup flow and writes the mapping to NVS before the renderer starts. External callers launch the calibration program (`Board::startProgram(BoardProgramIds::CALIBRATION)`), which clears the saved mapping and reboots so the startup runner executes again. `BoardDriver` applies that mapping for every sensor read and LED write operation throughout normal operation.
 
 ## Troubleshooting
 

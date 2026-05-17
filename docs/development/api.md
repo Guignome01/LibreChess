@@ -98,7 +98,7 @@ Save LED brightness and dimming settings. Persisted to NVS.
 
 ### `POST /board-calibrate`
 
-Triggers board recalibration by clearing the saved calibration mapping in NVS and rebooting. The startup calibration runner executes before normal board rendering resumes.
+Queues board recalibration on the main loop. The board-owned calibration program clears the saved calibration mapping in NVS and reboots; the startup calibration runner executes before normal board rendering resumes.
 
 **Response** (JSON): `{ "status": "ok" }`
 
