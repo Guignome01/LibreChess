@@ -15,8 +15,9 @@
 #include "board/runtime/scheduler.cpp"         // NOLINT
 #include "board/services/program/program.cpp"  // NOLINT
 #include "board/services/visual/animations.cpp"         // NOLINT
-#include "board/menus/confirm.cpp"          // NOLINT
 #include "board/menus/game_selection.cpp"   // NOLINT
+#include "board/menus/main.cpp"             // NOLINT
+#include "board/menus/confirm.cpp"          // NOLINT
 
 void setUp(void) {}
 void tearDown(void) {}

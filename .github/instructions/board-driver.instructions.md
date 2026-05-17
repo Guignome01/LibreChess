@@ -34,8 +34,8 @@ External firmware must not include `BoardDriver`, `BoardRuntime`,
 `BoardRenderer`, `BoardFeedback`, or `BoardAssistance` directly. The only
 board-facing types it may name are `Board::UpdateResult`,
 `Board::Animation`, `BoardProgram`, `IBoardGame`, stable string ids, plus
-typed menu objects from `board/menus/*` (`GameSelectionMenu`, `ConfirmMenu`,
-`ResumeConfirmMenu`) when the caller needs typed menu result access.
+typed menu objects from `board/menus/*` (`MainMenu`, `GameSelectionMenu`,
+`ConfirmMenu`, `ResumeConfirmMenu`) when the caller needs typed menu result access.
 
 ## Internal layout
 
@@ -66,7 +66,9 @@ src/board/
 │       ├── selection.{h,cpp}  selectable page + optional back button
 │       └── menu.{h,cpp}       MenuTile/MenuFlow/BoardMenu + BoardMenuRunner
 ├── menus/                     predefined typed menus
-│   ├── game_selection.{h,cpp} game selection tree + result types
+│   ├── selection_types.h      shared menu result types
+│   ├── main.{h,cpp}           root menu + child-menu routing
+│   ├── game_selection.{h,cpp} bot setup menu
 │   └── confirm.{h,cpp}        green/red and resume confirmation menus
 └── programs/                  primary programs and program-specific visuals
     ├── ids.h                  stable program string ids
@@ -225,18 +227,27 @@ standard white back tile.
 Predefined menu flows live under `src/board/menus/` and are instantiated
 directly by callers (no factory):
 
-- `GameSelectionMenu` declares 15 tiles across pages GAME(0)/DIFFICULTY(1)/
-  COLOR(2) and exposes `BoardGameSelection` / `BoardGameSelectionMode` after
-  completion.
+- `selection_types.h` declares `BoardGameSelection` and
+  `BoardGameSelectionMode` shared by the root menu, bot setup menu, firmware,
+  and resume prompts.
+- `MainMenu` declares the root mode picker, embeds `GameSelectionMenu` for bot
+  difficulty/color setup, and owns the physical menu open/reopen/idle lifecycle
+  through `MainMenuHost`. `main.cpp` supplies the host adapter and consumes the
+  final selection; root-to-bot routing and menu completion handling stay inside
+  the menu object.
+- `GameSelectionMenu` declares the bot setup flow across DIFFICULTY(1)/COLOR(2)
+  pages and exposes a complete `BoardGameSelection` after difficulty + color
+  are selected.
 - `ConfirmMenu` exposes a 2-tile green/red yes-no page that auto-closes on
   any selection.
 - `ResumeConfirmMenu` extends `ConfirmMenu` with the mode-coloured resume
   pre-blink in `onOpen`.
 
-Menus define tile layouts and semantic transitions only. They must not call
-`BoardRuntime`, drain `BoardInput`, or run their own polling loops. Use
-`Board::showMenu(menu)`, `Board::runMenu(menu)`, `Board::stopMenu()`, and
-`Board::update()` outside `src/board/`.
+Menus define tile layouts and semantic transitions, and `MainMenu` may use its
+`MainMenuHost` facade for public board menu lifecycle actions. They must not
+call `BoardRuntime`, drain `BoardInput`, or run their own polling loops. Use
+`Board::runMenu(menu)`, `Board::stopMenu()`, and `Board::update()` outside
+`src/board/`.
 
 ## Color Semantics
 

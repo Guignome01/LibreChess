@@ -1,6 +1,6 @@
 #include "board/board.h"
 #include "board/menus/confirm.h"
-#include "board/menus/game_selection.h"
+#include "board/menus/main.h"
 #include "board/programs/ids.h"
 #include "engines/factory.h"
 #include "game_mode/player_mode.h"
@@ -38,7 +38,7 @@ String assistanceEngine = "librechess";
 LichessConfig lichessConfig = {""};
 
 Board physicalBoard;
-GameSelectionMenu gameSelectionMenu;
+MainMenu mainMenu;
 SerialLogger logger;
 LittleFSStorage storage(&logger);
 WiFiManagerESP32 wifiManager(&physicalBoard, &storage);
@@ -50,9 +50,27 @@ bool modeInitialized = false;
 bool resumingGame = false;
 bool selectionPendingAfterAnimations = false;
 
+class PhysicalMainMenuHost final : public MainMenuHost {
+ public:
+  explicit PhysicalMainMenuHost(Board& board) : board_(board) {}
+
+  void stopProgram() override { board_.stopProgram(); }
+  void clearAssistanceProvider() override {
+    board_.setAssistanceProvider(nullptr);
+  }
+  void showMenu(BoardMenu& menu) override { board_.showMenu(menu); }
+  bool hasActiveAnimations() override { return board_.hasActiveAnimations(); }
+
+ private:
+  Board& board_;
+};
+
+PhysicalMainMenuHost mainMenuHost(physicalBoard);
+
 void enterGameSelection();
 bool enterGameSelectionWhenAnimationsIdle();
 void handleGameSelection(const BoardGameSelection& selection);
+void printMainMenuPrompt();
 void initializeSelectedMode(AppMode mode);
 void checkForResumableGame();
 BoardAssistanceLevel assistanceLevelFromInt(int value);
@@ -99,10 +117,6 @@ void setup() {
 
   // Kick off NTP time sync (non-blocking, will resolve in background)
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
-  // Wire the game-selection menu callback once; the menu invokes it from
-  // `onClose` when a complete selection has been captured, removing the
-  // need to poll `hasSelection()` after each board update.
-  gameSelectionMenu.setOnSelected(&handleGameSelection);
   // Check for a live game that can be resumed
   checkForResumableGame();
   if (currentMode != AppMode::SELECTION)
@@ -251,9 +265,13 @@ void loop() {
   Board::UpdateResult boardUpdate = physicalBoard.update();
 
   if (currentMode == AppMode::SELECTION) {
-    // Selection finalization is delivered through the menu callback wired
-    // in `setup()`; nothing to poll here.
-    (void)boardUpdate;
+    MainMenuUpdateResult menuResult =
+        mainMenu.update(mainMenuHost, boardUpdate.menuFinished);
+    if (menuResult == MainMenuUpdateResult::SELECTED) {
+      handleGameSelection(mainMenu.selection());
+    } else if (menuResult == MainMenuUpdateResult::REOPENED) {
+      printMainMenuPrompt();
+    }
     delay(physicalBoard.cadenceMs());
     return;
   }
@@ -377,23 +395,20 @@ void enterGameSelection() {
   selectionPendingAfterAnimations = false;
   delete activeGame;
   activeGame = nullptr;
-  physicalBoard.stopProgram();
-  physicalBoard.setAssistanceProvider(nullptr);
-  physicalBoard.showMenu(gameSelectionMenu);
-  Serial.println("=============== Game Selection Mode ===============");
-  Serial.println("Four LEDs are lit in the center of the board:");
-  Serial.println("  Blue:   Chess Moves (Human vs Human)");
-  Serial.println("  Green:  Chess Bot (Human vs AI)");
-  Serial.println("  Yellow: Lichess (Play online games)");
-  Serial.println("  Red:    Sensor Test");
-  Serial.println("Place a chess piece on a LED, then lift it to select that mode");
-  Serial.println("===================================================");
+  mainMenu.open(mainMenuHost);
+  printMainMenuPrompt();
 }
 
 bool enterGameSelectionWhenAnimationsIdle() {
-  if (physicalBoard.hasActiveAnimations()) return false;
+  if (!mainMenu.canOpen(mainMenuHost)) return false;
   enterGameSelection();
   return true;
+}
+
+void printMainMenuPrompt() {
+  for (uint8_t i = 0; i < mainMenu.promptLineCount(); ++i) {
+    Serial.println(mainMenu.promptLine(i));
+  }
 }
 
 void handleGameSelection(const BoardGameSelection& selection) {

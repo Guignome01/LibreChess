@@ -2,9 +2,9 @@
 
 A guide to each game mode in LibreChess — from game selection to move flow and mode-specific behavior.
 
-## Game Selection
+## Main Menu
 
-When the board powers on (or returns from a completed game), the game selection menu appears. Four squares in the center of the board light up:
+When the board powers on (or returns from a completed game), the main menu appears. Four squares in the center of the board light up:
 
 | Square | Color | Mode |
 |--------|-------|------|
@@ -62,7 +62,7 @@ Play against the Stockfish chess engine. Requires a WiFi connection — the boar
 4. For bot castling, the board guides you through both the king and rook movements
 5. For bot en passant, the captured pawn's square lights purple — remove that pawn after placing the moving piece
 
-If the WiFi connection is unavailable when bot mode is selected, the board flashes red three times and returns to the game selection menu.
+If the WiFi connection is unavailable when bot mode is selected, the board flashes red three times and returns to the main menu.
 
 ## Lichess
 
@@ -85,7 +85,7 @@ Play live games on your physical board through the Lichess platform. Requires Wi
 
 **Resign:** the physical king gesture or web UI resign button also submits a resignation to Lichess.
 
-If the token is missing or invalid, or WiFi is unavailable, the board flashes red three times and returns to game selection.
+If the token is missing or invalid, or WiFi is unavailable, the board flashes red three times and returns to the main menu.
 
 ## Sensor Test
 
@@ -94,7 +94,7 @@ A diagnostic mode for verifying hardware — not a game mode.
 1. The board starts with all LEDs off
 2. Every square where a sensor detects a magnet lights up in white
 3. Move a piece across the board to test each sensor
-4. The mode tracks which squares have been "visited" — once all 64 have been detected at least once, a firework animation plays and the board returns to game selection
+4. The mode tracks which squares have been "visited" — once all 64 have been detected at least once, a firework animation plays and the board returns to the main menu
 
 This mode is useful for verifying sensor functionality after assembly or when troubleshooting detection issues. For more debugging tools, see [troubleshooting](../troubleshooting.md).
 

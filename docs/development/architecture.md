@@ -91,7 +91,7 @@ The LED strip is wired in a serpentine (zigzag) pattern across the physical boar
 
 ### Board Public Surface
 
-`src/board/board.*` is the public physical-board package root. `Board` exposes lifecycle (`begin()` returns `bool`), LED settings (brightness/dim multiplier getters/setters and `saveLedSettings()`), sensor cadence (`cadenceMs()`), a single service tick (`update()` returning menu/program completion flags), `clearAllSurfaces()`, move-only external animation tokens (`startAnimation(id)`), typed and named menu facade methods (`showMenu`, `runMenu`, `stopMenu`), and a single program facade (`startProgram(id)` returning `BoardProgram*`, `stopProgram()`) used uniformly for game, diagnostics, and calibration. Stable ids live in `board/programs/ids.h` (`BoardProgramIds::GAME`, `DIAGNOSTICS`, `CALIBRATION`); the `GAME` factory entry is the only one that produces an `IBoardGame` (which inherits `BoardProgram`), so game-mode integration is a `static_cast<IBoardGame*>` of the returned pointer. External firmware may consume `Board`, `Board::UpdateResult`, `Board::Animation`, `BoardProgram`, `IBoardGame`, stable ids from `board/programs/ids.h`, and typed predefined menu classes from `board/menus/*` such as `GameSelectionMenu`, `ConfirmMenu`, and `ResumeConfirmMenu` when typed result access is needed. It must never include `BoardDriver`, `BoardRuntime`, `BoardCanvas`, `BoardScheduler`, `BoardAnimations`, `BoardInput`, `BoardRenderer`, `BoardFeedback`, or `BoardAssistance` directly.
+`src/board/board.*` is the public physical-board package root. `Board` exposes lifecycle (`begin()` returns `bool`), LED settings (brightness/dim multiplier getters/setters and `saveLedSettings()`), sensor cadence (`cadenceMs()`), a single service tick (`update()` returning menu/program completion flags), `clearAllSurfaces()`, move-only external animation tokens (`startAnimation(id)`), typed and named menu facade methods (`showMenu`, `runMenu`, `stopMenu`), and a single program facade (`startProgram(id)` returning `BoardProgram*`, `stopProgram()`) used uniformly for game, diagnostics, and calibration. Stable ids live in `board/programs/ids.h` (`BoardProgramIds::GAME`, `DIAGNOSTICS`, `CALIBRATION`); the `GAME` factory entry is the only one that produces an `IBoardGame` (which inherits `BoardProgram`), so game-mode integration is a `static_cast<IBoardGame*>` of the returned pointer. External firmware may consume `Board`, `Board::UpdateResult`, `Board::Animation`, `BoardProgram`, `IBoardGame`, stable ids from `board/programs/ids.h`, and typed predefined menu classes from `board/menus/*` such as `MainMenu`, `GameSelectionMenu`, `ConfirmMenu`, and `ResumeConfirmMenu` when typed result access is needed. It must never include `BoardDriver`, `BoardRuntime`, `BoardCanvas`, `BoardScheduler`, `BoardAnimations`, `BoardInput`, `BoardRenderer`, `BoardFeedback`, or `BoardAssistance` directly.
 
 Logical 8×8 board helpers live in `src/board/runtime/helpers.h` (`BoardHelpers::ROWS`, `COLS`, `SQUARES`, `LAST_ROW`, `LAST_COL`, `inBounds()`). Board DTOs, canvas, input, menus, diagnostics, and tests use that shared source instead of parallel local 8/64 constants.
 
@@ -142,7 +142,9 @@ Generic menu mechanics live in `src/board/services/menu/*` and are owned by the 
 
 Predefined semantic menus live in `src/board/menus/*` and are instantiated directly by callers (no factory layer):
 
-- `game_selection.{h,cpp}` defines `GameSelectionMenu`, `BoardGameSelection`, and `BoardGameSelectionMode`.
+- `selection_types.h` defines `BoardGameSelection` and `BoardGameSelectionMode`.
+- `main.{h,cpp}` defines `MainMenu`, the root mode picker, and routing into the embedded bot setup menu.
+- `game_selection.{h,cpp}` defines `GameSelectionMenu` for bot difficulty/color setup pages.
 - `confirm.{h,cpp}` defines `ConfirmMenu` and `ResumeConfirmMenu`.
 
 Typed menus define option layouts and what logic to execute when a square is selected; they must not poll sensors or access `BoardRuntime` directly.
@@ -342,7 +344,7 @@ Every iteration of `loop()`:
 2. Check for pending board edits from the web UI (`getPendingBoardEdit()`)
 3. Check for web-based game mode selection (`getSelectedGameMode()`)
 4. Tick board-owned services once via `Board::update()` and keep its menu/program completion flags for the current loop
-5. If in `AppMode::SELECTION`: use `Board::UpdateResult::menuFinished` to map the completed `GameSelectionMenu` result to an app mode
+5. If in `AppMode::SELECTION`: pass `Board::UpdateResult::menuFinished` to `MainMenu::update()` and map only a completed selection to an app mode
 6. If a mode is selected and not yet initialized: call `initializeSelectedMode()` (creates the game object or starts board diagnostics)
 7. If in a chess game mode: relay web resign flag, check `isGameOver()`, call `update()`
 8. If in Sensor Test: use `Board::UpdateResult::programFinished` to return to selection when the diagnostics program completes
@@ -361,11 +363,11 @@ For game resume: `begin()` detects the `resumingGame` flag, skips piece setup, c
 
 ### Menu Navigation
 
-`GameSelectionMenu` (`src/board/menus/game_selection.*`) drives the game-selection flow as a typed menu object. `main.cpp` owns one instance, passes it to `physicalBoard.showMenu(gameSelectionMenu)`, observes completion through `Board::update().menuFinished`, and then reads `gameSelectionMenu.selection()` for the semantic `BoardGameSelection` result. `BoardMenuRunner` (`src/board/services/menu/menu.*`) owns the active `MenuSelection`, canvas surface, polling, debounce mechanics, stable-press tile clearing, and a pending selected result while the release-triggered confirmation blink is still active.
+`MainMenu` (`src/board/menus/main.*`) drives the physical mode-selection flow as a typed menu object. It owns the root page, embeds `GameSelectionMenu` (`src/board/menus/game_selection.*`) for bot difficulty/color pages, opens/reopens the physical menu through `MainMenuHost`, and returns `MainMenuUpdateResult` values when `Board::update().menuFinished` changes. `main.cpp` owns one instance plus a small host adapter for the public `Board` facade; it consumes only the final `BoardGameSelection` to start the chosen app mode. Root-to-bot routing and menu completion handling stay inside `MainMenu`. `BoardMenuRunner` (`src/board/services/menu/menu.*`) owns the active `MenuSelection`, canvas surface, polling, debounce mechanics, stable-press tile clearing, and a pending selected result while the release-triggered confirmation blink is still active.
 
 The flow is:
 
-- **Game selection** (root) → 4 center squares: Blue (ChessMoves), Green (Bot), Yellow (Lichess), Red (Sensor Test)
+- **Main menu** (root) → 4 center squares: Blue (ChessMoves), Green (Bot), Yellow (Lichess), Red (Sensor Test)
 - **Bot difficulty** (entered on Bot selection) → 8 squares across row 3, colors green→blue, levels 1–8
 - **Bot color** (entered on difficulty selection) → 3 squares: White, scaled White (play as Black), Yellow (random)
 
@@ -503,7 +505,8 @@ After confirmed selection, the square blinks once in its own color via `BoardAni
 
 ### Predefined Menus
 
-- `GameSelectionMenu` owns the root/difficulty/color menu tree and records a `BoardGameSelection` when a leaf is selected.
+- `MainMenu` owns the root mode picker, embeds `GameSelectionMenu`, handles physical menu open/reopen/idle checks through `MainMenuHost`, and records a `BoardGameSelection` when a complete leaf selection is made.
+- `GameSelectionMenu` owns the bot difficulty/color pages and can be exercised independently in tests.
 - `ConfirmMenu` records an accepted/rejected answer for green/red prompts.
 - `ResumeConfirmMenu` composes the resume indicator blink with `ConfirmMenu`.
 

@@ -71,7 +71,7 @@ After each mapping, remove the piece and wait for the board to read empty before
 
 ### Completion
 
-After all 64 LEDs are mapped, the calibration data is saved to NVS. The serial monitor prints "Calibration complete" and the board proceeds to the game selection menu.
+After all 64 LEDs are mapped, the calibration data is saved to NVS. The serial monitor prints "Calibration complete" and the board proceeds to the main menu.
 
 ## Calibration Data
 

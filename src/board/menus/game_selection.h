@@ -1,46 +1,21 @@
 #ifndef BOARD_MENUS_GAME_SELECTION_H
 #define BOARD_MENUS_GAME_SELECTION_H
 
+#include "board/menus/selection_types.h"
 #include "board/services/menu/menu.h"
 
 #include <stdint.h>
 
 // ---------------------------------------------------------------------------
-// GameSelectionMenu — predefined game-selection tree.
+// GameSelectionMenu - predefined bot setup menu.
 // ---------------------------------------------------------------------------
-// Three pages organized as a single declarative tile array:
-//   - Page 0 (GAME): pick a game mode. CHESS_MOVES / LICHESS /
-//     BOARD_DIAGNOSTICS auto-close; BOT auto-advances to DIFFICULTY.
-//   - Page 1 (DIFFICULTY): DIFF_1..DIFF_8 each auto-advance to COLOR.
-//   - Page 2 (COLOR): PLAY_WHITE / PLAY_BLACK / PLAY_RANDOM auto-close.
-// Back tiles are present on the DIFFICULTY and COLOR pages.
+// Owns the bot-specific selection pages. MainMenu embeds this menu and
+// delegates bot setup navigation to it, while tests can still exercise the
+// submenu directly as a standalone typed menu.
 // ---------------------------------------------------------------------------
 
-/// Public game mode selected through the physical board menu.
-enum class BoardGameSelectionMode : uint8_t {
-  NONE = 0,
-  CHESS_MOVES = 1,
-  BOT = 2,
-  LICHESS = 3,
-  BOARD_DIAGNOSTICS = 4,
-};
-
-/// Public game selection returned by the physical board menu flow.
-struct BoardGameSelection {
-  BoardGameSelectionMode mode = BoardGameSelectionMode::NONE;
-  uint8_t botDifficulty = 0;
-  char playerColor = ' ';
-
-  bool hasSelection() const { return mode != BoardGameSelectionMode::NONE; }
-};
-
-/// Stable tile ids returned through `BoardMenu::onSelect`.
+/// Stable bot setup tile ids returned through `BoardMenu::onSelect`.
 namespace GameSelectionMenuOptionId {
-constexpr uint8_t CHESS_MOVES = 0;
-constexpr uint8_t BOT = 1;
-constexpr uint8_t LICHESS = 2;
-constexpr uint8_t BOARD_DIAGNOSTICS = 3;
-
 constexpr uint8_t DIFF_1 = 10;
 constexpr uint8_t DIFF_2 = 11;
 constexpr uint8_t DIFF_3 = 12;
@@ -55,42 +30,33 @@ constexpr uint8_t PLAY_BLACK = 21;
 constexpr uint8_t PLAY_RANDOM = 22;
 }  // namespace GameSelectionMenuOptionId
 
-/// Page ids for the game-selection menu.
-constexpr uint8_t GAME_SELECTION_PAGE_GAME = 0;
+/// Page ids used by GameSelectionMenu. Page 0 is reserved for MainMenu root.
 constexpr uint8_t GAME_SELECTION_PAGE_DIFFICULTY = 1;
 constexpr uint8_t GAME_SELECTION_PAGE_COLOR = 2;
 
-/// Return the mode-coloured indicator used before resume confirmation.
-LedRGB gameSelectionResumeIndicatorColor(BoardGameSelectionMode mode);
-
 class GameSelectionMenu final : public BoardMenu {
  public:
+  static constexpr uint8_t TILE_COUNT = 11;
+
   GameSelectionMenu();
 
   const MenuTile* tiles() const override;
   uint8_t tileCount() const override;
+  uint8_t initialPage() const override { return GAME_SELECTION_PAGE_DIFFICULTY; }
   MenuPageConfig pageConfig(uint8_t pageId) const override;
 
   void onOpen(uint8_t pageId, MenuFlow& flow) override;
   void onBack(uint8_t fromPage, uint8_t toPage, MenuFlow& flow) override;
   void onSelect(uint8_t tileId, MenuFlow& flow) override;
-  void onClose(MenuFlow& flow) override;
 
-  /// Final selection (valid once the menu closes via auto-advance CLOSE).
   const BoardGameSelection& selection() const { return selection_; }
   bool hasSelection() const { return selection_.hasSelection(); }
-
-  /// Callback invoked from `onClose` when a complete selection was made.
-  /// Wired once at setup; replaces external polling of `hasSelection()`.
-  using SelectionCallback = void (*)(const BoardGameSelection&);
-  void setOnSelected(SelectionCallback callback) { callback_ = callback; }
+  void reset();
 
  private:
   BoardGameSelection selection_;
   uint8_t pendingBotDifficulty_;
-  SelectionCallback callback_ = nullptr;
 
-  void resetState();
   char randomPlayerColor() const;
 };
 

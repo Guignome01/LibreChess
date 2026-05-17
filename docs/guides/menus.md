@@ -2,7 +2,7 @@
 
 The board doubles as an 8×8 pixel display for menu navigation. Menus are shown as colored LEDs at specific positions, and selections are made by placing a piece on a lit square and lifting it again to confirm.
 
-## Game Selection Menu
+## Main Menu
 
 The root menu displayed on boot and after a game ends. Four squares in the center of the board:
 
@@ -30,7 +30,7 @@ Eight squares across row 3, representing difficulty levels from left to right:
 | g5 (row 3, col 6) | Purple | Expert | 15 |
 | h5 (row 3, col 7) | Blue | Master | 17 |
 
-A **white back button** at e4 (row 4, col 4) returns to the game selection menu.
+A **white back button** at e4 (row 4, col 4) returns to the main menu root page.
 
 ## Bot Color Menu
 
@@ -61,11 +61,12 @@ On confirmed selection:
 
 ## Menu Navigation
 
-Menus are managed by a stack-based navigator with a maximum depth of 4 levels:
+Menus are managed by a stack-based navigator with a maximum depth of 8 pages inside the active typed menu:
 
-- Selecting a mode that has a sub-menu **pushes** the new menu onto the stack
-- Pressing the **back button** (white square) **pops** the current menu and re-displays the parent
-- Game selection is the bottom of the stack — it has no back button
+- Selecting a tile with `NEXT` auto-advance **pushes** the next page inside the current menu
+- Pressing the **back button** (white square) **pops** the current page and re-displays the parent page
+- Pressing back on the bot difficulty page returns to the root mode page
+- The root mode page has no back button
 
 The navigator automatically handles re-displaying parent menus with fresh debounce state after a pop, so previously placed pieces don't immediately re-trigger selections.
 
@@ -89,7 +90,7 @@ When the board boots and detects a saved live game (from a previous crash or pow
    - **Green** for a Bot game
 2. The confirm dialog appears (green = resume, red = discard)
 3. If resumed, the game state is replayed from the saved move history and the player continues where they left off
-4. If discarded, the saved game is deleted and the game selection menu appears
+4. If discarded, the saved game is deleted and the main menu appears
 
 The dialog flips orientation when the saved game had the player on the black side (bot mode).
 

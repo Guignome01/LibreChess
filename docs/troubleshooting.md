@@ -24,7 +24,7 @@ The serial monitor is especially important during calibration, which currently u
 
 The built-in sensor test mode is a quick way to verify that all 64 sensors are working correctly:
 
-1. Select **Sensor Test** from the game selection menu (red square)
+1. Select **Sensor Test** from the main menu (red square)
 2. Place pieces on the board — each detected square lights up in white
 3. Move a piece across every square to confirm full coverage
 4. The mode completes automatically when all 64 squares have been visited

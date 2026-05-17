@@ -45,7 +45,7 @@ ResumeConfirmMenu::ResumeConfirmMenu(BoardGameSelectionMode mode) : mode_(mode) 
 void ResumeConfirmMenu::onOpen(uint8_t pageId, MenuFlow& flow) {
   // Pre-blink the mode indicator before showing the confirmation tiles so
   // the user can identify which game would resume.
-  flow.blink(3, 3, gameSelectionResumeIndicatorColor(mode_), 2);
+  flow.blink(3, 3, mainMenuModeColor(mode_), 2);
   flow.wait(900);
   ConfirmMenu::onOpen(pageId, flow);
 }

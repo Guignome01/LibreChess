@@ -1,7 +1,7 @@
 #ifndef BOARD_MENUS_CONFIRM_H
 #define BOARD_MENUS_CONFIRM_H
 
-#include "board/menus/game_selection.h"
+#include "board/menus/main.h"
 #include "board/services/menu/menu.h"
 
 namespace ConfirmMenuOptionId {
