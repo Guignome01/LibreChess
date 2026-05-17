@@ -7,8 +7,8 @@
 // Board assistance providers.
 // ---------------------------------------------------------------------------
 // Providers decide whether assistance is disabled, legal-move-only, or backed
-// by an engine hint. They return data only; BoardGame owns when to service
-// them and BoardAssistance owns all LED presentation.
+// by target ranking. They return data only; BoardGame owns when to query them
+// and BoardAssistance owns all LED presentation.
 // ---------------------------------------------------------------------------
 
 class BoardAssistanceProvider {
@@ -16,7 +16,14 @@ class BoardAssistanceProvider {
   virtual ~BoardAssistanceProvider() = default;
 
   virtual BoardAssistanceLevel level() const = 0;
-  virtual bool service(BoardBestMoveHint& hint) { return false; }
+  virtual bool rankTargets(int fromRow, int fromCol, const BoardMoveTargetList& targets,
+                           BoardMoveTargetRanking& ranking) {
+    (void)fromRow;
+    (void)fromCol;
+    (void)targets;
+    ranking = BoardMoveTargetRanking{};
+    return false;
+  }
   virtual void cancel() {}
 };
 

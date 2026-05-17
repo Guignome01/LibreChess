@@ -14,6 +14,7 @@ Central game orchestrator — the ONLY entry point for firmware to access chess 
 **Search** (optional — initialized for bot mode via `initSearch`, skipped for player-only games):
 - `initSearch(ttSize)` — allocates TT, PawnHash, EvalHash, SearchState on heap (idempotent)
 - `calculateMove(limits) → SearchResult` — copies the current `Position` and runs `findBestMove()` on that snapshot, preserving the live board while search make/unmake recursion runs
+- `rankCandidateTargets(fromRow, fromCol, targets, timeLimitMs, scores) → bool` — builds legal root candidates from a lifted source square, runs one root-filtered search on a snapshot, and returns per-destination scores from the current side-to-move perspective
 - `setTimeFunc(fn)` — platform time abstraction: firmware passes `millis()`, CLI passes `nativeMillis()`
 - `setExternalStop(flag)` — wire an external `std::atomic<bool>*` for cooperative cancellation
 - `searchInitialized()` / `searchHashTablesReady()` / `searchHashTableAllocationFailed()` — firmware-visible diagnostics for heap-pressure handling after `initSearch()`
@@ -29,6 +30,8 @@ Central game orchestrator — the ONLY entry point for firmware to access chess 
 **Resume**: `resumeGame()`, `hasActiveGame()`, `getActiveGameInfo(...)`
 
 **Re-exported queries** (from Position): `bitboards()`, `mailbox()`, `getSquare()`, `sideToMove()`, `getCastlingRights()`, `positionState()`, `getFen()`, `getEvaluation()`, `getPossibleMoves()`, `isDraw()`, `boardToText()`, `forEachSquare(fn)`, `checkEnPassant(...)`, `checkCastling(...)`, `board()`
+
+**Candidate scoring/ranking**: `scoreCandidateMove(fromRow, fromCol, toRow, toCol, scoreOut, promo)` remains the lightweight one-ply static fallback. `rankCandidateTargets(...)` is the searched path for BEST_MOVE assistance: it filters root moves to the lifted piece's requested targets, uses the caller's time budget, and leaves the live board/history/cache state unchanged.
 
 **Re-exported statics** (from piece/utils): `isEmptySquare()`, `pieceColor()`, `pieceType()`, `pieceToChar()`, `colorName()`, `squareName()`, `fileChar()`, `rankChar()`
 
@@ -54,6 +57,8 @@ Steps 2–7 are atomic from the caller's perspective.
 - **Dirty-flag caching** — FEN/eval cached, recomputed only when `fenDirty_`/`evalDirty_` set.
 - **Composition over inheritance** — `Game` composes `Position` + `History`, no inheritance.
 - **Engine composition** — `Game` optionally composes an `Engine*` (heap-allocated by `initSearch()` with `new(std::nothrow)`, deleted in destructor).  `calculateMove()` snapshots `board_` and delegates the copy to the engine, so background search never mutates the live game position.  `setTimeFunc`/`setExternalStop` delegate directly. Search diagnostics expose initialization and hash-allocation status to firmware. `newGame()` calls `engine_->clearState()` when initialized.  Player-only games never allocate an engine.
+- **Candidate scoring snapshot** — `scoreCandidateMove()` is a lightweight, synchronous query for UI assistance. It copies `board_`, applies the candidate through `Position::makeMove()`, handles terminal draw/mate results, and flips `eval::evaluatePosition()` into the moving side's perspective. It must not notify observers or alter dirty caches.
+- **Candidate search snapshot** — `rankCandidateTargets()` uses `board_.getPossibleMoves(from)` to preserve legal flags/promotions, filters to requested display-coordinate targets, then calls the core search through `Engine` with root score output. Promotion alternatives for the same target collapse to the best score for that target. It must not notify observers, append history, or alter dirty caches.
 - **Nullable DI** — storage, observer, logger all pointer-injected. Logger uses `Log` proxy.
 - **Undo clears game-over** — `undoMove()` re-opens finished games for web UI navigation.
 

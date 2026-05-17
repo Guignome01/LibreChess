@@ -17,6 +17,7 @@ REST-like HTTP API served by `WiFiManagerESP32` (`AsyncWebServer` on port 80). F
 | `GET` | `/board-settings` | LED brightness and dimming settings |
 | `POST` | `/board-settings` | Save LED settings (persisted to NVS) |
 | `POST` | `/board-calibrate` | Queue recalibration on the main loop |
+| `GET` | `/gameselect` | Current persisted game-selection defaults |
 | `POST` | `/gameselect` | Select a game mode |
 | `POST` | `/resign` | Submit a resign request |
 | `POST` | `/nav` | Navigate move history (undo/redo/first/last) |
@@ -51,6 +52,7 @@ Api.saveBoardSettings(b,d) → POST /board-settings
 Api.calibrate()            → POST /board-calibrate
 Api.getLichessInfo()       → GET  /lichess
 Api.saveLichessToken(t)    → POST /lichess
+Api.getGameSelectionConfig() → GET /gameselect
 Api.selectGame(m, c, d, e, aL, aE, aD) → POST /gameselect
 Api.resign()               → POST /resign
 Api.nav(action)            → POST /nav
@@ -91,6 +93,19 @@ Returns cached board state (populated by `onBoardStateChanged()`):
 ```
 
 ### `POST /gameselect`
+`GET /gameselect` returns persisted game-selection defaults used to initialize
+the web UI:
+```json
+{
+  "assistanceLevel": "legal",
+  "assistanceEngine": "librechess",
+  "assistanceDifficulty": 4
+}
+```
+
+`POST /gameselect` updates the selected mode and persists assistance settings in
+the ESP32 NVS namespace `"assist"` after validation.
+
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `gamemode` | Yes | `1` (HvH), `2` (Bot), `3` (Lichess), `4` (Sensor Test) |
@@ -98,12 +113,14 @@ Returns cached board state (populated by `onBoardStateChanged()`):
 | `difficulty` | Bot only | Difficulty level (1–8) |
 | `engine` | Bot only | `"stockfish"` (default) or `"librechess"` |
 | `assistanceLevel` | Play modes only | `"none"`, `"legal"` (default), or `"best"` |
-| `assistanceEngine` | Optional | Engine for BEST_MOVE assistance. `"librechess"` is currently the only implemented value. |
-| `assistanceDifficulty` | Optional | Difficulty level (1–8) for engine-backed assistance hints. |
+| `assistanceEngine` | Optional | Provider for BEST_MOVE assistance. `"librechess"` is currently the only implemented value. |
+| `assistanceDifficulty` | Optional | Assistance provider setting; LibreChess BEST_MOVE currently uses a fixed 1 s lifted-piece search and ignores it. |
 
-`NONE` and `LEGAL_MOVES` assistance must not trigger an engine request. If
+`NONE` and `LEGAL_MOVES` assistance must not rank targets. If
 `assistanceLevel=best`, the backend currently rejects any `assistanceEngine`
-other than `librechess` with `400 Bad Request`.
+other than `librechess` with `400 Bad Request`. On the physical board, BEST_MOVE
+ranks the legal destinations for the lifted piece and highlights best/worst
+targets rather than requesting a global best move for the whole position.
 
 ### `POST /nav`
 | Parameter | Required | Description |

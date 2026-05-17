@@ -17,7 +17,7 @@ class BoardRuntime;
 // ---------------------------------------------------------------------------
 // `assistanceProvider` is the board-owned active assistance provider. The
 // factory passes it to the game program at construction so the program can
-// service hints from the engine and surface them on the assistance surface.
+// query target rankings and surface them on the assistance surface.
 // ---------------------------------------------------------------------------
 
 struct BoardProgramContext {

@@ -78,11 +78,6 @@ void BoardGame::serviceAssistance() {
   if (assistance_.level() != assistanceProvider_->level()) {
     assistance_.setLevel(assistanceProvider_->level());
   }
-
-  BoardBestMoveHint hint;
-  if (assistanceProvider_->service(hint)) {
-    assistance_.showBestMoveHint(hint);
-  }
 }
 
 void BoardGame::cancelAssistance() {
@@ -123,7 +118,15 @@ BoardGameResult BoardGame::tryPlayerMove(const BoardGameProvider& gameRules,
 
     BoardMoveTargetList targets;
     gameRules.legalTargets(row, col, targets);
-    assistance_.showLegalMoveHighlights(row, col, targets);
+    if (assistance_.level() == BoardAssistanceLevel::LEGAL_MOVES) {
+      assistance_.showLegalMoveHighlights(row, col, targets);
+    } else if (assistance_.level() == BoardAssistanceLevel::BEST_MOVE && assistanceProvider_) {
+      BoardMoveTargetRanking ranking;
+      assistanceProvider_->rankTargets(row, col, targets, ranking);
+      assistance_.showBestMoveHighlights(row, col, targets, ranking);
+    } else {
+      assistance_.clear();
+    }
 
     int targetRow = -1;
     int targetCol = -1;

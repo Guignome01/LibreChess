@@ -74,7 +74,7 @@ class WiFiManagerESP32 : public IGameObserver {
   char botPlayerColor = 'w'; // 'w' or 'b' — color the local player controls in bot mode
   String botEngine = "stockfish"; // "stockfish" or "librechess"
   int assistanceLevel_ = 1; // 0=off, 1=legal moves, 2=best move
-  int assistanceDifficultyLevel_ = 4; // 1-8 level for engine-backed hints
+  int assistanceDifficultyLevel_ = 4; // 1-8 assistance provider setting
   String assistanceEngine = "librechess"; // BEST_MOVE provider; LibreChess implemented first
 
   LittleFSStorage* storage_;
@@ -123,6 +123,10 @@ class WiFiManagerESP32 : public IGameObserver {
   void saveNetworks();
   bool connectToNetwork(uint8_t index);
 
+  // --- Assistance Configuration ---
+  void loadAssistanceConfig();
+  void saveAssistanceConfig();
+
   // --- OTA Password ---
   String otaPasswordHash; // SHA-256 hex, empty = no password set
   String otaPasswordSalt; // 16-byte hex salt
@@ -145,6 +149,7 @@ class WiFiManagerESP32 : public IGameObserver {
   String getNetworksJSON();
   String getScanResultsJSON();
   String getBoardUpdateJSON();
+  String getGameSelectionConfigJSON();
   String getLichessInfoJSON();
   String getBoardSettingsJSON();
   void handleBoardEditSuccess(AsyncWebServerRequest* request);

@@ -5,14 +5,12 @@
 #include "engines/librechess/engine.h"
 #include "game.h"
 
-#include <string>
-
 // ---------------------------------------------------------------------------
-// LibreChessAssistanceProvider — board best-move callback backed by LibreChess.
+// LibreChessAssistanceProvider — lifted-piece ranking backed by Game search.
 // ---------------------------------------------------------------------------
-// This is independent from BotMode's opponent EngineProvider. It exposes only
-// the board hint callback contract and never touches LEDs, sensors, or board
-// runtime internals.
+// This is independent from BotMode's opponent EngineProvider. It ranks the
+// already-generated legal targets for the piece the player lifted and returns
+// board DTO data only; LEDs/sensors remain owned by the board program.
 // ---------------------------------------------------------------------------
 
 class LibreChessAssistanceProvider final : public BoardAssistanceProvider {
@@ -20,25 +18,16 @@ class LibreChessAssistanceProvider final : public BoardAssistanceProvider {
   explicit LibreChessAssistanceProvider(LibreChess::Game* game,
                                         int level = LibreChessEngine::DEFAULT_LEVEL,
                                         LibreChess::ILogger* logger = nullptr);
-  ~LibreChessAssistanceProvider() override;
 
   BoardAssistanceLevel level() const override { return BoardAssistanceLevel::BEST_MOVE; }
-  bool service(BoardBestMoveHint& hint) override;
-  void cancel() override;
+  bool rankTargets(int fromRow, int fromCol, const BoardMoveTargetList& targets,
+                   BoardMoveTargetRanking& ranking) override;
 
  private:
-  enum class State : uint8_t { IDLE, PENDING, DISPLAYED };
-
-  bool initializeIfNeeded();
-  bool requestBestMove();
-  bool pollBestMove(BoardBestMoveHint& hint);
-  BoardBestMoveHint mapResult(const std::string& coordinateMove) const;
+  bool ensureSearchReady();
 
   LibreChess::Game* game_;
-  LibreChessEngine provider_;
-  bool initialized_ = false;
-  State state_ = State::IDLE;
-  std::string requestedFen_;
+  LibreChess::ILogger* logger_;
 };
 
 #endif  // ENGINES_LIBRECHESS_BOARD_ASSISTANCE_H

@@ -36,6 +36,62 @@ namespace LibreChess {
 
 class Game {
  public:
+  // Display-coordinate target square requested by a caller that wants to rank
+  // only a lifted piece's legal destinations.
+  struct CandidateTarget {
+    int row = -1;
+    int col = -1;
+  };
+
+  // Fixed-capacity target list for firmware-safe candidate ranking calls.
+  struct CandidateTargetList {
+    static constexpr int MAX_TARGETS = 64;
+
+    CandidateTarget targets[MAX_TARGETS] = {};
+    int count = 0;
+
+    void clear() { count = 0; }
+    bool add(int row, int col) {
+      if (count >= MAX_TARGETS) return false;
+      targets[count++] = CandidateTarget{row, col};
+      return true;
+    }
+    bool contains(int row, int col) const {
+      for (int index = 0; index < count; ++index) {
+        if (targets[index].row == row && targets[index].col == col) return true;
+      }
+      return false;
+    }
+  };
+
+  // Searched score for one candidate destination, from side-to-move's view.
+  struct CandidateTargetScore {
+    int row = -1;
+    int col = -1;
+    int score = 0;
+  };
+
+  // Fixed-capacity score list. Duplicate destination records keep the best
+  // score, which collapses promotion alternatives for the same target square.
+  struct CandidateTargetScoreList {
+    static constexpr int MAX_SCORES = CandidateTargetList::MAX_TARGETS;
+
+    CandidateTargetScore scores[MAX_SCORES] = {};
+    int count = 0;
+
+    void clear() { count = 0; }
+    bool record(int row, int col, int score) {
+      for (int index = 0; index < count; ++index) {
+        if (scores[index].row != row || scores[index].col != col) continue;
+        if (score > scores[index].score) scores[index].score = score;
+        return true;
+      }
+      if (count >= MAX_SCORES) return false;
+      scores[count++] = CandidateTargetScore{row, col, score};
+      return true;
+    }
+  };
+
   Game(IGameStorage* storage = nullptr,
        IGameObserver* observer = nullptr,
        ILogger* logger = nullptr);
@@ -62,6 +118,16 @@ class Game {
   // The live board is not mutated by search make/unmake recursion.
   // Returns the best move, score, depth, and PV.
   search::SearchResult calculateMove(const search::SearchLimits& limits);
+
+  // Search only legal moves from `from` to the requested target squares and
+  // return the latest completed root score for each target.  The search runs
+  // on a snapshot, does not use the opening book, and leaves the live game,
+  // history, observers, and caches unchanged.  Scores are from the current
+  // side-to-move perspective, so higher is better for the lifted piece's side.
+  bool rankCandidateTargets(int fromRow, int fromCol,
+                            const CandidateTargetList& targets,
+                            uint32_t timeLimitMs,
+                            CandidateTargetScoreList& scores);
 
   // Set the platform time function (firmware passes millis()).
   // Must be called after initSearch().
@@ -135,6 +201,12 @@ class Game {
   const PositionState& positionState() const { return board_.positionState(); }
   std::string getFen() const;
   int getEvaluation() const;
+
+  // Score a candidate move on a private position copy without changing the
+  // live game, history, observers, or caches. Returns a score from the moving
+  // side's perspective, so higher is better for the side that owns `from`.
+  bool scoreCandidateMove(int fromRow, int fromCol, int toRow, int toCol,
+                          int& scoreOut, char promotion = ' ') const;
 
   // --- Convenience wrappers ---
 

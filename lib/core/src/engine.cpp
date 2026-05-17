@@ -73,6 +73,11 @@ search::SearchResult Engine::calculateMove(Position& pos,
   internalLimits.maxDepth = limits.maxDepth;
   internalLimits.softTimeMs = limits.softTimeMs;
   internalLimits.hardTimeMs = limits.hardTimeMs;
+  internalLimits.rootMoves = limits.rootMoves;
+  internalLimits.rootMoveCount = limits.rootMoveCount;
+  internalLimits.rootScores = limits.rootScores;
+  internalLimits.rootScoreCapacity = limits.rootScoreCapacity;
+  internalLimits.rootScoreCount = limits.rootScoreCount;
 
   searchStop_.store(false, std::memory_order_relaxed);
   internalLimits.stop = externalStop_ ? externalStop_ : &searchStop_;

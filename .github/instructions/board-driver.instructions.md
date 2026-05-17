@@ -326,8 +326,9 @@ use. Key namespaces:
   `BoardFeedback` consume only these mapped structures; they must not include
   `Game`, `MoveList`, `MoveResult`, concrete engine providers, or search APIs.
   `Board` owns the active assistance provider. `NONE` and `LEGAL_MOVES` are
-  fixed board providers that never call an engine. BEST_MOVE is the only
-  assistance level allowed to use an engine-backed provider.
+  fixed board providers. BEST_MOVE ranks the already-generated legal targets for
+  the lifted piece through `BoardAssistanceProvider::rankTargets()` and renders
+  green/red destination hints without importing chess logic into board code.
 - **Status animations are exposed as move-only tokens** —
   `IBoardGame::startThinkingStatus()` / `startWaitingStatus()` return
   `BoardAnimationToken` values. The caller stores the token in a member or

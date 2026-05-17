@@ -54,6 +54,7 @@ void handleGameSelection(const BoardGameSelection& selection);
 void initializeSelectedMode(AppMode mode);
 void checkForResumableGame();
 BoardAssistanceLevel assistanceLevelFromInt(int value);
+void syncBoardAssistanceConfig();
 void configureBoardAssistance();
 IBoardGame* startBoardGameProgram();
 bool startBoardCalibration();
@@ -91,6 +92,7 @@ void setup() {
   }
   wifiManager.setGameRef(&chess);
   wifiManager.begin();
+  syncBoardAssistanceConfig();
   Serial.println();
 
   // Kick off NTP time sync (non-blocking, will resolve in background)
@@ -233,9 +235,7 @@ void loop() {
     }
     if (selectedMode > 0) {
       if (selectedMode == 1 || selectedMode == 2 || selectedMode == 3) {
-        assistanceLevel = assistanceLevelFromInt(wifiManager.getAssistanceLevel());
-        assistanceDifficultyLevel = wifiManager.getAssistanceDifficultyLevel();
-        assistanceEngine = wifiManager.getAssistanceEngine();
+        syncBoardAssistanceConfig();
       }
       modeInitialized = false;
       physicalBoard.stopMenu();
@@ -384,6 +384,11 @@ void enterGameSelection() {
 }
 
 void handleGameSelection(const BoardGameSelection& selection) {
+  if (selection.mode == BoardGameSelectionMode::CHESS_MOVES ||
+      selection.mode == BoardGameSelectionMode::BOT ||
+      selection.mode == BoardGameSelectionMode::LICHESS) {
+    syncBoardAssistanceConfig();
+  }
   switch (selection.mode) {
     case BoardGameSelectionMode::CHESS_MOVES:
       Serial.println("Mode: 'Chess Moves' selected!");
@@ -413,6 +418,12 @@ void handleGameSelection(const BoardGameSelection& selection) {
     default:
       break;
   }
+}
+
+void syncBoardAssistanceConfig() {
+  assistanceLevel = assistanceLevelFromInt(wifiManager.getAssistanceLevel());
+  assistanceDifficultyLevel = wifiManager.getAssistanceDifficultyLevel();
+  assistanceEngine = wifiManager.getAssistanceEngine();
 }
 
 void initializeSelectedMode(AppMode mode) {

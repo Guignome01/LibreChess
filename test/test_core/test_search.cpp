@@ -551,6 +551,43 @@ static void test_root_reordering_consistency(void) {
   TEST_ASSERT_EQUAL_STRING(move1.c_str(), move2.c_str());
 }
 
+static void test_root_filter_reports_candidate_scores(void) {
+  Position pos;
+  pos.newGame();
+
+  Move candidates[2] = {
+      Move(makeSquare(1, 4), makeSquare(3, 4)),  // e2e4
+      Move(makeSquare(1, 3), makeSquare(3, 3)),  // d2d4
+  };
+  ScoredMove scores[2];
+  int scoreCount = 0;
+
+  search::SearchLimits limits;
+  limits.maxDepth = 2;
+  limits.rootMoves = candidates;
+  limits.rootMoveCount = 2;
+  limits.rootScores = scores;
+  limits.rootScoreCapacity = 2;
+  limits.rootScoreCount = &scoreCount;
+
+  search::SearchState state;
+  auto result = search::findBestMove(pos, limits, state);
+
+  TEST_ASSERT_FALSE(result.bestMove.isNull());
+  TEST_ASSERT_EQUAL_INT(2, scoreCount);
+
+  bool sawE4 = false;
+  bool sawD4 = false;
+  for (int scoreIndex = 0; scoreIndex < scoreCount; ++scoreIndex) {
+    const Move& move = scores[scoreIndex].move;
+    TEST_ASSERT_EQUAL_UINT8(makeSquare(1, fileOf(move.to)), move.from);
+    if (move.to == makeSquare(3, 4)) sawE4 = true;
+    if (move.to == makeSquare(3, 3)) sawD4 = true;
+  }
+  TEST_ASSERT_TRUE(sawE4);
+  TEST_ASSERT_TRUE(sawD4);
+}
+
 // ===========================================================================
 // Phase 4 — Move ordering tests
 // ===========================================================================
@@ -1257,6 +1294,7 @@ void register_search_tests() {
   RUN_TEST(test_aspiration_windows_correctness);
   RUN_TEST(test_aspiration_depth_continuity);
   RUN_TEST(test_root_reordering_consistency);
+  RUN_TEST(test_root_filter_reports_candidate_scores);
   RUN_TEST(test_ordering_reduces_nodes);
   RUN_TEST(test_ordering_finds_tactics);
   RUN_TEST(test_delta_pruning_quiet_position);

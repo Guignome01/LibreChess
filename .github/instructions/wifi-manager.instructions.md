@@ -45,6 +45,19 @@ Up to `MAX_SAVED_NETWORKS` (3) WiFi networks stored in NVS namespace `"wifiNets"
 - Loaded on boot, tried in order
 - `loadNetworks()` / `saveNetworks()` manage NVS persistence
 
+## Assistance Configuration Persistence
+
+Independent board assistance defaults are stored in NVS namespace `"assist"`:
+- `"level"` — `0` off, `1` legal moves, `2` best move
+- `"engine"` — BEST_MOVE ranking provider id (`"librechess"` today)
+- `"diff"` — accepted 1–8 provider setting retained for API compatibility
+
+`loadAssistanceConfig()` runs during `begin()` after NVS initialization and
+falls back to legal-move assistance when stored values are missing or invalid.
+`POST /gameselect` saves the validated values through `saveAssistanceConfig()`,
+and `GET /gameselect` returns the current values so `game.html` can initialize
+its controls without overwriting persisted settings with hardcoded defaults.
+
 ## Board State Relay (IGameObserver)
 
 `WiFiManagerESP32` implements `IGameObserver`. `Game` calls `onBoardStateChanged(fen, evaluation)` automatically after every board mutation.
@@ -98,7 +111,7 @@ The web server runs on the async task context, but game mutations must happen on
 ### Configuration getters (public API for main loop)
 - `getSelectedGameMode()` / `resetGameSelection()` — game mode selection
 - `getBotDifficultyLevel()` / `getBotPlayerColor()` / `getBotEngine()` — bot opponent configuration
-- `getAssistanceLevel()` / `getAssistanceEngine()` / `getAssistanceDifficultyLevel()` — independent board assistance configuration from `/gameselect`
+- `getAssistanceLevel()` / `getAssistanceEngine()` / `getAssistanceDifficultyLevel()` — independent board assistance configuration loaded from NVS and updated by `/gameselect`
 - `getLichessConfig()` / `getLichessToken()` — Lichess configuration
 - `getCurrentFen()` / `getEvaluation()` — cached board state
 - `getWiFiState()` / `isWiFiConnected()` — WiFi status

@@ -234,6 +234,40 @@ inline void reorderRootMoves(MoveList& rootMoves, const Move& bestMove) {
   }
 }
 
+inline bool matchesRootCandidate(const Move& legalMove, const Move& candidate) {
+  return legalMove.from == candidate.from && legalMove.to == candidate.to;
+}
+
+void filterRootMoves(MoveList& rootMoves, const SearchLimits& limits) {
+  if (!limits.rootMoves || limits.rootMoveCount <= 0) return;
+
+  int write = 0;
+  for (int i = 0; i < rootMoves.count; ++i) {
+    for (int j = 0; j < limits.rootMoveCount; ++j) {
+      if (!matchesRootCandidate(rootMoves.moves[i], limits.rootMoves[j])) continue;
+      rootMoves.moves[write++] = rootMoves.moves[i];
+      break;
+    }
+  }
+  rootMoves.count = write;
+}
+
+void publishRootScores(const SearchLimits& limits, const ScoredMove scores[],
+                       int scoreCount) {
+  if (limits.rootScoreCount) *limits.rootScoreCount = 0;
+  if (!limits.rootScores || limits.rootScoreCapacity <= 0) return;
+
+  const int count = std::min(scoreCount, limits.rootScoreCapacity);
+  for (int i = 0; i < count; ++i) limits.rootScores[i] = scores[i];
+  if (limits.rootScoreCount) *limits.rootScoreCount = count;
+}
+
+int16_t clampRootScore(int score) {
+  if (score > INT16_MAX) return INT16_MAX;
+  if (score < INT16_MIN) return INT16_MIN;
+  return static_cast<int16_t>(score);
+}
+
 // ---------------------------------------------------------------------------
 // Material-only evaluation from the side-to-move perspective.
 // Uses Position's incremental material accumulator — no popcount calls.
@@ -1024,6 +1058,8 @@ int negamax(Position& pos, int depth, int alpha, int beta,
 SearchResult findBestMove(Position& pos, const SearchLimits& limits,
                           SearchState& state,
                           InfoCallback info) {
+  if (limits.rootScoreCount) *limits.rootScoreCount = 0;
+
   // Advance TT generation so stale entries from previous searches are
   // replaced cheaply by the depth-preferred replacement policy.
   if (state.tt) state.tt->newGeneration();
@@ -1069,13 +1105,16 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
   movegen::generateMoves(pos.bitboards(), pos.mailbox(),
                          pos.sideToMove(), pos.positionState(),
                          rootMoves, movegen::FilterMode::ALL);
+  filterRootMoves(rootMoves, limits);
 
   if (rootMoves.count == 0) return result;  // No legal moves
 
   // --- Opening book probe ---
   // Before iterative deepening, check the internal book for a pre-computed
   // reply.  On hit, return immediately with depth=0 / nodes=0.
-  if (state.useBook) {
+  const bool restrictedRoot = limits.rootMoves && limits.rootMoveCount > 0;
+  const bool wantsRootScores = limits.rootScores && limits.rootScoreCapacity > 0;
+  if (state.useBook && !restrictedRoot && !wantsRootScores) {
     uint8_t bookFrom = 0, bookTo = 0;
     if (book::probe(pos.hash(), bookFrom, bookTo, state.bookRng)) {
       // Find the matching legal move to get correct flags.
@@ -1098,6 +1137,8 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
     result.bestMove = rootMoves.moves[0];
     result.depth = 1;
     result.nodes = 1;
+    ScoredMove singleScore{rootMoves.moves[0], 0};
+    publishRootScores(limits, &singleScore, 1);
     if (info) info(result);
     return result;
   }
@@ -1134,7 +1175,7 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
     // --- Aspiration window setup ---
     int alpha, beta;
     int delta = ASPIRATION_DELTA;
-    if (depth == 1) {
+    if (depth == 1 || wantsRootScores) {
       alpha = -INF_SCORE;
       beta  =  INF_SCORE;
     } else {
@@ -1145,21 +1186,25 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
     Move iterBestMove = rootMoves.moves[0];
     int iterBestScore = -INF_SCORE;
     int secondBestScore = -INF_SCORE;
+    ScoredMove iterRootScores[MAX_MOVES];
+    int iterRootScoreCount = 0;
 
     // Aspiration re-search loop: widen the window progressively on
     // fail-low / fail-high, doubling `delta` each time until the score
     // falls within bounds (or overflows to full width).
     //
-    // IMPORTANT: the root move loop updates `alpha` as better moves are
-    // found (standard alpha-beta).  We must compare the final score against
-    // the *original* aspiration bounds, not the modified alpha, to decide
-    // whether a re-search is needed.
+    // IMPORTANT: normal best-move searches update `alpha` as better root
+    // moves are found (standard alpha-beta).  We must compare the final score
+    // against the *original* aspiration bounds, not the modified alpha, to
+    // decide whether a re-search is needed. Root-score searches keep full
+    // windows instead so all candidate scores are comparable.
     while (true) {
       int aspAlpha = alpha;  // snapshot before root search modifies alpha
       int aspBeta  = beta;
       iterBestMove  = rootMoves.moves[0];
       iterBestScore = -INF_SCORE;
       secondBestScore = -INF_SCORE;
+      iterRootScoreCount = 0;
 
       for (int i = 0; i < rootMoves.count; ++i) {
         Piece movingPiece = pos.mailbox()[rootMoves.moves[i].from];
@@ -1168,10 +1213,17 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
         // lookup resolves the correct countermove / recapture context.
         rootSS->movedPiece = movingPiece;
         rootSS->movedTo    = static_cast<int16_t>(rootMoves.moves[i].to);
-        int score = -negamax(pos, depth - 1, -beta, -alpha,
+        const int rootAlpha = wantsRootScores ? -INF_SCORE : alpha;
+        const int rootBeta = wantsRootScores ? INF_SCORE : beta;
+        int score = -negamax(pos, depth - 1, -rootBeta, -rootAlpha,
                              rootSS + 1, state);
         pos.unmake(rootMoves.moves[i], undo);
         if (state.stopped) break;
+
+        if (iterRootScoreCount < MAX_MOVES) {
+          iterRootScores[iterRootScoreCount++] =
+              ScoredMove{rootMoves.moves[i], clampRootScore(score)};
+        }
 
         if (score > iterBestScore) {
           secondBestScore = iterBestScore;
@@ -1181,7 +1233,7 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
           // Build root PV: this root move + child PV from ply 1.
           collectPV(rootSS, packMove(rootMoves.moves[i]));
 
-          if (score > alpha) alpha = score;
+          if (!wantsRootScores && score > alpha) alpha = score;
         } else if (score > secondBestScore) {
           secondBestScore = score;
         }
@@ -1237,6 +1289,7 @@ SearchResult findBestMove(Position& pos, const SearchLimits& limits,
     result.depth    = depth;
     result.nodes    = state.nodes;
     prevScore       = iterBestScore;
+    publishRootScores(limits, iterRootScores, iterRootScoreCount);
 
     // Unpack principal variation from this iteration's PV table.
     result.pvLength = std::max(0, std::min(static_cast<int>(rootSS->pvLength),

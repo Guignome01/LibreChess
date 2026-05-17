@@ -21,9 +21,10 @@ enum class BoardAssistanceLevel : uint8_t {
   BEST_MOVE = 2,
 };
 
-/// Return true only for assistance modes that need engine-backed work.
+/// Return true only for assistance modes that need asynchronous engine work.
 inline constexpr bool boardAssistanceUsesEngine(BoardAssistanceLevel level) {
-  return level == BoardAssistanceLevel::BEST_MOVE;
+  (void)level;
+  return false;
 }
 
 /// Board-local piece colour. Deliberately independent from engine/core colour
@@ -171,17 +172,25 @@ struct BoardMoveFeedbackData {
   int checkKingCol = -1;
 };
 
-/// Best-move hint returned by an optional assistance provider.
-struct BoardBestMoveHint {
+/// Ranking of the legal destination squares for one lifted piece.
+struct BoardMoveTargetRanking {
   bool valid = false;
-  int fromRow = -1;
-  int fromCol = -1;
-  int toRow = -1;
-  int toCol = -1;
-  bool capture = false;
-  bool enPassant = false;
-  int capturedRow = -1;
-  int capturedCol = -1;
+  int bestRow = -1;
+  int bestCol = -1;
+  int worstRow = -1;
+  int worstCol = -1;
+
+  bool hasBest() const { return valid && boardSquareInBounds(bestRow, bestCol); }
+  bool hasWorst() const {
+    return valid && boardSquareInBounds(worstRow, worstCol) &&
+           (worstRow != bestRow || worstCol != bestCol);
+  }
+  bool isBest(int row, int col) const {
+    return hasBest() && row == bestRow && col == bestCol;
+  }
+  bool isWorst(int row, int col) const {
+    return hasWorst() && row == worstRow && col == worstCol;
+  }
 };
 
 #endif  // BOARD_TYPES_H

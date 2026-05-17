@@ -21,7 +21,8 @@ window.Api = {
     saveLichessToken: (token) => postApi('/lichess', `token=${encodeURIComponent(token)}`),
 
     // --- Game ---
-    selectGame: (mode, playerColor, difficulty, engine, assistanceLevel = 'legal', assistanceEngine = 'librechess', assistanceDifficulty = 4) => {
+    getGameSelectionConfig: () => getApi('/gameselect').then((r) => r.json()),
+    selectGame: (mode, playerColor, difficulty, engine, assistanceLevel = 'legal', assistanceEngine = 'librechess', assistanceDifficulty) => {
         const params = new URLSearchParams({ gamemode: mode });
         if (mode === 2) {
             params.set('playerColor', playerColor);
@@ -31,7 +32,9 @@ window.Api = {
         if (mode === 1 || mode === 2 || mode === 3) {
             params.set('assistanceLevel', assistanceLevel);
             params.set('assistanceEngine', assistanceEngine);
-            params.set('assistanceDifficulty', assistanceDifficulty);
+            if (assistanceDifficulty !== undefined) {
+                params.set('assistanceDifficulty', assistanceDifficulty);
+            }
         }
         return postApi('/gameselect', params.toString()).then((r) => r.json());
     },

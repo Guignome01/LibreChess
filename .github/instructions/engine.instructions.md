@@ -93,12 +93,16 @@ Each `requestMove()` spawns a FreeRTOS task (64 KiB stack) that:
 ## LibreChessAssistanceProvider
 
 `src/engines/librechess/assistance.*` implements `BoardAssistanceProvider` for
-BEST_MOVE board assistance. It wraps an independent `LibreChessEngine` instance,
-lazily initializes/reuses `Game` search resources, requests the best move for
-the current FEN, discards stale results if the FEN changed while the task was
-running, and maps the returned coordinate move into a `BoardBestMoveHint`. It is
-owned by `Board`, not by `BotMode`, so it is independent from the engine
-currently playing the opponent side.
+BEST_MOVE board assistance. It receives the lifted source square plus the
+board-generated legal target list, initializes/reuses Game-owned search
+resources, and runs one synchronous root-filtered search with a fixed 1 second
+budget via `Game::rankCandidateTargets()`. It returns a
+`BoardMoveTargetRanking` for the best and worst destinations from the lifted
+piece's legal targets, not a global best move for the whole position. If search
+resources cannot be initialized or no searched scores are produced, it falls
+back to `Game::scoreCandidateMove()` for one-ply static ranking. It is owned by
+`Board`, not by `BotMode`, so it is independent from the engine currently
+playing the opponent side.
 
 ## API Layer
 
@@ -124,7 +128,7 @@ Max depth 8 + extensions (~6) + 16 QS plies ≈ 45 KiB (fits in 64 KiB). See `do
 
 ## Design Decisions
 
-- **Providers never touch hardware** — opponent providers return `EngineResult` structs, and assistance providers return `BoardBestMoveHint` data through the board assistance interface. All LED, sensor, and animation logic stays in the board subsystem. This means providers can be tested or replaced without any hardware dependency, and game modes control the flow without exposing hardware to providers.
+- **Providers never touch hardware** — opponent providers return `EngineResult` structs, and assistance providers return board DTOs such as `BoardMoveTargetRanking` through the board assistance interface. All LED, sensor, and animation logic stays in the board subsystem. This means providers can be tested or replaced without any hardware dependency, and game modes control the flow without exposing hardware to providers.
 
 - **Heap-allocated task contexts** — `BaseTaskContext` is always allocated with `new(std::nothrow)` before `spawnTask()` and `delete`'d in `pollResult()`/`finishTask()`. Never stack-allocate: the FreeRTOS task outlives the spawning function's scope. Allocation or `xTaskCreate()` failure publishes an immediate `EngineResult::NONE` so `BotMode` can retry/abort instead of waiting forever.
 

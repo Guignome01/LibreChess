@@ -252,6 +252,20 @@ struct SearchLimits {
   uint32_t hardTimeMs    = 0;         // Hard time limit: abort mid-search
                                       //   (0 = no limit)
   std::atomic<bool>* stop = nullptr;  // External cancellation flag (nullable)
+
+  // Optional root move restriction. When set, findBestMove() searches only
+  // legal root moves whose from/to squares match an entry in this list. Flags
+  // are ignored so promotion alternatives for the same target square remain
+  // available to the search.
+  const Move* rootMoves = nullptr;
+  int rootMoveCount = 0;
+
+  // Optional per-root score sink. Filled after each completed iteration with
+  // scores from the latest complete root search, in the current root move
+  // order. Callers may pass nullptr to ignore root scores.
+  ScoredMove* rootScores = nullptr;
+  int rootScoreCapacity = 0;
+  int* rootScoreCount = nullptr;
 };
 
 // ---------------------------------------------------------------------------

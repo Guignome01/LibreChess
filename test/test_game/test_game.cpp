@@ -614,6 +614,37 @@ void test_game_eval_updates_after_capture(void) {
   TEST_ASSERT_TRUE(evalAfter > evalBefore);
 }
 
+void test_game_score_candidate_move_does_not_mutate_game(void) {
+  setUpGame();
+  game.loadFEN("q3k3/8/8/8/8/8/8/R3K3 w - - 0 1");
+  std::string fenBefore = game.getFen();
+  int evalBefore = game.getEvaluation();
+  int score = 0;
+
+  TEST_ASSERT_TRUE(game.scoreCandidateMove(7, 0, 0, 0, score));  // Rxa8+
+  TEST_ASSERT_TRUE(score > evalBefore);
+  TEST_ASSERT_EQUAL_STRING(fenBefore.c_str(), game.getFen().c_str());
+  TEST_ASSERT_EQUAL_INT(evalBefore, game.getEvaluation());
+  TEST_ASSERT_EQUAL_INT(0, game.history().moveCount());
+}
+
+void test_game_score_candidate_move_is_side_relative(void) {
+  setUpGame();
+  game.loadFEN("r3k3/8/8/8/8/8/8/Q3K3 b - - 0 1");
+  int score = 0;
+
+  TEST_ASSERT_TRUE(game.scoreCandidateMove(0, 0, 7, 0, score));  // Rxa1+
+  TEST_ASSERT_TRUE(score > 0);
+}
+
+void test_game_score_candidate_move_rejects_invalid_move(void) {
+  setUpGame();
+  int score = 123;
+
+  TEST_ASSERT_FALSE(game.scoreCandidateMove(4, 4, 3, 4, score));
+  TEST_ASSERT_EQUAL_INT(123, score);
+}
+
 void test_game_fen_updates_after_move(void) {
   setUpGame();
   std::string fenBefore = game.getFen();
@@ -675,6 +706,44 @@ void test_game_search_diagnostics_report_initialized_resources(void) {
   TEST_ASSERT_TRUE(g.searchHashTablesReady());
   TEST_ASSERT_FALSE(g.searchHashTableAllocationFailed());
   TEST_ASSERT_EQUAL_INT(0, logger.errorCount);
+}
+
+static int candidateRankingTimerCalls = 0;
+static uint32_t candidateRankingTimer(void) {
+  return candidateRankingTimerCalls++ > 0 ? 1000 : 0;
+}
+
+void test_game_rank_candidate_targets_search_does_not_mutate_game(void) {
+  Game g;
+  g.newGame();
+  g.initSearch(512);
+  candidateRankingTimerCalls = 0;
+  g.setTimeFunc(candidateRankingTimer);
+
+  Game::CandidateTargetList targets;
+  TEST_ASSERT_TRUE(targets.add(5, 4));  // e3
+  TEST_ASSERT_TRUE(targets.add(4, 4));  // e4
+
+  const std::string fenBefore = g.getFen();
+  const int evalBefore = g.getEvaluation();
+  Game::CandidateTargetScoreList scores;
+
+  TEST_ASSERT_TRUE(g.rankCandidateTargets(6, 4, targets, 1, scores));
+  TEST_ASSERT_EQUAL_INT(2, scores.count);
+  TEST_ASSERT_EQUAL_STRING(fenBefore.c_str(), g.getFen().c_str());
+  TEST_ASSERT_EQUAL_INT(evalBefore, g.getEvaluation());
+  TEST_ASSERT_EQUAL_INT(0, g.history().moveCount());
+
+  bool sawE3 = false;
+  bool sawE4 = false;
+  for (int scoreIndex = 0; scoreIndex < scores.count; ++scoreIndex) {
+    if (scores.scores[scoreIndex].row == 5 && scores.scores[scoreIndex].col == 4)
+      sawE3 = true;
+    if (scores.scores[scoreIndex].row == 4 && scores.scores[scoreIndex].col == 4)
+      sawE4 = true;
+  }
+  TEST_ASSERT_TRUE(sawE3);
+  TEST_ASSERT_TRUE(sawE4);
 }
 
 // ---------------------------------------------------------------------------
@@ -775,6 +844,9 @@ void register_game_tests() {
   RUN_TEST(test_game_fen_cache_consistent);
   RUN_TEST(test_game_eval_cache_consistent);
   RUN_TEST(test_game_eval_updates_after_capture);
+  RUN_TEST(test_game_score_candidate_move_does_not_mutate_game);
+  RUN_TEST(test_game_score_candidate_move_is_side_relative);
+  RUN_TEST(test_game_score_candidate_move_rejects_invalid_move);
   RUN_TEST(test_game_fen_updates_after_move);
   RUN_TEST(test_game_cache_invalidated_on_undo);
   RUN_TEST(test_game_cache_invalidated_on_load_fen);
@@ -782,6 +854,7 @@ void register_game_tests() {
   // Search facade
   RUN_TEST(test_game_calculate_move_reported_master_position_applicable);
   RUN_TEST(test_game_search_diagnostics_report_initialized_resources);
+  RUN_TEST(test_game_rank_candidate_targets_search_does_not_mutate_game);
 
   // Display-coordinate helpers (game/types.h)
   RUN_TEST(test_display_rankChar_all_rows);

@@ -40,9 +40,11 @@ class BoardAssistance : private BoardVisual {
   /// captured pawn. Cleared when the game program repaints its surface.
   void showLegalMoveHighlights(int fromRow, int fromCol, const BoardMoveTargetList& targets);
 
-  /// Highlight one best-move suggestion returned by the configured assistance
-  /// callback. Does not request or poll an engine itself.
-  void showBestMoveHint(const BoardBestMoveHint& hint);
+  /// Highlight legal destinations ranked for the lifted piece. Cyan = source,
+  /// green = best destination, red = worst destination, white = other legal
+  /// destinations, purple = en-passant captured pawn.
+  void showBestMoveHighlights(int fromRow, int fromCol, const BoardMoveTargetList& targets,
+                              const BoardMoveTargetRanking& ranking);
 
   /// Single red blink at (row, col) prompting the user to place a captured
   /// piece off-board.

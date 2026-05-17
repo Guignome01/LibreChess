@@ -23,9 +23,11 @@ Fail-soft negamax + alpha-beta + quiescence with iterative deepening. Stateless 
 - Takes `Position&` (by ref — uses make/unmake directly), `SearchLimits`, `SearchState&` (required — caller must own, and must set infrastructure fields: `timeFunc`, `tt`, `pawnHash`, `evalHash` before calling), optional `InfoCallback`
 - Returns `SearchResult {bestMove, score, depth, nodes, pv[MAX_PV_LEN], pvLength}`
 - `limits.maxDepth` is normalized inside `findBestMove()` to `[1, MAX_PLY]`. External callers may still clamp earlier for UI/protocol feedback, but the search entry point is the final guard because LMR tables and search stacks are fixed-size.
+- `limits.rootMoves/rootMoveCount` optionally restrict the root search to legal moves with matching from/to squares; flags are ignored so promotion alternatives for a target square remain searchable. Root-restricted searches skip the opening book because callers need searched scores, not a preselected book move.
+- `limits.rootScores/rootScoreCapacity/rootScoreCount` optionally receives the latest completed iteration's root scores as `ScoredMove` entries. When root scores are requested, root moves are searched with full windows so candidate scores are comparable. This is used by Game-level lifted-piece assistance to rank candidate destinations with one shared time budget.
 
 **Types**:
-- `SearchLimits` — `maxDepth`, `softTimeMs`, `hardTimeMs`, `stop: atomic<bool>*`
+- `SearchLimits` — `maxDepth`, `softTimeMs`, `hardTimeMs`, `stop: atomic<bool>*`, optional root filter/scores (`rootMoves`, `rootMoveCount`, `rootScores`, `rootScoreCapacity`, `rootScoreCount`)
 - `TimeFunc = uint32_t (*)(void)` — platform-agnostic time function
 - `InfoCallback = void (*)(const SearchResult&)` — per-iteration callback
 

@@ -394,6 +394,87 @@ int Game::getEvaluation() const {
   return cachedEval_;
 }
 
+bool Game::scoreCandidateMove(int fromRow, int fromCol, int toRow, int toCol,
+                              int& scoreOut, char promotion) const {
+  if (!validRowCol(fromRow, fromCol) || !validRowCol(toRow, toCol)) return false;
+
+  const Square from = rowColToSquare(fromRow, fromCol);
+  const Square to = rowColToSquare(toRow, toCol);
+  const Piece movingPiece = board_.getSquare(from);
+  if (movingPiece == Piece::NONE) return false;
+  const Color mover = piece::pieceColor(movingPiece);
+
+  Position candidate = board_;
+  MoveResult result = candidate.makeMove(from, to, promotion);
+  if (!result.valid()) return false;
+
+  if (result.gameResult == GameResult::CHECKMATE) {
+    const bool moverWon = result.winnerColor == (mover == Color::WHITE ? 'w' : 'b');
+    scoreOut = moverWon ? 30000 : -30000;
+    return true;
+  }
+  if (result.gameResult != GameResult::IN_PROGRESS) {
+    scoreOut = 0;
+    return true;
+  }
+
+  const int whiteRelative = eval::evaluatePosition(candidate);
+  scoreOut = (mover == Color::WHITE) ? whiteRelative : -whiteRelative;
+  return true;
+}
+
+bool Game::rankCandidateTargets(int fromRow, int fromCol,
+                                const CandidateTargetList& targets,
+                                uint32_t timeLimitMs,
+                                CandidateTargetScoreList& scores) {
+  scores.clear();
+  if (!engine_ || gameOver_ || targets.count <= 0) return false;
+  if (!validRowCol(fromRow, fromCol)) return false;
+
+  const Square from = rowColToSquare(fromRow, fromCol);
+  if (board_.getSquare(from) == Piece::NONE) return false;
+
+  MoveList legalMoves;
+  board_.getPossibleMoves(from, legalMoves);
+
+  Move rootCandidates[MAX_MOVES];
+  int rootCandidateCount = 0;
+  for (int moveIndex = 0; moveIndex < legalMoves.count; ++moveIndex) {
+    const Move& move = legalMoves.moves[moveIndex];
+    const int toRow = squareToRow(move.to);
+    const int toCol = squareToCol(move.to);
+    if (!targets.contains(toRow, toCol)) continue;
+    rootCandidates[rootCandidateCount++] = move;
+  }
+  if (rootCandidateCount == 0) return false;
+
+  ScoredMove rootScores[MAX_MOVES];
+  int rootScoreCount = 0;
+
+  search::SearchLimits limits;
+  limits.maxDepth = search::MAX_PLY;
+  limits.softTimeMs = timeLimitMs;
+  limits.hardTimeMs = timeLimitMs;
+  limits.rootMoves = rootCandidates;
+  limits.rootMoveCount = rootCandidateCount;
+  limits.rootScores = rootScores;
+  limits.rootScoreCapacity = MAX_MOVES;
+  limits.rootScoreCount = &rootScoreCount;
+
+  Position searchBoard = board_;
+  engine_->calculateMove(searchBoard, limits);
+  if (rootScoreCount <= 0) return false;
+
+  for (int scoreIndex = 0; scoreIndex < rootScoreCount; ++scoreIndex) {
+    const Move& move = rootScores[scoreIndex].move;
+    const int toRow = squareToRow(move.to);
+    const int toCol = squareToCol(move.to);
+    if (!targets.contains(toRow, toCol)) continue;
+    scores.record(toRow, toCol, rootScores[scoreIndex].score);
+  }
+  return scores.count > 0;
+}
+
 void Game::invalidateCache() {
   fenDirty_ = true;
   evalDirty_ = true;

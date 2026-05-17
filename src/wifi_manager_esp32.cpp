@@ -15,6 +15,36 @@
 
 static const char* INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 
+namespace {
+
+constexpr uint8_t ASSISTANCE_NONE = 0;
+constexpr uint8_t ASSISTANCE_LEGAL = 1;
+constexpr uint8_t ASSISTANCE_BEST = 2;
+constexpr uint8_t ASSISTANCE_DEFAULT_DIFFICULTY = 4;
+
+const char* assistanceLevelName(int level) {
+  switch (level) {
+    case ASSISTANCE_NONE:
+      return "none";
+    case ASSISTANCE_BEST:
+      return "best";
+    case ASSISTANCE_LEGAL:
+    default:
+      return "legal";
+  }
+}
+
+uint8_t clampAssistanceLevel(uint8_t level) {
+  return (level <= ASSISTANCE_BEST) ? level : ASSISTANCE_LEGAL;
+}
+
+uint8_t clampAssistanceDifficulty(int level) {
+  return (level >= 1 && level <= 8) ? static_cast<uint8_t>(level)
+                                    : ASSISTANCE_DEFAULT_DIFFICULTY;
+}
+
+}  // namespace
+
 // --- Response helpers ---
 
 static void sendJsonOk(AsyncWebServerRequest* request, const char* key = nullptr, const char* value = nullptr) {
@@ -60,6 +90,7 @@ void WiFiManagerESP32::begin() {
   } else {
     loadNetworks();
     loadOtaPassword();
+    loadAssistanceConfig();
 
     // Load Lichess token
     prefs.begin("lichess", false);
@@ -155,6 +186,7 @@ void WiFiManagerESP32::begin() {
   server.on("/wifi/scan", HTTP_GET, [this](AsyncWebServerRequest* request) { this->handleWiFiScan(request); });
 
   // Game and settings endpoints
+  server.on("/gameselect", HTTP_GET, [this](AsyncWebServerRequest* request) { request->send(200, "application/json", this->getGameSelectionConfigJSON()); });
   server.on("/gameselect", HTTP_POST, [this](AsyncWebServerRequest* request) { this->handleGameSelection(request); });
   server.on("/lichess", HTTP_GET, [this](AsyncWebServerRequest* request) { request->send(200, "application/json", this->getLichessInfoJSON()); });
   server.on("/lichess", HTTP_POST, [this](AsyncWebServerRequest* request) { this->handleSaveLichessToken(request); });
@@ -339,6 +371,34 @@ void WiFiManagerESP32::saveNetworks() {
     prefs.putString(("ssid" + String(i)).c_str(), savedNetworks[i].ssid);
     prefs.putString(("pass" + String(i)).c_str(), savedNetworks[i].password);
   }
+  prefs.end();
+}
+
+void WiFiManagerESP32::loadAssistanceConfig() {
+  prefs.begin("assist", true);
+  assistanceLevel_ = clampAssistanceLevel(prefs.getUChar("level", assistanceLevel_));
+  assistanceEngine = prefs.getString("engine", assistanceEngine);
+  assistanceDifficultyLevel_ = clampAssistanceDifficulty(
+      prefs.getUChar("diff", assistanceDifficultyLevel_));
+  prefs.end();
+
+  assistanceEngine.toLowerCase();
+  if (assistanceEngine != "librechess") assistanceEngine = "librechess";
+
+  Serial.printf("Assistance config loaded: level=%d, engine=%s, levelIndex=%d\n",
+                assistanceLevel_, assistanceEngine.c_str(), assistanceDifficultyLevel_);
+}
+
+void WiFiManagerESP32::saveAssistanceConfig() {
+  if (!SystemUtils::ensureNvsInitialized()) {
+    Serial.println("NVS init failed - assistance config not saved");
+    return;
+  }
+
+  prefs.begin("assist", false);
+  prefs.putUChar("level", clampAssistanceLevel(static_cast<uint8_t>(assistanceLevel_)));
+  prefs.putString("engine", assistanceEngine);
+  prefs.putUChar("diff", clampAssistanceDifficulty(assistanceDifficultyLevel_));
   prefs.end();
 }
 
@@ -653,6 +713,16 @@ String WiFiManagerESP32::getBoardUpdateJSON() {
   return output;
 }
 
+String WiFiManagerESP32::getGameSelectionConfigJSON() {
+  JsonDocument doc;
+  doc["assistanceLevel"] = assistanceLevelName(assistanceLevel_);
+  doc["assistanceEngine"] = assistanceEngine;
+  doc["assistanceDifficulty"] = assistanceDifficultyLevel_;
+  String output;
+  serializeJson(doc, output);
+  return output;
+}
+
 void WiFiManagerESP32::handleBoardEditSuccess(AsyncWebServerRequest* request) {
   if (request->hasArg("fen")) {
     pendingFenEdit = request->arg("fen");
@@ -727,6 +797,7 @@ void WiFiManagerESP32::handleGameSelection(AsyncWebServerRequest* request) {
     Serial.println("Lichess mode selected via web");
   }
   if (mode == 1 || mode == 2 || mode == 3) {
+    saveAssistanceConfig();
     Serial.printf("Assistance configuration received: level=%d, engine=%s, levelIndex=%d\n",
                   assistanceLevel_, assistanceEngine.c_str(), assistanceDifficultyLevel_);
   }

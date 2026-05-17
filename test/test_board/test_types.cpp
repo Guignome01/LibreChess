@@ -7,14 +7,15 @@
 
 namespace {
 
-void test_assistance_engine_gate_only_for_best_move() {
+void test_assistance_engine_gate_disabled_for_synchronous_modes() {
   TEST_ASSERT_FALSE(boardAssistanceUsesEngine(BoardAssistanceLevel::NONE));
   TEST_ASSERT_FALSE(boardAssistanceUsesEngine(BoardAssistanceLevel::LEGAL_MOVES));
-  TEST_ASSERT_TRUE(boardAssistanceUsesEngine(BoardAssistanceLevel::BEST_MOVE));
+  TEST_ASSERT_FALSE(boardAssistanceUsesEngine(BoardAssistanceLevel::BEST_MOVE));
 }
 
-void test_fixed_assistance_providers_do_not_service_engine_hints() {
-  BoardBestMoveHint hint;
+void test_fixed_assistance_providers_do_not_rank_targets() {
+  BoardMoveTargetList targets;
+  BoardMoveTargetRanking ranking;
   BoardNoAssistanceProvider none;
   BoardLegalMoveAssistanceProvider legal;
 
@@ -22,8 +23,28 @@ void test_fixed_assistance_providers_do_not_service_engine_hints() {
                           static_cast<uint8_t>(none.level()));
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(BoardAssistanceLevel::LEGAL_MOVES),
                           static_cast<uint8_t>(legal.level()));
-  TEST_ASSERT_FALSE(none.service(hint));
-  TEST_ASSERT_FALSE(legal.service(hint));
+  TEST_ASSERT_FALSE(none.rankTargets(6, 4, targets, ranking));
+  TEST_ASSERT_FALSE(ranking.valid);
+  ranking.valid = true;
+  TEST_ASSERT_FALSE(legal.rankTargets(6, 4, targets, ranking));
+  TEST_ASSERT_FALSE(ranking.valid);
+}
+
+void test_target_ranking_helpers_ignore_missing_worst_on_single_move() {
+  BoardMoveTargetRanking ranking;
+  TEST_ASSERT_FALSE(ranking.hasBest());
+  TEST_ASSERT_FALSE(ranking.hasWorst());
+
+  ranking.valid = true;
+  ranking.bestRow = 4;
+  ranking.bestCol = 4;
+  ranking.worstRow = 4;
+  ranking.worstCol = 4;
+
+  TEST_ASSERT_TRUE(ranking.hasBest());
+  TEST_ASSERT_FALSE(ranking.hasWorst());
+  TEST_ASSERT_TRUE(ranking.isBest(4, 4));
+  TEST_ASSERT_FALSE(ranking.isWorst(4, 4));
 }
 
 void test_target_list_merges_duplicate_destinations() {
@@ -63,8 +84,9 @@ void test_target_list_rejects_out_of_bounds() {
 }  // namespace
 
 void register_board_type_tests() {
-  RUN_TEST(test_assistance_engine_gate_only_for_best_move);
-  RUN_TEST(test_fixed_assistance_providers_do_not_service_engine_hints);
+  RUN_TEST(test_assistance_engine_gate_disabled_for_synchronous_modes);
+  RUN_TEST(test_fixed_assistance_providers_do_not_rank_targets);
+  RUN_TEST(test_target_ranking_helpers_ignore_missing_worst_on_single_move);
   RUN_TEST(test_target_list_merges_duplicate_destinations);
   RUN_TEST(test_target_list_finds_en_passant_capture_square);
   RUN_TEST(test_target_list_rejects_out_of_bounds);

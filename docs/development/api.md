@@ -12,6 +12,7 @@ LibreChess exposes a REST-like HTTP API from the ESP32's async web server. All e
 | `GET` | `/board-settings` | LED brightness and dimming settings |
 | `POST` | `/board-settings` | Save LED settings |
 | `POST` | `/board-calibrate` | Trigger recalibration on next reboot |
+| `GET` | `/gameselect` | Current persisted game-selection defaults |
 | `POST` | `/gameselect` | Select a game mode |
 | `POST` | `/resign` | Submit a resign request |
 | `POST` | `/nav` | Navigate move history (undo/redo/first/last) |
@@ -104,9 +105,24 @@ Queues board recalibration on the main loop. The board-owned calibration program
 
 ## Game
 
+### `GET /gameselect`
+
+Returns persisted game-selection defaults used to initialize the web UI.
+Assistance settings are stored in ESP32 NVS and survive reboot.
+
+**Response** (JSON):
+```json
+{
+  "assistanceLevel": "legal",
+  "assistanceEngine": "librechess",
+  "assistanceDifficulty": 4
+}
+```
+
 ### `POST /gameselect`
 
-Select a game mode from the web UI.
+Select a game mode from the web UI. For play modes, validated assistance
+settings are persisted to NVS after a successful request.
 
 **Body** (`application/x-www-form-urlencoded`):
 | Parameter | Required | Description |
@@ -116,10 +132,10 @@ Select a game mode from the web UI.
 | `difficulty` | Bot only | Difficulty level (1–8) |
 | `engine` | Bot only | Opponent engine: `stockfish` (default) or `librechess` |
 | `assistanceLevel` | Play modes only | `none`, `legal`, or `best` |
-| `assistanceEngine` | Optional | BEST_MOVE hint engine. `librechess` is currently the only implemented value. |
-| `assistanceDifficulty` | Optional | Difficulty level (1–8) for engine-backed hints |
+| `assistanceEngine` | Optional | BEST_MOVE ranking provider. `librechess` is currently the only implemented value. |
+| `assistanceDifficulty` | Optional | Accepted for the assistance config; LibreChess BEST_MOVE currently uses a fixed 1 s lifted-piece search and ignores it. |
 
-`none` and `legal` assistance do not call an engine. `best` assistance currently requires `assistanceEngine=librechess`; unsupported engines return `400 Bad Request`.
+`none` and `legal` assistance do not rank targets. `best` assistance currently requires `assistanceEngine=librechess`; unsupported engines return `400 Bad Request`. On the board, `best` highlights the legal destinations for the lifted piece, coloring the best searched destination green and the worst searched destination red.
 
 **Response** (JSON): `{ "status": "ok" }` or error message.
 
@@ -353,6 +369,7 @@ The `Api` object in `provider.js` maps to backend endpoints:
 | `Api.calibrate()` | `POST /board-calibrate` | — |
 | `Api.getLichessInfo()` | `GET /lichess` | — |
 | `Api.saveLichessToken(token)` | `POST /lichess` | Token |
+| `Api.getGameSelectionConfig()` | `GET /gameselect` | — |
 | `Api.selectGame(mode, color, difficulty, engine, assistanceLevel, assistanceEngine, assistanceDifficulty)` | `POST /gameselect` | Mode, opponent config, and independent assistance config |
 | `Api.resign()` | `POST /resign` | — |
 | `Api.getGames()` | `GET /games` | — |

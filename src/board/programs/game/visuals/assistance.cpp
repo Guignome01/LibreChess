@@ -118,17 +118,27 @@ void BoardAssistance::showLegalMoveHighlights(int fromRow, int fromCol,
   }
 }
 
-void BoardAssistance::showBestMoveHint(const BoardBestMoveHint& hint) {
+void BoardAssistance::showBestMoveHighlights(int fromRow, int fromCol,
+                                             const BoardMoveTargetList& targets,
+                                             const BoardMoveTargetRanking& ranking) {
   auto g = runtime_.lockCanvas();
   BoardCanvasHandle surface = writableSurface(g.canvas);
   g.canvas.clearSurface(surface);
-  if (level_ != BoardAssistanceLevel::BEST_MOVE || !hint.valid) return;
+  if (level_ != BoardAssistanceLevel::BEST_MOVE) return;
 
-  g.canvas.setPixel(surface, hint.fromRow, hint.fromCol, LedColors::Cyan);
-  g.canvas.setPixel(surface, hint.toRow, hint.toCol, hint.capture ? LedColors::Red
-                                                                  : LedColors::White);
-  if (hint.enPassant && hint.capturedRow >= 0 && hint.capturedCol >= 0) {
-    g.canvas.setPixel(surface, hint.capturedRow, hint.capturedCol, LedColors::Purple);
+  g.canvas.setPixel(surface, fromRow, fromCol, LedColors::Cyan);
+  for (uint8_t i = 0; i < targets.count; ++i) {
+    const BoardMoveTarget& target = targets.targets[i];
+    LedRGB color = LedColors::White;
+    if (ranking.isBest(target.row, target.col)) {
+      color = LedColors::Green;
+    } else if (ranking.isWorst(target.row, target.col)) {
+      color = LedColors::Red;
+    }
+    g.canvas.setPixel(surface, target.row, target.col, color);
+    if (target.enPassant) {
+      g.canvas.setPixel(surface, target.capturedRow, target.capturedCol, LedColors::Purple);
+    }
   }
 }
 
