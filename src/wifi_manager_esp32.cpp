@@ -78,12 +78,20 @@ WiFiManagerESP32* WiFiManagerESP32::instance = nullptr;
 // ===========================
 
 WiFiManagerESP32::WiFiManagerESP32(Board* board, LittleFSStorage* st)
-    : board_(board), storage_(st), server(AP_PORT), gameMode("0"), lichessToken(""), botPlayerColor('w'),
-      currentFen(INITIAL_FEN), hasPendingEdit(false), boardEvaluation(0.0f) {}
+    : server(AP_PORT), gameMode("0"), lichessToken(""), botPlayerColor('w'),
+      storage_(st), board_(board), currentFen(INITIAL_FEN), boardEvaluation(0.0f),
+      hasPendingEdit(false) {}
 
 void WiFiManagerESP32::begin() {
   Serial.println("=== Starting LibreChess WiFi Manager (ESP32) ===");
   instance = this;
+
+  if (boardStateMutex_ == nullptr) {
+    boardStateMutex_ = xSemaphoreCreateMutex();
+    if (boardStateMutex_ == nullptr) {
+      Serial.println("WiFiManagerESP32: board state cache mutex allocation failed");
+    }
+  }
 
   if (!SystemUtils::ensureNvsInitialized()) {
     Serial.println("NVS init failed - credentials not loaded");
@@ -701,13 +709,30 @@ void WiFiManagerESP32::handleWiFiScan(AsyncWebServerRequest* request) {
 // ===========================
 
 String WiFiManagerESP32::getBoardUpdateJSON() {
+  std::string fen;
+  float evaluation = 0.0f;
+  int moveIndex = 0;
+  int moveCount = 0;
+  bool canUndo = false;
+  bool canRedo = false;
+
+  if (lockBoardStateCache()) {
+    fen = currentFen;
+    evaluation = boardEvaluation;
+    moveIndex = cachedMoveIndex_;
+    moveCount = cachedMoveCount_;
+    canUndo = cachedCanUndo_;
+    canRedo = cachedCanRedo_;
+    unlockBoardStateCache();
+  }
+
   JsonDocument doc;
-  doc["fen"] = currentFen;
-  doc["evaluation"] = serialized(String(boardEvaluation, 2));
-  doc["moveIndex"] = cachedMoveIndex_;
-  doc["moveCount"] = cachedMoveCount_;
-  doc["canUndo"] = cachedCanUndo_;
-  doc["canRedo"] = cachedCanRedo_;
+  doc["fen"] = fen;
+  doc["evaluation"] = serialized(String(evaluation, 2));
+  doc["moveIndex"] = moveIndex;
+  doc["moveCount"] = moveCount;
+  doc["canUndo"] = canUndo;
+  doc["canRedo"] = canRedo;
   String output;
   serializeJson(doc, output);
   return output;
@@ -987,19 +1012,26 @@ LichessConfig WiFiManagerESP32::getLichessConfig() {
   return config;
 }
 
-// TODO: cached fields are written here (main loop task) and read by
-// getBoardUpdateJSON() (async_tcp task) without synchronization. Add a portMUX_TYPE
-// spinlock around both the write and read sites to eliminate the data race.
 void WiFiManagerESP32::onBoardStateChanged(const std::string& fen, int evaluation) {
+  int moveIndex = 0;
+  int moveCount = 0;
+  bool canUndo = false;
+  bool canRedo = false;
+  if (game_) {
+    moveIndex = game_->currentMoveIndex();
+    canUndo = game_->canUndo();
+    canRedo = game_->canRedo();
+    moveCount = game_->moveCount();
+  }
+
+  if (!lockBoardStateCache()) return;
   currentFen = fen;
   boardEvaluation = evaluation / 100.0f;
-
-  if (game_) {
-    cachedMoveIndex_ = game_->currentMoveIndex();
-    cachedCanUndo_ = game_->canUndo();
-    cachedCanRedo_ = game_->canRedo();
-    cachedMoveCount_ = game_->moveCount();
-  }
+  cachedMoveIndex_ = moveIndex;
+  cachedCanUndo_ = canUndo;
+  cachedCanRedo_ = canRedo;
+  cachedMoveCount_ = moveCount;
+  unlockBoardStateCache();
 }
 
 bool WiFiManagerESP32::getPendingBoardEdit(String& fenOut) {
@@ -1011,8 +1043,33 @@ bool WiFiManagerESP32::getPendingBoardEdit(String& fenOut) {
 }
 
 void WiFiManagerESP32::clearPendingEdit() {
-  currentFen = std::string(pendingFenEdit.c_str());
+  if (lockBoardStateCache()) {
+    currentFen = std::string(pendingFenEdit.c_str());
+    unlockBoardStateCache();
+  }
   hasPendingEdit = false;
+}
+
+bool WiFiManagerESP32::lockBoardStateCache() const {
+  return boardStateMutex_ == nullptr || xSemaphoreTake(boardStateMutex_, portMAX_DELAY) == pdTRUE;
+}
+
+void WiFiManagerESP32::unlockBoardStateCache() const {
+  if (boardStateMutex_ != nullptr) xSemaphoreGive(boardStateMutex_);
+}
+
+std::string WiFiManagerESP32::getCurrentFen() const {
+  if (!lockBoardStateCache()) return currentFen;
+  std::string fen = currentFen;
+  unlockBoardStateCache();
+  return fen;
+}
+
+float WiFiManagerESP32::getEvaluation() const {
+  if (!lockBoardStateCache()) return boardEvaluation;
+  const float evaluation = boardEvaluation;
+  unlockBoardStateCache();
+  return evaluation;
 }
 
 void WiFiManagerESP32::handleGamesRequest(AsyncWebServerRequest* request) {

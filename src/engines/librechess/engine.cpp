@@ -23,9 +23,10 @@
 // ---------------------------------------------------------------------------
 
 // Shared heap-sizing constants — used in both initialize() and taskFunction().
-static constexpr size_t MIN_FREE_HEAP      = 32 * 1024;
-static constexpr size_t EVAL_HASH_OVERHEAD = 12 * 1024;   // pawn (6 KiB) + eval (4 KiB) hash
-static constexpr size_t SEARCH_OVERHEAD    = 16 * 1024;   // SearchState (~10 KiB + headroom)
+static constexpr size_t MIN_FREE_HEAP = 32 * 1024;
+static constexpr size_t EVAL_HASH_OVERHEAD = 12 * 1024;  // pawn (6 KiB) + eval (4 KiB) hash
+static constexpr size_t SEARCH_OVERHEAD = 16 * 1024;     // SearchState (~10 KiB + headroom)
+static constexpr uint32_t SEARCH_TASK_STACK_BYTES = 64 * 1024;
 
 LibreChessEngine::LibreChessEngine(LibreChess::Game* game, int level,
                    char playerColor, LibreChess::ILogger* logger)
@@ -51,7 +52,8 @@ bool LibreChessEngine::initialize(EngineInitResult& result) {
     // Hash tables (pawn 6 KiB + eval 4 KiB) are allocated inside
     // Game::initSearch().  All persist across moves.
     static constexpr size_t MAX_TT_BYTES  = 64 * 1024;
-    static constexpr size_t TOTAL_OVERHEAD = MIN_FREE_HEAP + EVAL_HASH_OVERHEAD + SEARCH_OVERHEAD;
+    static constexpr size_t TOTAL_OVERHEAD = MIN_FREE_HEAP + EVAL_HASH_OVERHEAD +
+                         SEARCH_OVERHEAD + SEARCH_TASK_STACK_BYTES;
     static constexpr size_t ENTRY_SIZE = sizeof(LibreChess::search::TTEntry);
 
     size_t freeHeap = heap_caps_get_free_size(MALLOC_CAP_8BIT);
@@ -60,7 +62,8 @@ bool LibreChessEngine::initialize(EngineInitResult& result) {
 
     size_t usable = (largestBlock < freeHeap) ? largestBlock : freeHeap;
     if (usable < TOTAL_OVERHEAD) {
-      logger_.errorf("LibreChess: insufficient heap (%u < %u)", usable, TOTAL_OVERHEAD);
+      logger_.errorf("LibreChess: insufficient heap (%u < %u incl. task stack)", usable,
+                     TOTAL_OVERHEAD);
       return false;
     }
 
@@ -110,7 +113,7 @@ void LibreChessEngine::requestMove(const std::string& fen) {
   //   Per quiescence ply (MoveList + int16_t scores) .. ~1,200 B × QS depth
   //   Max depth 8 + extensions (~6) = 14 negamax + 16 QS ≈ 52 KiB.
   //   64 KiB provides comfortable headroom for all difficulty levels.
-  spawnTask(ctx, "lcTask", taskFunction, 65536);
+  spawnTask(ctx, "lcTask", taskFunction, SEARCH_TASK_STACK_BYTES);
 }
 
 bool LibreChessEngine::checkResult(EngineResult& result) {

@@ -8,6 +8,8 @@
 #include <LittleFS.h>
 #include <Preferences.h>
 #include <WiFi.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <array>
 #include <string>
 
@@ -81,6 +83,7 @@ class WiFiManagerESP32 : public IGameObserver {
   Board* board_;
   std::string currentFen;
   float boardEvaluation;
+  mutable SemaphoreHandle_t boardStateMutex_ = nullptr;
 
   // Board edit storage (pending edits from web interface)
   String pendingFenEdit;
@@ -166,6 +169,8 @@ class WiFiManagerESP32 : public IGameObserver {
   void handleOtaPassword(AsyncWebServerRequest* request);
   void handleGamesRequest(AsyncWebServerRequest* request);
   void handleDeleteGame(AsyncWebServerRequest* request);
+  bool lockBoardStateCache() const;
+  void unlockBoardStateCache() const;
 
  public:
   WiFiManagerESP32(Board* board, LittleFSStorage* storage);
@@ -190,8 +195,8 @@ class WiFiManagerESP32 : public IGameObserver {
   LichessConfig getLichessConfig();
   String getLichessToken() { return lichessToken; }
   // Board state management (FEN-based)
-  const std::string& getCurrentFen() const { return currentFen; }
-  float getEvaluation() const { return boardEvaluation; }
+  std::string getCurrentFen() const;
+  float getEvaluation() const;
   // Board edit management (FEN-based)
   bool getPendingBoardEdit(String& fenOut);
   void clearPendingEdit();

@@ -70,6 +70,11 @@ its controls without overwriting persisted settings with hardcoded defaults.
 
 The web UI polls `GET /board-update` to read this cached state as JSON.
 
+`onBoardStateChanged()` runs on the main loop task while `GET /board-update`
+runs on the async web server task. Guard every read/write of the cached FEN,
+evaluation, and navigation fields with `boardStateMutex_`; never return a
+reference to `currentFen` across that task boundary.
+
 ## Flag-Based Relay Pattern
 
 The web server runs on the async task context, but game mutations must happen on the main loop. Several features use a flag-based relay:
