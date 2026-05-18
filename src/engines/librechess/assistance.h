@@ -28,6 +28,9 @@ class LibreChessAssistanceProvider final : public BoardAssistanceProvider {
 
   LibreChess::Game* game_;
   LibreChess::ILogger* logger_;
+  uint32_t searchTimeMs_;
+  int maxDepth_;
+  int ttEntries_;
 };
 
 #endif  // ENGINES_LIBRECHESS_BOARD_ASSISTANCE_H

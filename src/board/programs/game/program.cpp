@@ -73,7 +73,10 @@ BoardGame::BoardGame(BoardRuntime& runtime, BoardAnimations& animations,
       feedback_(runtime, animations),
       assistance_(runtime, animations) {}
 
-void BoardGame::reset() { cancelAssistance(); }
+void BoardGame::reset() {
+  cancelAssistance();
+  feedback_.clearBoard();
+}
 
 void BoardGame::setAssistanceProvider(BoardAssistanceProvider* provider) {
   if (assistanceProvider_ == provider) return;

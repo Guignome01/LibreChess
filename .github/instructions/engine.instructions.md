@@ -96,7 +96,8 @@ Each `requestMove()` spawns a FreeRTOS task (64 KiB stack) that:
 BEST_MOVE board assistance. It receives the lifted source square plus the
 board-generated legal target list, initializes/reuses Game-owned search
 resources, and runs one root-filtered search with a fixed 1 second budget via
-`Game::rankCandidateTargets()`. The provider remains synchronous from
+resources, and runs one root-filtered search with a difficulty-scaled time/depth
+budget via `Game::rankCandidateTargets()`. The provider remains synchronous from
 `BoardGame`'s point of view, but the actual search runs inside a short-lived
 `lcAssist` FreeRTOS task with a 64 KiB stack so negamax recursion never runs on
 the Arduino loop stack. It returns a
@@ -131,8 +132,8 @@ Max depth 8 + extensions (~6) + 16 QS plies ≈ 45 KiB (fits in 64 KiB). See `do
 
 BEST_MOVE assistance uses the same 64 KiB stack budget in its transient
 `lcAssist` task. Do not call `Game::rankCandidateTargets()` directly from the
-main loop or board gesture path: even a 1 second root-filtered search can exceed
-the Arduino loop stack.
+main loop or board gesture path: root-filtered assistance search can exceed the
+Arduino loop stack.
 
 ## Design Decisions
 

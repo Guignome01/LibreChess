@@ -45,7 +45,7 @@ state changes that would make a pending hint stale.
 `tryResumeGame()` — checks `chess_->hasActiveGame()`, calls `resumeGame()`. Returns `true` if a live game was resumed from flash.
 
 ### Board Setup
-`waitForBoardSetup()` — delegates through `IBoardGame` to board-owned setup assistance, which runs the blocking LED guidance loop for the required position (piece color = place here, red = remove this). Ends with firework animation.
+`waitForBoardSetup()` — delegates through `IBoardGame` to board-owned setup assistance, which runs the blocking LED guidance loop for the required position (piece color = place here, red = remove this). Setup assistance checks current occupancy before painting, and the runtime seeds input from the current logical sensor baseline before gameplay starts, so a correct board goes straight to the startup firework. If BotMode starts thinking immediately afterward, the scheduler queues that looping status behind the finite firework.
 
 ### Resign System
 Three-phase king-based physical resign gesture managed through `IBoardGame`: hold king off square (3s) → 2 quick lift-and-returns with escalating orange brightness → board confirm dialog. `GameMode::completeResign()` remains the mutation boundary: it runs virtual hooks, asks the game program to show winner feedback, and calls `chess_->endGame(RESIGN, ...)` only after board confirmation succeeds.

@@ -26,6 +26,8 @@ Pure C++ — uses `std::string` (not Arduino `String`); firmware bridges with `.
 
 - **Composition over inheritance** — `Game` composes `Position` + `History`. No inheritance hierarchy.
 
+- **Recording replay is byte-aligned, not pointer-aligned** — persisted move data is a byte stream. `History::replayInto()` must decode entries with byte copies so ESP32 resume never depends on `uint8_t` buffer alignment.
+
 - **Snapshot search** — bot-mode search enters through `Game::calculateMove()`, which copies the current `Position` and searches the copy. Do not let firmware/background tasks run search make/unmake recursion on the live `board_` instance.
 
 - **Snapshot candidate scoring/ranking** — UI assistance that needs a quick fallback can use `Game::scoreCandidateMove()`. Stronger lifted-piece assistance uses `Game::rankCandidateTargets()`, which searches only the requested legal target squares on a private snapshot and reports side-to-move-relative scores without mutating history, observers, or caches.

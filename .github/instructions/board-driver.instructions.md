@@ -165,9 +165,11 @@ and six timed painter slots (`SLOT_COUNT = 6`). Scheduled painters are addressed
 `BoardScheduledHandle{slot, generation}`; the 16-bit generation counter prevents
 stale handles from cancelling a re-used slot. The scheduler has no animation
 vocabulary. It owns slot allocation, start time, duration/looping,
-cancellation, and one canvas surface per scheduled painter. Full-surface painters
-clear only their own surface before painting each frame, so sibling animations
-do not erase each other.
+cancellation, and one canvas surface per scheduled painter. Cancellation
+releases the owned surface immediately while the caller holds the canvas lock,
+so stopped looping status animations cannot bleed into later finite feedback.
+Full-surface painters clear only their own surface before painting each frame,
+so sibling animations never clear each other.
 
 `BoardAnimations` (`services/visual/animations.*`) is the board-owned visual animation API and frame
 painting implementation. `Board::Impl` owns one instance next to `BoardRuntime`
@@ -188,8 +190,11 @@ owns it (e.g. `feedback_.stopAnimation(handle)`). External firmware uses
 the token stops automatically on destruction and can be stopped early with
 `token.stop()`. `Board::hasActiveAnimations()` is the public sequencing hook
 for app-level transitions that must wait for finite presentation feedback to
-finish before drawing the next menu/program surface. **Status animations do not
-use `std::atomic<bool>*` flags.**
+finish before drawing the next menu/program surface. Looping status animations
+started while finite animations are active are queued by `BoardScheduler` and
+begin only after those finite painters finish, so the setup firework can be
+started normally and the following thinking/waiting status will not overlap it.
+**Status animations do not use `std::atomic<bool>*` flags.**
 
 ## BoardMenuRunner and predefined menus
 
@@ -203,10 +208,10 @@ applies queued transitions after each hook returns.
 
 `MenuSelection` commits a physical tile only after a stable empty square, a
 stable occupied press, and a stable empty release. The selected tile is cleared
-when the stable press is accepted, the confirmation blink starts on release,
-and `BoardMenuRunner` keeps the selected result pending until that blink
-animation finishes, so hooks, auto-advance, and page redraws do not happen under
-a resting selector piece or paint over the confirmation.
+when the stable press is accepted, and release immediately dispatches the tile
+id to `BoardMenuRunner` for hooks, auto-advance, and page redraw/close. Generic
+menu selections do not blink; reserve explicit `MenuFlow::blink(...)` usage for
+semantic prompts such as resume/resign confirmation.
 
 `BoardMenu` exposes:
 
@@ -321,8 +326,10 @@ use. Key namespaces:
 - **Input is event-driven** — moving edge detection into a single FreeRTOS
   task removes the manual `readSensors()` / `syncOccupancyBaseline()` calls
   that previously had to be sprinkled through every game-mode update loop.
-  Runtime-level synchronized drains keep the producer task and program
-  consumers from racing.
+  `BoardRuntime::begin()` seeds both the driver debounce state and `BoardInput`
+  baseline from one immediate logical sensor scan before the poll task starts,
+  so already-placed pieces do not briefly appear missing. Runtime-level
+  synchronized drains keep the producer task and program consumers from racing.
 - **Startup calibration is runtime-owned, runtime recalibration is a program** —
   `BoardCalibrationRunner` owns serial-guided raw startup calibration over
   `BoardDriver`; the `CALIBRATION` program only clears persisted mapping and
@@ -334,12 +341,18 @@ use. Key namespaces:
   `BoardFeedback` and a `BoardAssistance` directly (constructed with the
   shared `BoardRuntime&` plus the board-owned `BoardAnimations&`). Visual
   helpers no longer live on a controller facade; they are just objects scoped
-  to their consumer.
+  to their consumer. `BoardAssistance::waitForSetup()` checks the synchronized
+  occupancy snapshot before painting setup hints; an already-correct board
+  transitions directly to the startup firework because the runtime baseline was
+  seeded from the same scan as the driver debounce state. `BoardGame::reset()`
+  must clear both assistance and feedback surfaces so program stop/start cannot
+  leak retained game pixels into menus or the next game.
 - **Menus are typed objects, not programs** — `BoardMenuRunner` owns all menu
   polling/debounce/rendering. Predefined menus under `board/menus/` are small
   state machines that define which page to show and what result to record when
   a square is selected. Physical selection is release-based: empty, press
-  (selected tile turns off), release, confirmation blink, then hook/transition.
+  (selected tile turns off), release, then hook/transition without a generic
+  confirmation blink.
   This keeps
   game-selection/resume/resign prompts reusable
   without exposing runtime internals or creating another primary program.

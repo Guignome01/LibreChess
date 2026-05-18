@@ -6,15 +6,32 @@
 
 namespace {
 
-static constexpr uint32_t BEST_MOVE_SEARCH_TIME_MS = 1000;
-static constexpr int ASSISTANCE_TT_ENTRIES = 1024;
 static constexpr uint32_t ASSISTANCE_SEARCH_STACK_BYTES = 65536;
+
+struct AssistanceSearchProfile {
+  uint32_t timeMs;
+  int maxDepth;
+  int ttEntries;
+};
+
+static constexpr AssistanceSearchProfile ASSISTANCE_LEVELS[] = {
+    {300, 2, 512},    {600, 3, 512},    {1000, 4, 1024},
+    {1500, 5, 1024},  {2200, 6, 2048},  {3000, 7, 2048},
+    {4000, 8, 4096},  {5000, 10, 4096},
+};
+
+AssistanceSearchProfile profileForLevel(int level) {
+  if (level < 1) level = 1;
+  if (level > 8) level = 8;
+  return ASSISTANCE_LEVELS[level - 1];
+}
 
 struct AssistanceSearchContext {
   LibreChess::Game* game = nullptr;
   int fromRow = -1;
   int fromCol = -1;
   uint32_t timeLimitMs = 0;
+  int maxDepth = 0;
   LibreChess::Game::CandidateTargetList targets;
   LibreChess::Game::CandidateTargetScoreList scores;
   std::atomic<bool> cancel{false};
@@ -27,7 +44,7 @@ void assistanceSearchTask(void* param) {
   ctx->game->setExternalStop(&ctx->cancel);
   ctx->ok = ctx->game->rankCandidateTargets(ctx->fromRow, ctx->fromCol,
                                             ctx->targets, ctx->timeLimitMs,
-                                            ctx->scores);
+                                            ctx->scores, ctx->maxDepth);
   ctx->game->setExternalStop(nullptr);
   ctx->ready.store(true, std::memory_order_release);
   vTaskDelete(nullptr);
@@ -36,6 +53,7 @@ void assistanceSearchTask(void* param) {
 bool runSearchTask(LibreChess::Game* game, int fromRow, int fromCol,
                    const LibreChess::Game::CandidateTargetList& targets,
                    uint32_t timeLimitMs,
+                   int maxDepth,
                    LibreChess::Game::CandidateTargetScoreList& scores,
                    LibreChess::ILogger* logger) {
   scores.clear();
@@ -50,6 +68,7 @@ bool runSearchTask(LibreChess::Game* game, int fromRow, int fromCol,
   ctx->fromRow = fromRow;
   ctx->fromCol = fromCol;
   ctx->timeLimitMs = timeLimitMs;
+  ctx->maxDepth = maxDepth;
   ctx->targets = targets;
 
   if (xTaskCreate(assistanceSearchTask, "lcAssist", ASSISTANCE_SEARCH_STACK_BYTES,
@@ -144,13 +163,16 @@ bool fillRankingFromStaticEval(LibreChess::Game* game, int fromRow, int fromCol,
 LibreChessAssistanceProvider::LibreChessAssistanceProvider(LibreChess::Game* game, int level,
                                                            LibreChess::ILogger* logger)
     : game_(game), logger_(logger) {
-  (void)level;
+  const AssistanceSearchProfile profile = profileForLevel(level);
+  searchTimeMs_ = profile.timeMs;
+  maxDepth_ = profile.maxDepth;
+  ttEntries_ = profile.ttEntries;
 }
 
 bool LibreChessAssistanceProvider::ensureSearchReady() {
   if (!game_) return false;
   if (!game_->searchInitialized()) {
-    game_->initSearch(ASSISTANCE_TT_ENTRIES);
+    game_->initSearch(ttEntries_);
     if (!game_->searchInitialized()) {
       if (logger_) logger_->error("LibreChess assistance: search init failed");
       return false;
@@ -175,7 +197,7 @@ bool LibreChessAssistanceProvider::rankTargets(int fromRow, int fromCol,
   LibreChess::Game::CandidateTargetScoreList searchedScores;
   if (ensureSearchReady() &&
       runSearchTask(game_, fromRow, fromCol, candidateTargets,
-                    BEST_MOVE_SEARCH_TIME_MS, searchedScores, logger_) &&
+            searchTimeMs_, maxDepth_, searchedScores, logger_) &&
       fillRankingFromScores(searchedScores, ranking)) {
     return true;
   }

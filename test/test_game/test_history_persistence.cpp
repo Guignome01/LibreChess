@@ -176,8 +176,8 @@ void test_recorder_add_move_persists(void) {
   history.setHeader(makeTestHeader());
   history.addMove(makeEntry(6, 4, 4, 4, Piece::W_PAWN));  // e2e4
   TEST_ASSERT_EQUAL(2, (int)storage.moveData.size());  // 2-byte encoded move
-  // Header IS flushed after the very first move so a power loss between
-  // move 1 and move 2 does not lose move 1's data on resume.
+  // Header is flushed after every move so any reboot point can resume the
+  // latest side to move.
   TEST_ASSERT_EQUAL(1, storage.headerUpdateCount);
   TEST_ASSERT_EQUAL_UINT16(1, storage.storedHeader.moveCount);
 }
@@ -274,29 +274,25 @@ void test_recorder_replay_into_board(void) {
   TEST_ASSERT_ENUM_EQ(Color::WHITE, board.sideToMove());
 }
 
-void test_recorder_turn_based_header_flush(void) {
+void test_recorder_flushes_header_every_move(void) {
   setupRecorder();
   history.setHeader(makeTestHeader());
   int initial = storage.headerUpdateCount;
 
-  // Move 1 always flushes (durability: prevents loss of the first move on
-  // a crash before move 2).
   history.addMove(makeEntry(6, 4, 4, 4, Piece::W_PAWN));  // e2e4 (1st half-move)
   TEST_ASSERT_EQUAL(initial + 1, storage.headerUpdateCount);
   TEST_ASSERT_EQUAL_UINT16(1, storage.storedHeader.moveCount);
 
-  // Move 2: regular turn-based flush.
   history.addMove(makeEntry(1, 4, 3, 4, Piece::B_PAWN));  // e7e5 (2nd half-move)
   TEST_ASSERT_EQUAL(initial + 2, storage.headerUpdateCount);
   TEST_ASSERT_EQUAL_UINT16(2, storage.storedHeader.moveCount);
 
-  // Move 3: in-flight, not yet flushed (resets after move 2).
   history.addMove(makeEntry(6, 3, 4, 3, Piece::W_PAWN));  // d2d4 (3rd half-move)
-  TEST_ASSERT_EQUAL(initial + 2, storage.headerUpdateCount);
-
-  // Move 4: flushes again.
-  history.addMove(makeEntry(1, 3, 3, 3, Piece::B_PAWN));  // d7d5 (4th half-move)
   TEST_ASSERT_EQUAL(initial + 3, storage.headerUpdateCount);
+  TEST_ASSERT_EQUAL_UINT16(3, storage.storedHeader.moveCount);
+
+  history.addMove(makeEntry(1, 3, 3, 3, Piece::B_PAWN));  // d7d5 (4th half-move)
+  TEST_ASSERT_EQUAL(initial + 4, storage.headerUpdateCount);
   TEST_ASSERT_EQUAL_UINT16(4, storage.storedHeader.moveCount);
 }
 
@@ -305,7 +301,7 @@ void test_recorder_snapshot_always_flushes_header(void) {
   history.setHeader(makeTestHeader());
   int initial = storage.headerUpdateCount;
 
-  history.addMove(makeEntry(6, 4, 4, 4, Piece::W_PAWN));  // 1st move — always flushes (durability)
+  history.addMove(makeEntry(6, 4, 4, 4, Piece::W_PAWN));
   TEST_ASSERT_EQUAL(initial + 1, storage.headerUpdateCount);
 
   history.snapshotPosition("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1");
@@ -502,8 +498,7 @@ void test_game_make_move(void) {
   TEST_ASSERT_TRUE(observer.callCount > 0);
 
   // snapshotPosition flushed the header with moveCount=1 (FEN_MARKER).
-  // persistMove incremented to 2; the flush rule flushes for moveCount<=2
-  // (durability for the early game), so storedHeader is now at 2.
+  // persistMove flushes every move, so storedHeader is now at 2.
   TEST_ASSERT_EQUAL_UINT16(2, storage.storedHeader.moveCount);
   teardownGame();
 }
@@ -666,6 +661,80 @@ void test_game_resume_game(void) {
   teardownGame();
 }
 
+void test_game_resume_after_single_move_preserves_black_turn(void) {
+  setupGame();
+  game->startNewGame();
+  game->makeMove(6, 4, 4, 4);  // e2-e4
+
+  // A reboot after white's first move must resume with black to play.
+  observer = MockGameObserver();
+  Game* game2 = new Game(&storage, &observer, &logger);
+  bool ok = game2->resumeGame();
+  TEST_ASSERT_TRUE(ok);
+  TEST_ASSERT_ENUM_EQ(Color::BLACK, game2->sideToMove());
+  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, game2->getSquare(4, 4));  // e4
+  TEST_ASSERT_ENUM_EQ(Piece::NONE, game2->getSquare(6, 4));    // e2
+  TEST_ASSERT_TRUE(observer.callCount > 0);  // Observer notified
+  delete game2;
+  teardownGame();
+}
+
+void test_game_resume_after_single_move_ignores_partial_trailing_byte(void) {
+  setupGame();
+  game->startNewGame();
+  game->makeMove(6, 4, 4, 4);  // e2-e4
+
+  storage.moveData.push_back(0x7F);  // Simulate an interrupted 2-byte append.
+
+  observer = MockGameObserver();
+  Game* game2 = new Game(&storage, &observer, &logger);
+  bool ok = game2->resumeGame();
+  TEST_ASSERT_TRUE(ok);
+  TEST_ASSERT_ENUM_EQ(Color::BLACK, game2->sideToMove());
+  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, game2->getSquare(4, 4));  // e4
+  delete game2;
+  teardownGame();
+}
+
+void test_game_resume_after_odd_halfmove_preserves_black_turn(void) {
+  setupGame();
+  game->startNewGame();
+  game->makeMove(6, 4, 4, 4);  // e2-e4
+  game->makeMove(1, 4, 3, 4);  // e7-e5
+  game->makeMove(6, 3, 4, 3);  // d2-d4
+  TEST_ASSERT_EQUAL_UINT16(4, storage.storedHeader.moveCount);  // FEN marker + 3 moves
+
+  observer = MockGameObserver();
+  Game* game2 = new Game(&storage, &observer, &logger);
+  bool ok = game2->resumeGame();
+  TEST_ASSERT_TRUE(ok);
+  TEST_ASSERT_ENUM_EQ(Color::BLACK, game2->sideToMove());
+  TEST_ASSERT_ENUM_EQ(Piece::W_PAWN, game2->getSquare(4, 3));  // d4
+  TEST_ASSERT_ENUM_EQ(Piece::B_PAWN, game2->getSquare(3, 4));  // e5
+  delete game2;
+  teardownGame();
+}
+
+void test_game_resume_invalidates_cached_fen(void) {
+  setupGame();
+  game->startNewGame();
+  game->makeMove(6, 4, 4, 4);  // e2-e4
+
+  observer = MockGameObserver();
+  Game* game2 = new Game(&storage, &observer, &logger);
+  game2->newGame();
+  std::string initialFen = game2->getFen();
+  TEST_ASSERT_TRUE(initialFen.find(" w ") != std::string::npos);
+
+  bool ok = game2->resumeGame();
+  TEST_ASSERT_TRUE(ok);
+  TEST_ASSERT_ENUM_EQ(Color::BLACK, game2->sideToMove());
+  TEST_ASSERT_TRUE(observer.lastFen.find(" b ") != std::string::npos);
+  TEST_ASSERT_TRUE(observer.lastFen.find("4P3") != std::string::npos);
+  delete game2;
+  teardownGame();
+}
+
 void test_game_resume_finished_game(void) {
   setupGame();
   game->startNewGame();
@@ -820,7 +889,7 @@ void register_history_persistence_tests() {
   RUN_TEST(test_recorder_has_active_game);
   RUN_TEST(test_recorder_get_active_game_info);
   RUN_TEST(test_recorder_replay_into_board);
-  RUN_TEST(test_recorder_turn_based_header_flush);
+  RUN_TEST(test_recorder_flushes_header_every_move);
   RUN_TEST(test_recorder_snapshot_always_flushes_header);
   RUN_TEST(test_recorder_replay_rejects_invalid_move);
   RUN_TEST(test_recorder_set_header_lichess_mode);
@@ -847,6 +916,10 @@ void register_history_persistence_tests() {
   RUN_TEST(test_game_end_game_idempotent);
   RUN_TEST(test_game_start_new_game);
   RUN_TEST(test_game_resume_game);
+  RUN_TEST(test_game_resume_after_single_move_preserves_black_turn);
+  RUN_TEST(test_game_resume_after_single_move_ignores_partial_trailing_byte);
+  RUN_TEST(test_game_resume_after_odd_halfmove_preserves_black_turn);
+  RUN_TEST(test_game_resume_invalidates_cached_fen);
   RUN_TEST(test_game_resume_finished_game);
   RUN_TEST(test_game_make_move_records_promotion);
   RUN_TEST(test_game_undo_redo);

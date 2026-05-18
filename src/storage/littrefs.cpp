@@ -150,8 +150,8 @@ bool LittleFSStorage::readMoveData(std::vector<uint8_t>& data) {
   File f = LittleFS.open(LIVE_MOVES_PATH, "r");
   if (!f || f.size() < sizeof(GameHeader)) return false;
 
-  // Derive move data size from file - more robust than header's moveCount
-  // which may lag by one move due to turn-based header flushing.
+  // Derive move data size from file - more robust than trusting header
+  // metadata alone if a write is interrupted.
   f.seek(sizeof(GameHeader));
   size_t dataSize = f.size() - sizeof(GameHeader);
   data.resize(dataSize);

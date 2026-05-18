@@ -157,6 +157,27 @@ bool BoardDriver::getSensorState(int row, int col) const {
   return sensorState[row][col];
 }
 
+void BoardDriver::syncSensorBaseline(bool (&state)[NUM_ROWS][NUM_COLS]) {
+  const unsigned long currentTime = millis();
+  for (int row = 0; row < NUM_ROWS; row++)
+    for (int col = 0; col < NUM_COLS; col++)
+      state[row][col] = false;
+
+  for (int col = 0; col < NUM_COLS; col++) {
+    enableCol(col);
+    for (int row = 0; row < NUM_ROWS; row++) {
+      const bool reading = digitalRead(rowPins[row]) == LOW;
+      const uint8_t logicalRow = toLogicalRow[swapAxes ? col : row];
+      const uint8_t logicalCol = toLogicalCol[swapAxes ? row : col];
+      state[logicalRow][logicalCol] = reading;
+      sensorState[logicalRow][logicalCol] = reading;
+      sensorRaw[logicalRow][logicalCol] = reading;
+      sensorDebounceTime[logicalRow][logicalCol] = currentTime;
+    }
+  }
+  disableAllCols();
+}
+
 void BoardDriver::readRawSensors(bool (&rawState)[NUM_ROWS][NUM_COLS]) {
   for (int row = 0; row < NUM_ROWS; row++)
     for (int col = 0; col < NUM_COLS; col++)

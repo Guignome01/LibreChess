@@ -50,6 +50,16 @@ static char promoCodeToChar(uint8_t code) {
   return (code < PROMO_COUNT) ? PROMO_PIECES[code] : ' ';
 }
 
+// Reads a 2-byte persisted move entry without assuming the byte vector is
+// aligned for uint16_t loads. ESP32 can fault on unaligned typed accesses.
+static bool readEncodedMove(const std::vector<uint8_t>& data, size_t index,
+                            uint16_t& encoded) {
+  const size_t offset = index * sizeof(uint16_t);
+  if (offset + sizeof(uint16_t) > data.size()) return false;
+  memcpy(&encoded, data.data() + offset, sizeof(encoded));
+  return true;
+}
+
 // LERF ↔ wire-format conversion.
 // Wire format stores row-major index where row 0 = rank 8 (i.e., inverted
 // rank). XOR-56 flips the rank bits, mapping between LERF and wire.
@@ -80,8 +90,7 @@ History::History(IGameStorage* storage, ILogger* logger)
       storage_(storage),
       logger_(logger),
       recordingActive_(false),
-      headerInitialized_(false),
-      movesSinceFlush_(0) {
+      headerInitialized_(false) {
   memset(&header_, 0, sizeof(header_));
 }
 
@@ -105,7 +114,6 @@ void History::addMove(const MoveEntry& entry) {
       storage_->truncateMoveData(newCount * 2);
       header_.moveCount = static_cast<uint16_t>(newCount);
       storage_->updateHeader(header_);
-      movesSinceFlush_ = 0;
     }
     moveCount_ = newCount;
   }
@@ -155,7 +163,6 @@ void History::setHeader(const GameHeader& header) {
   storage_->beginGame(header_);
   recordingActive_ = true;
   headerInitialized_ = true;
-  movesSinceFlush_ = 0;
 
   logger_.info("History: new recording started");
 }
@@ -173,7 +180,6 @@ void History::snapshotPosition(const std::string& fen) {
   header_.fenEntryCnt++;
 
   storage_->updateHeader(header_);
-  movesSinceFlush_ = 0;
 }
 
 void History::save(GameResult result, char winnerColor) {
@@ -252,10 +258,11 @@ bool History::replayInto(Position& board) {
   }
 
   // Find last FEN marker in move stream (scan backwards)
-  const uint16_t* moves = reinterpret_cast<const uint16_t*>(moveData.data());
   int lastFenIdx = -1;
   for (int i = static_cast<int>(entryCount) - 1; i >= 0; i--) {
-    if (moves[i] == FEN_MARKER) {
+    uint16_t encoded = 0;
+    if (readEncodedMove(moveData, static_cast<size_t>(i), encoded) &&
+        encoded == FEN_MARKER) {
       lastFenIdx = i;
       break;
     }
@@ -282,10 +289,12 @@ bool History::replayInto(Position& board) {
 
   int replayed = 0;
   for (int i = lastFenIdx + 1; i < static_cast<int>(entryCount); i++) {
-    if (moves[i] == FEN_MARKER) continue;  // skip intermediate FEN markers
+    uint16_t encoded = 0;
+    if (!readEncodedMove(moveData, static_cast<size_t>(i), encoded)) break;
+    if (encoded == FEN_MARKER) continue;  // skip intermediate FEN markers
     Square from, to;
     char promotion;
-    decodeMove(moves[i], from, to, promotion);
+    decodeMove(encoded, from, to, promotion);
 
     // Capture pre-move state for the MoveEntry
     Piece piece = board.getSquare(from);
@@ -329,19 +338,7 @@ void History::persistMove(const MoveEntry& entry) {
   uint16_t encoded = encodeMove(entry.from, entry.to, promo);
   storage_->appendMoveData(reinterpret_cast<const uint8_t*>(&encoded), 2);
   header_.moveCount++;
-  movesSinceFlush_++;
-
-  // Flush header every full turn (2 half-moves) to reduce flash wear.
-  // Exception: also flush after move 1 so a power loss between move 1 and
-  // move 2 does not lose move 1's data \u2014 the move bytes are already on
-  // flash but without a header update the count says 0 and resume drops
-  // the move.  We additionally flush after move 2 to re-align the
-  // turn-based cadence (otherwise the next flush would land on move 3
-  // instead of move 2, shifting the entire pattern by one half-move).
-  if (movesSinceFlush_ >= 2 || header_.moveCount <= 2) {
-    storage_->updateHeader(header_);
-    movesSinceFlush_ = 0;
-  }
+  storage_->updateHeader(header_);
 }
 
 }  // namespace LibreChess

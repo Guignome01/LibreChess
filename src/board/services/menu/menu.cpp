@@ -8,11 +8,10 @@
 BoardMenuRunner::BoardMenuRunner(BoardRuntime& runtime, BoardAnimations& animations)
     : runtime_(runtime),
       animations_(animations),
-      selection_(runtime, animations),
+      selection_(runtime),
       activeMenu_(nullptr),
       finished_(false),
       pageStackDepth_(0),
-      pendingSelectionResult_(MENU_RESULT_NONE),
       pending_(Pending::NONE),
       pendingNextTarget_(0) {}
 
@@ -22,7 +21,6 @@ void BoardMenuRunner::show(BoardMenu& menu, bool flipped) {
   activeMenu_ = &menu;
   finished_ = false;
   pageStackDepth_ = 0;
-  pendingSelectionResult_ = MENU_RESULT_NONE;
   pending_ = Pending::NONE;
   selection_.setFlipped(flipped);
 
@@ -40,17 +38,7 @@ void BoardMenuRunner::show(BoardMenu& menu, bool flipped) {
 bool BoardMenuRunner::poll() {
   if (!activeMenu_) return false;
 
-  int result = pendingSelectionResult_;
-  if (result != MENU_RESULT_NONE) {
-    if (selection_.confirmationActive()) return false;
-    pendingSelectionResult_ = MENU_RESULT_NONE;
-  } else {
-    result = selection_.poll();
-    if (result != MENU_RESULT_NONE) {
-      pendingSelectionResult_ = result;
-      return false;
-    }
-  }
+  int result = selection_.poll();
   if (result == MENU_RESULT_NONE) return false;
 
   return processSelectionResult(result);
@@ -113,7 +101,6 @@ void BoardMenuRunner::stop() {
   selection_.erase();
   finished_ = false;
   pageStackDepth_ = 0;
-  pendingSelectionResult_ = MENU_RESULT_NONE;
   pending_ = Pending::NONE;
 }
 
@@ -215,6 +202,5 @@ void BoardMenuRunner::clearActiveMenu() {
   activeMenu_ = nullptr;
   finished_ = false;
   pageStackDepth_ = 0;
-  pendingSelectionResult_ = MENU_RESULT_NONE;
   pending_ = Pending::NONE;
 }

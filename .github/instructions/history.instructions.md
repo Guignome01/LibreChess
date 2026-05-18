@@ -23,7 +23,8 @@ In-memory move log + persistent recording. Cursor-based undo/redo.
 
 - **Two concerns unified** — in-memory log and persistent recording share the move cursor; branch-on-undo must truncate both atomically.
 - **Branch-on-undo wipes future** — undo N + new move permanently deletes all undone moves from memory and storage. Binary format doesn't support branching.
-- **Header flushes every full turn** — `GameHeader` written to flash only after black's move. Halves flash wear; at most one move lost on power loss.
+- **Header flushes every move** — `GameHeader` is written after every persisted half-move so resume metadata and `moveCount` match the latest move bytes at any reboot point.
+- **Byte-wise replay decoding** — `replayInto()` must read the 2-byte move stream with `memcpy`/byte access rather than casting `uint8_t*` to `uint16_t*`; ESP32 can crash on unaligned typed loads when resuming from LittleFS buffers.
 - **MoveEntry factory** — `MoveEntry::build()` encapsulates flag copying via `ME_FLAG_MASK`. Used by `Game::makeMove()` and `History::replayInto()`.
 
 ## Testing

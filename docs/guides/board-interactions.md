@@ -65,7 +65,7 @@ Before each game, the board guides piece placement for the starting position:
 - Squares with an **extra piece** (occupied but should be empty) light up in **red**
 - Correctly placed squares stay **off**
 
-The board waits until all 64 squares match the expected position, then plays a firework animation and begins the game.
+The board waits until all 64 squares match the expected position, then plays a firework animation and begins the game. Setup hints appear only after a mismatch persists briefly, so a board that is already correct starts cleanly without a transient hint flash.
 
 ## Piece Pickup & Valid Moves
 

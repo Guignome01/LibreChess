@@ -114,7 +114,7 @@ the ESP32 NVS namespace `"assist"` after validation.
 | `engine` | Bot only | `"stockfish"` (default) or `"librechess"` |
 | `assistanceLevel` | Play modes only | `"none"`, `"legal"` (default), or `"best"` |
 | `assistanceEngine` | Optional | Provider for BEST_MOVE assistance. `"librechess"` is currently the only implemented value. |
-| `assistanceDifficulty` | Optional | Assistance provider setting; LibreChess BEST_MOVE currently uses a fixed 1 s lifted-piece search and ignores it. |
+| `assistanceDifficulty` | Optional | Assistance provider setting; LibreChess BEST_MOVE uses it to scale lifted-piece search time/depth. |
 
 `NONE` and `LEGAL_MOVES` assistance must not rank targets. If
 `assistanceLevel=best`, the backend currently rejects any `assistanceEngine`

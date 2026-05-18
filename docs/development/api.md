@@ -133,7 +133,7 @@ settings are persisted to NVS after a successful request.
 | `engine` | Bot only | Opponent engine: `stockfish` (default) or `librechess` |
 | `assistanceLevel` | Play modes only | `none`, `legal`, or `best` |
 | `assistanceEngine` | Optional | BEST_MOVE ranking provider. `librechess` is currently the only implemented value. |
-| `assistanceDifficulty` | Optional | Accepted for the assistance config; LibreChess BEST_MOVE currently uses a fixed 1 s lifted-piece search and ignores it. |
+| `assistanceDifficulty` | Optional | Accepted for the assistance config; LibreChess BEST_MOVE uses it to scale lifted-piece search time/depth. |
 
 `none` and `legal` assistance do not rank targets. `best` assistance currently requires `assistanceEngine=librechess`; unsupported engines return `400 Bad Request`. On the board, `best` highlights the legal destinations for the lifted piece, coloring the best searched destination green and the worst searched destination red.
 

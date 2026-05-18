@@ -107,6 +107,11 @@ class BoardDriver {
   void readSensors();
   bool getSensorState(int row, int col) const;
 
+  /// Read the current logical sensor matrix and seed the debounced state from
+  /// it. Used once at runtime startup so the input baseline and driver debounce
+  /// state agree before the poll task starts.
+  void syncSensorBaseline(bool (&state)[NUM_ROWS][NUM_COLS]);
+
   /// Read the physical sensor matrix without debounce or logical mapping.
   void readRawSensors(bool (&rawState)[NUM_ROWS][NUM_COLS]);
 

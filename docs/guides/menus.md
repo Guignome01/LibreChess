@@ -56,8 +56,7 @@ This prevents pieces already on the board when the menu appears from triggering 
 
 On confirmed selection:
 - The square turns **off** once the piece is stably resting on it
-- The square **blinks once** in its own color after the piece is removed
-- The next menu or game starts only after the confirmation blink finishes
+- The next menu or game starts as soon as the piece has been stably removed
 
 ## Menu Navigation
 

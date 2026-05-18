@@ -1,9 +1,6 @@
 #include "board/services/menu/selection.h"
 
 #include "board/runtime/runtime.h"
-#include "board/services/visual/animations.h"
-
-#include <Arduino.h>
 
 namespace {
 constexpr LedRGB BACK_BUTTON_COLOR = LedColors::White;
@@ -13,11 +10,9 @@ constexpr LedRGB BACK_BUTTON_COLOR = LedColors::White;
 // MenuSelection
 // ---------------------------------------------------------------------------
 
-MenuSelection::MenuSelection(BoardRuntime& runtime, BoardAnimations& animations)
+MenuSelection::MenuSelection(BoardRuntime& runtime)
     : runtime_(runtime),
-      animations_(animations),
       surface_(),
-      confirmation_(),
       optionCount_(0),
       hasBack_(false),
       backOption_{0, 0, BACK_BUTTON_COLOR, MENU_RESULT_BACK},
@@ -25,7 +20,6 @@ MenuSelection::MenuSelection(BoardRuntime& runtime, BoardAnimations& animations)
 
 MenuSelection::~MenuSelection() {
   auto g = runtime_.lockCanvas();
-  animations_.cancel(confirmation_);
   BoardSurface::release(g.canvas, surface_);
 }
 
@@ -68,13 +62,11 @@ void MenuSelection::draw() {
 
 void MenuSelection::erase() {
   auto g = runtime_.lockCanvas();
-  animations_.cancel(confirmation_);
   BoardSurface::clear(g.canvas, surface_);
 }
 
 void MenuSelection::reset() {
   for (auto& state : states_) state.reset();
-  confirmation_ = BoardScheduledHandle{};
 }
 
 MenuSelection::Square MenuSelection::transformSquare(int8_t row, int8_t col) const {
@@ -94,19 +86,9 @@ int MenuSelection::trySelect(SelectionDebouncer& state,
     return MENU_RESULT_NONE;
   }
   if (result == SelectionDebouncer::Result::RELEASED) {
-    auto g = runtime_.lockCanvas();
-    confirmation_ = animations_.startBlink(sq.row, sq.col, option.color, 1, millis());
     return option.id;
   }
   return MENU_RESULT_NONE;
-}
-
-bool MenuSelection::confirmationActive() {
-  if (!confirmation_.valid()) return false;
-  auto g = runtime_.lockCanvas();
-  if (animations_.active(confirmation_)) return true;
-  confirmation_ = BoardScheduledHandle{};
-  return false;
 }
 
 int MenuSelection::poll() {

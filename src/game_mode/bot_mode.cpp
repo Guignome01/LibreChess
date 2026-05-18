@@ -10,6 +10,7 @@ BotMode::BotMode(IBoardGame* gameplay, WiFiManagerESP32* wm, Game* cg,
   : GameMode(gameplay, wm, cg, logger), provider_(provider) {}
 
 BotMode::~BotMode() {
+  stopThinking();
   delete provider_;
 }
 
@@ -197,6 +198,7 @@ void BotMode::onResignConfirmed(Color resignColor) {
 // ---------------------------------------------------------------
 
 void BotMode::startThinking() {
+  stopThinking();
   thinkingAnimation_ = gameplay_->startThinkingStatus();
 }
 

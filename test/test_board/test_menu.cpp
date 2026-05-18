@@ -86,7 +86,7 @@ bool menuHasTileOnPage(const BoardMenu& menu, uint8_t tileId, uint8_t pageId) {
 // MenuSelection debounce
 // ---------------------------------------------------------------------------
 
-void test_menu_selection_confirms_on_release_after_press() {
+void test_menu_selection_commits_on_release_after_press() {
   MenuSelection::SelectionDebouncer debouncer(2);
   using Result = MenuSelection::SelectionDebouncer::Result;
 
@@ -386,7 +386,7 @@ void test_resume_confirm_menu_preblink_then_shows_confirm() {
 }  // namespace
 
 void register_menu_tests() {
-  RUN_TEST(test_menu_selection_confirms_on_release_after_press);
+  RUN_TEST(test_menu_selection_commits_on_release_after_press);
   RUN_TEST(test_menu_selection_ignores_short_press_before_release);
   RUN_TEST(test_main_menu_root_chess_moves_closes_with_selection);
   RUN_TEST(test_main_menu_mode_colors_match_tiles);

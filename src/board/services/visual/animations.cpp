@@ -244,7 +244,7 @@ BoardAnimationHandle BoardAnimations::start(const BoardAnimationSpec& spec, uint
   return scheduler_.schedule(canvas_, painter, runtimeSpec.durationMs, runtimeSpec.loop, nowMs);
 }
 
-void BoardAnimations::cancel(BoardAnimationHandle& handle) { scheduler_.cancel(handle); }
+void BoardAnimations::cancel(BoardAnimationHandle& handle) { scheduler_.cancel(handle, canvas_); }
 
 bool BoardAnimations::active(BoardAnimationHandle handle) const { return scheduler_.active(handle); }
 

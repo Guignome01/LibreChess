@@ -746,6 +746,23 @@ void test_game_rank_candidate_targets_search_does_not_mutate_game(void) {
   TEST_ASSERT_TRUE(sawE4);
 }
 
+static uint32_t candidateRankingFixedTimer(void) { return 0; }
+
+void test_game_rank_candidate_targets_accepts_depth_cap(void) {
+  Game g;
+  g.newGame();
+  g.initSearch(512);
+  g.setTimeFunc(candidateRankingFixedTimer);
+
+  Game::CandidateTargetList targets;
+  TEST_ASSERT_TRUE(targets.add(5, 4));  // e3
+  TEST_ASSERT_TRUE(targets.add(4, 4));  // e4
+
+  Game::CandidateTargetScoreList scores;
+  TEST_ASSERT_TRUE(g.rankCandidateTargets(6, 4, targets, 1000, scores, 1));
+  TEST_ASSERT_EQUAL_INT(2, scores.count);
+}
+
 // ---------------------------------------------------------------------------
 // Display-coordinate helpers (game/types.h)
 // ---------------------------------------------------------------------------
@@ -855,6 +872,7 @@ void register_game_tests() {
   RUN_TEST(test_game_calculate_move_reported_master_position_applicable);
   RUN_TEST(test_game_search_diagnostics_report_initialized_resources);
   RUN_TEST(test_game_rank_candidate_targets_search_does_not_mutate_game);
+  RUN_TEST(test_game_rank_candidate_targets_accepts_depth_cap);
 
   // Display-coordinate helpers (game/types.h)
   RUN_TEST(test_display_rankChar_all_rows);

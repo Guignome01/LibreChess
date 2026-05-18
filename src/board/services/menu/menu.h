@@ -172,7 +172,6 @@ class BoardMenuRunner : private MenuFlow {
 
   uint8_t pageStack_[MENU_PAGE_STACK_DEPTH];
   uint8_t pageStackDepth_;
-  int pendingSelectionResult_;
 
   Pending pending_;
   uint8_t pendingNextTarget_;

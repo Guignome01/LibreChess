@@ -57,14 +57,14 @@ class BoardScheduler {
   BoardScheduler(const BoardScheduler&) = delete;
   BoardScheduler& operator=(const BoardScheduler&) = delete;
 
-  /// Schedule a painter. Returns an invalid handle when all slots are busy or
+  /// Schedule a painter. Looping painters are queued behind currently active
+  /// finite painters. Returns an invalid handle when all slots are busy or
   /// when the painter's context does not fit the scheduler's fixed storage.
   BoardScheduledHandle schedule(BoardCanvas& canvas, const BoardPainter& painter,
                                 uint32_t durationMs, bool loop, uint32_t nowMs);
 
-  /// Request cancellation of a scheduled painter. Slot cleanup happens on the
-  /// next run() call so presentation changes are flushed consistently.
-  void cancel(BoardScheduledHandle& handle);
+  /// Cancel a scheduled painter immediately and release its owned surface.
+  void cancel(BoardScheduledHandle& handle, BoardCanvas& canvas);
 
   /// Return true iff `handle` still references an active scheduled painter.
   bool active(BoardScheduledHandle handle) const;
@@ -81,7 +81,6 @@ class BoardScheduler {
  private:
   struct Slot {
     uint16_t generation;
-    bool cancelRequested;
     bool loop;
     uint32_t durationMs;
     uint32_t startMs;
@@ -91,7 +90,10 @@ class BoardScheduler {
     uint8_t context[CONTEXT_BYTES];
   };
 
+  BoardScheduledHandle scheduleAt(BoardCanvas& canvas, const BoardPainter& painter,
+                                  uint32_t durationMs, bool loop, uint32_t startMs);
   uint8_t findFreeSlot() const;
+  uint32_t queuedStartMs(uint32_t nowMs) const;
   void releaseSlot(uint8_t i, BoardCanvas& canvas);
 
   Slot slots_[SLOT_COUNT];

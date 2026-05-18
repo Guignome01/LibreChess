@@ -316,11 +316,16 @@ bool Game::parseCoordinate(const std::string& move, int& fromRow, int& fromCol,
 bool Game::resumeGame() {
   bool ok = history_.replayInto(board_);
   if (ok) {
+    invalidateCache();
+
     // Use the FEN that replayInto() loaded as the start position
     startFen_ = history_.replayFen();
 
     // Restore game-over state from the recording header
     GameResult hdrResult = history_.headerResult();
+    gameOver_ = false;
+    gameResult_ = GameResult::IN_PROGRESS;
+    winnerColor_ = ' ';
     if (hdrResult != GameResult::IN_PROGRESS) {
       gameOver_ = true;
       gameResult_ = hdrResult;
@@ -426,7 +431,8 @@ bool Game::scoreCandidateMove(int fromRow, int fromCol, int toRow, int toCol,
 bool Game::rankCandidateTargets(int fromRow, int fromCol,
                                 const CandidateTargetList& targets,
                                 uint32_t timeLimitMs,
-                                CandidateTargetScoreList& scores) {
+                                CandidateTargetScoreList& scores,
+                                int maxDepth) {
   scores.clear();
   if (!engine_ || gameOver_ || targets.count <= 0) return false;
   if (!validRowCol(fromRow, fromCol)) return false;
@@ -452,7 +458,9 @@ bool Game::rankCandidateTargets(int fromRow, int fromCol,
   int rootScoreCount = 0;
 
   search::SearchLimits limits;
-  limits.maxDepth = search::MAX_PLY;
+  if (maxDepth <= 0) maxDepth = search::MAX_PLY;
+  if (maxDepth > search::MAX_PLY) maxDepth = search::MAX_PLY;
+  limits.maxDepth = maxDepth;
   limits.softTimeMs = timeLimitMs;
   limits.hardTimeMs = timeLimitMs;
   limits.rootMoves = rootCandidates;

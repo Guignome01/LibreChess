@@ -127,7 +127,8 @@ class Game {
   bool rankCandidateTargets(int fromRow, int fromCol,
                             const CandidateTargetList& targets,
                             uint32_t timeLimitMs,
-                            CandidateTargetScoreList& scores);
+                            CandidateTargetScoreList& scores,
+                            int maxDepth = search::MAX_PLY);
 
   // Set the platform time function (firmware passes millis()).
   // Must be called after initSearch().

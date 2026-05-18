@@ -3,13 +3,11 @@
 
 #include "board/runtime/canvas.h"
 #include "board/runtime/helpers.h"
-#include "board/runtime/scheduler.h"
 #include "board/services/menu/types.h"
 
 #include <stdint.h>
 
 class BoardRuntime;
-class BoardAnimations;
 
 // ---------------------------------------------------------------------------
 // MenuSelection — shared physical-board menu primitive.
@@ -22,7 +20,6 @@ class BoardAnimations;
 //   - Handles white/black orientation flipping for both painting and polling.
 //   - Returns selected option ids (or `MENU_RESULT_BACK`) without
 //     interpreting them — the runner owns transition semantics.
-//   - Blinks the confirmed square through the injected `BoardAnimations&`.
 // Capacity: up to `MENU_SELECTION_OPTION_COUNT` selectable options plus one
 // reserved slot for the back tile.
 // ---------------------------------------------------------------------------
@@ -31,7 +28,7 @@ class MenuSelection {
  public:
   static constexpr uint8_t DEFAULT_DEBOUNCE_CYCLES = 5;
 
-  MenuSelection(BoardRuntime& runtime, BoardAnimations& animations);
+  explicit MenuSelection(BoardRuntime& runtime);
   ~MenuSelection();
 
   MenuSelection(const MenuSelection&) = delete;
@@ -64,9 +61,6 @@ class MenuSelection {
   /// Non-blocking poll. Returns a selected option id, `MENU_RESULT_BACK`,
   /// or `MENU_RESULT_NONE`.
   int poll();
-
-  /// Return true while the selection-confirmation blink is still active.
-  bool confirmationActive();
 
   /// Debounces one option square through empty, press, and release phases.
   class SelectionDebouncer {
@@ -139,9 +133,7 @@ class MenuSelection {
                 const MenuOption& option);
 
   BoardRuntime& runtime_;
-  BoardAnimations& animations_;
   BoardCanvasHandle surface_;
-  BoardScheduledHandle confirmation_;
   MenuOption options_[SLOT_COUNT];
   uint8_t optionCount_;
   bool hasBack_;

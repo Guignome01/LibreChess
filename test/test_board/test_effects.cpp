@@ -39,18 +39,54 @@ void test_slot_exhaustion_returns_invalid() {
   TEST_ASSERT_FALSE(overflow.valid());
 }
 
-void test_cancel_releases_slot_on_next_step() {
+void test_cancel_releases_slot_immediately() {
   BoardScheduler scheduler;
   BoardCanvas canvas;
   BoardAnimations animations(scheduler, canvas);
   auto h = animations.startThinking(0);
+  scheduler.run(0, canvas);
+  TEST_ASSERT_TRUE(canvas.hasPixel(0, 0));
   TEST_ASSERT_TRUE(animations.active(h));
   animations.cancel(h);
   TEST_ASSERT_FALSE(h.valid());  // handle invalidated immediately
-  // Slot still allocated until step runs.
-  scheduler.run(0, canvas);
-  // Now slot is free → starting new animations fills the same slot.
+  TEST_ASSERT_FALSE(canvas.hasPixel(0, 0));
   TEST_ASSERT_FALSE(animations.any());
+}
+
+void test_cancelled_status_does_not_bleed_under_firework() {
+  BoardScheduler scheduler;
+  BoardCanvas canvas;
+  BoardAnimations animations(scheduler, canvas);
+  auto thinking = animations.startThinking(0);
+  scheduler.run(0, canvas);
+  TEST_ASSERT_TRUE(canvas.hasPixel(0, 0));
+
+  animations.cancel(thinking);
+  animations.startFirework(LedColors::Yellow, 0);
+  scheduler.run(0, canvas);
+
+  TEST_ASSERT_FALSE(canvas.hasPixel(0, 0));
+  TEST_ASSERT_TRUE(animations.any());
+}
+
+void test_status_queues_until_active_finite_animation_finishes() {
+  BoardScheduler scheduler;
+  BoardCanvas canvas;
+  BoardAnimations animations(scheduler, canvas);
+  animations.startFirework(LedColors::Yellow, 0);
+  auto thinking = animations.startThinking(0);
+  TEST_ASSERT_TRUE(thinking.valid());
+  TEST_ASSERT_TRUE(animations.active(thinking));
+
+  scheduler.run(0, canvas);
+  TEST_ASSERT_FALSE(canvas.hasPixel(0, 0));
+
+  scheduler.run(BoardAnimationTiming::FIREWORK_FRAME_MS *
+                    BoardAnimationTiming::FIREWORK_FRAMES,
+                canvas);
+  TEST_ASSERT_TRUE(animations.active(thinking));
+  TEST_ASSERT_TRUE(canvas.hasPixel(0, 0));
+  TEST_ASSERT_TRUE(canvas.hasPixel(7, 7));
 }
 
 void test_stale_handle_rejected() {
@@ -59,7 +95,6 @@ void test_stale_handle_rejected() {
   BoardAnimations animations(scheduler, canvas);
   auto h1 = animations.startBlink(0, 0, LedColors::Red, 1, 0);
   animations.cancel(h1);
-  scheduler.run(0, canvas);
   // Recycle the slot.
   auto h2 = animations.startBlink(0, 1, LedColors::Green, 1, 0);
   TEST_ASSERT_TRUE(h2.valid());
@@ -215,7 +250,9 @@ void test_clearAll_recycles_every_slot() {
 void register_animation_tests() {
   RUN_TEST(test_start_returns_valid_handle);
   RUN_TEST(test_slot_exhaustion_returns_invalid);
-  RUN_TEST(test_cancel_releases_slot_on_next_step);
+  RUN_TEST(test_cancel_releases_slot_immediately);
+  RUN_TEST(test_cancelled_status_does_not_bleed_under_firework);
+  RUN_TEST(test_status_queues_until_active_finite_animation_finishes);
   RUN_TEST(test_stale_handle_rejected);
   RUN_TEST(test_blink_paints_target_square_in_on_phase);
   RUN_TEST(test_blink_dark_in_off_phase);

@@ -60,21 +60,30 @@ void BoardAssistance::waitForSetup(const BoardSetupSnapshot& setup) {
   Serial.println("Set up the board in the required position...");
 
   const uint16_t cadence = runtime_.cadenceMs();
-  bool allCorrect = false;
-  while (!allCorrect) {
+  for (;;) {
     bool occupied[BoardInput::ROWS][BoardInput::COLS];
     runtime_.copyInputOccupancy(occupied);
+
+    bool allCorrect = true;
+    for (int row = 0; row < BoardInput::ROWS; ++row) {
+      for (int col = 0; col < BoardInput::COLS; ++col) {
+        const BoardPiece piece = setup.squares[row][col];
+        const bool shouldHavePiece = piece.occupied();
+        if (shouldHavePiece != occupied[row][col]) allCorrect = false;
+      }
+    }
+
+    if (allCorrect) break;
+
     {
       auto g = runtime_.lockCanvas();
       BoardCanvasHandle surface = writableSurface(g.canvas);
       g.canvas.clearSurface(surface);
-      allCorrect = true;
       for (int row = 0; row < BoardInput::ROWS; ++row) {
         for (int col = 0; col < BoardInput::COLS; ++col) {
           const BoardPiece piece = setup.squares[row][col];
           const bool shouldHavePiece = piece.occupied();
           const bool hasPiece = occupied[row][col];
-          if (shouldHavePiece != hasPiece) allCorrect = false;
           if (shouldHavePiece && !hasPiece) {
             const LedRGB pieceColor = piece.color == BoardPieceColor::WHITE ? LedColors::White
                                                                             : LedColors::Blue;
@@ -85,7 +94,7 @@ void BoardAssistance::waitForSetup(const BoardSetupSnapshot& setup) {
         }
       }
     }
-    if (!allCorrect) delay(cadence);
+    delay(cadence);
   }
 
   Serial.println("Board setup complete! Game starting...");

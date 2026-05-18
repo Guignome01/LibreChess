@@ -111,11 +111,11 @@ bool BoardRuntime::begin() {
     return false;
   }
 
-  // Capture the post-calibration sensor state as the input baseline so we
-  // don't emit phantom LIFTED events for pieces that were already on the
-  // board.
+  // Capture the post-calibration sensor state as the input baseline and seed
+  // the driver's debounce state from the same scan, so already-placed pieces
+  // do not briefly appear as missing when the poll task starts.
   bool sensors[BoardInput::ROWS][BoardInput::COLS];
-  readDebouncedSensors(sensors);
+  driver_.syncSensorBaseline(sensors);
   takeInputMutex();
   input_.syncBaseline(sensors, millis());
   giveInputMutex();

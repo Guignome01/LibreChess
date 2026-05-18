@@ -99,7 +99,6 @@ class History {
   GameHeader header_;
   bool recordingActive_;
   bool headerInitialized_;
-  uint8_t movesSinceFlush_;
 
   void persistMove(const MoveEntry& entry);
   std::string replayFen_;
